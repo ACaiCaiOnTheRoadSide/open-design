@@ -122,10 +122,10 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       return sendApiError(res, 403, denial.code, denial.message);
     }
 
-    let task: ReturnType<typeof createMediaTask> | null = null;
+    let task: Awaited<ReturnType<typeof createMediaTask>> | null = null;
     try {
       const taskId = randomUUID();
-      task = createMediaTask(taskId, projectId, {
+      task = await createMediaTask(taskId, projectId, {
         surface: req.body?.surface,
         model: req.body?.model,
       });
@@ -167,7 +167,10 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         compositionDir: req.body?.compositionDir,
         image: req.body?.image,
         images: Array.isArray(req.body?.images) ? req.body.images : undefined,
-        onProgress: (line: any) => appendTaskProgress(task, line),
+        onProgress: (line: any) => {
+          void appendTaskProgress(task!, line).catch((e: any) =>
+            console.error('[media] progress persist failed:', e));
+        },
         requestInit: proxyDispatcher.requestInit,
       })
         .then((meta: any) => {
