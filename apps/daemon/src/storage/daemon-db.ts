@@ -27,6 +27,11 @@ export interface DaemonDbConfig {
     // matching secret manager; we never read them through env at this
     // layer.
     sslMode?: 'disable' | 'require' | 'verify-full';
+    // Optional schema (OD_PG_SCHEMA). When set, the worker creates it and
+    // pins search_path so daemon tables live there — lets the daemon share
+    // the app's single platform database without colliding with the Go
+    // backend's public-schema tables (projects/conversations/...).
+    schema?: string;
   };
 }
 
@@ -54,6 +59,7 @@ export function resolveDaemonDbConfig(env?: Record<string, string | undefined>):
         'OD_PG_PORT defaults to 5432; OD_PG_SSL_MODE defaults to "require".',
       );
     }
+    const schema = (e.OD_PG_SCHEMA ?? '').trim() || undefined;
     return {
       kind: 'postgres',
       postgres: {
@@ -62,6 +68,7 @@ export function resolveDaemonDbConfig(env?: Record<string, string | undefined>):
         database,
         user,
         sslMode,
+        schema,
       },
     };
   }

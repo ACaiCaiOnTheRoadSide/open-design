@@ -104,6 +104,7 @@ export function openPgSync(cfg: DaemonDbConfig, password: string): SqliteLike {
         ssl: cfg.postgres.sslMode === 'disable'
           ? false
           : { rejectUnauthorized: cfg.postgres.sslMode === 'verify-full' },
+        schema: cfg.postgres.schema,
       },
     },
   });

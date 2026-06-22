@@ -48,7 +48,16 @@ const client = new Client({
   password: workerData.pg.password,
   ssl:      workerData.pg.ssl,
 });
-const ready = client.connect();
+const schema: string | undefined = workerData.pg.schema;
+// 连接后:配了 schema 就建它并把 search_path 固定过去 —— daemon 的表落在该 schema,
+// 与 Go backend 的 public schema 隔离,从而共用平台那一个单库(<app>-db),不撞名。
+const ready = client.connect().then(async () => {
+  if (schema) {
+    const ident = '"' + schema.replace(/"/g, '""') + '"';
+    await client.query(`CREATE SCHEMA IF NOT EXISTS ${ident}`);
+    await client.query(`SET search_path TO ${ident}`);
+  }
+});
 
 function respond(status: number, payload: unknown): void {
   const bytes = encoder.encode(JSON.stringify(payload ?? {}));
