@@ -24,15 +24,26 @@ import type Database from 'better-sqlite3';
 
 export const LEGACY_TENANT = '__legacy__';
 export const TENANT_HEADER = 'x-tenant-id';
+// Per-user BYOK provider/model config (JSON), injected per-request by the Go
+// gateway (backend proxy.go) so the shared daemon uses the CALLER's model+key
+// instead of a single container-level OD_OPENCODE_PROVIDER_CONFIG. It rides the
+// same ALS store as the tenant id so it reaches the spawn deep inside the run.
+export const PROVIDER_CONFIG_HEADER = 'x-od-provider-config';
 
 interface TenantStore {
   tenantId: string;
+  // exactOptionalPropertyTypes: keep optional WITHOUT `| undefined`; callers
+  // must omit the key (conditional spread) rather than assign undefined.
+  providerConfig?: string;
 }
 
 const tenantStorage = new AsyncLocalStorage<TenantStore>();
 
-export function runWithTenant<T>(tenantId: string, fn: () => T): T {
-  return tenantStorage.run({ tenantId }, fn);
+export function runWithTenant<T>(tenantId: string, fn: () => T, providerConfig?: string): T {
+  return tenantStorage.run(
+    { tenantId, ...(providerConfig !== undefined ? { providerConfig } : {}) },
+    fn,
+  );
 }
 
 /**
@@ -45,7 +56,13 @@ export function runWithTenant<T>(tenantId: string, fn: () => T): T {
  */
 export function enterTenant(tenantId: string): void {
   if (!tenantId) return;
-  tenantStorage.enterWith({ tenantId });
+  // Preserve any provider config already bound for this request so re-scoping
+  // the tenant (tool-token callback path) does not drop the caller's BYOK.
+  const providerConfig = tenantStorage.getStore()?.providerConfig;
+  tenantStorage.enterWith({
+    tenantId,
+    ...(providerConfig !== undefined ? { providerConfig } : {}),
+  });
 }
 
 /**
@@ -54,6 +71,15 @@ export function enterTenant(tenantId: string): void {
  */
 export function currentTenantId(): string {
   return tenantStorage.getStore()?.tenantId ?? LEGACY_TENANT;
+}
+
+/**
+ * The per-request BYOK provider/model config (JSON) for the current async
+ * scope, or undefined when the caller supplied none. The spawn path prefers
+ * this over the container-level OD_OPENCODE_PROVIDER_CONFIG env.
+ */
+export function currentProviderConfig(): string | undefined {
+  return tenantStorage.getStore()?.providerConfig;
 }
 
 /**
@@ -68,7 +94,10 @@ export function currentTenantId(): string {
 export function tenantMiddleware(req: Request, res: Response, next: NextFunction): void {
   const raw = req.header(TENANT_HEADER);
   const tenantId = raw && raw.trim().length > 0 ? raw.trim() : LEGACY_TENANT;
-  runWithTenant(tenantId, () => next());
+  const rawProvider = req.header(PROVIDER_CONFIG_HEADER);
+  const providerConfig =
+    rawProvider && rawProvider.trim().length > 0 ? rawProvider.trim() : undefined;
+  runWithTenant(tenantId, () => next(), providerConfig);
 }
 
 /**

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import type { DesktopExportPdfInput, DesktopExportPdfResult } from '@open-design/sidecar-proto';
 import express from 'express';
-import { tenantMiddleware, enterTenant } from './multitenant.js';
+import { tenantMiddleware, enterTenant, currentProviderConfig } from './multitenant.js';
 import multer from 'multer';
 import JSZip from 'jszip';
 import { execFile, spawn } from 'node:child_process';
@@ -12232,13 +12232,15 @@ export async function startServer({
           err && err.message ? err.message : err,
         );
       }
-      // BYOK: merge an externally-injected provider/model block (e.g. a SaaS
-      // per-turn container sets OD_OPENCODE_PROVIDER_CONFIG with the user's
-      // OpenAI-compatible provider) so it coexists with the daemon-owned mcp +
-      // external_directory config instead of being clobbered by it.
+      // BYOK: merge an externally-injected provider/model block so it coexists
+      // with the daemon-owned mcp + external_directory config instead of being
+      // clobbered by it. Prefer the PER-REQUEST config (shared multitenant
+      // daemon: the Go gateway injects each caller's BYOK via the
+      // X-OD-Provider-Config header → ALS) over the container-level env
+      // fallback (single-key / local dev).
       opencodeConfigContent = mergeOpenCodeProviderConfig(
         opencodeConfigContent,
-        process.env.OD_OPENCODE_PROVIDER_CONFIG,
+        currentProviderConfig() ?? process.env.OD_OPENCODE_PROVIDER_CONFIG,
       );
     }
 
