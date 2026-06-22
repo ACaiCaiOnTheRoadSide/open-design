@@ -68,7 +68,9 @@ export function resolveDaemonDbConfig(env?: Record<string, string | undefined>):
         database,
         user,
         sslMode,
-        schema,
+        // exactOptionalPropertyTypes: omit `schema` entirely when unset
+        // rather than assigning `undefined` to the optional `schema?: string`.
+        ...(schema !== undefined ? { schema } : {}),
       },
     };
   }
