@@ -1,6 +1,7 @@
 // @ts-nocheck
 import type { DesktopExportPdfInput, DesktopExportPdfResult } from '@open-design/sidecar-proto';
 import express from 'express';
+import { tenantMiddleware, enterTenant } from './multitenant.js';
 import multer from 'multer';
 import JSZip from 'jszip';
 import { execFile, spawn } from 'node:child_process';
@@ -331,6 +332,7 @@ import {
   buildAcpMcpServers,
   buildClaudeMcpJson,
   buildOpenCodeMcpConfigContent,
+  mergeOpenCodeProviderConfig,
   isManagedProjectCwd,
   readMcpConfig,
   writeMcpConfig,
@@ -3796,11 +3798,17 @@ function authorizeToolRequest(req, res, operation) {
     });
     return null;
   }
+  // Multitenancy: agent callbacks carry the tool token but no X-Tenant-Id
+  // header, so the global tenantMiddleware left us at LEGACY_TENANT. Restore
+  // the run's tenant for the rest of this request so tenant-scoped writes
+  // (media tasks, messages) land under the owning tenant.
+  if (validation.grant.tenantId) enterTenant(validation.grant.tenantId);
   return validation.grant;
 }
 
 function optionalToolGrantFromRequest(req, options = {}) {
   const validation = toolTokenRegistry.validate(bearerTokenFromRequest(req), options);
+  if (validation.ok && validation.grant.tenantId) enterTenant(validation.grant.tenantId);
   return validation.ok ? validation.grant : null;
 }
 
@@ -4618,6 +4626,10 @@ export async function startServer({
   const app = express();
   installRouteRegistrationGuard(app);
   app.use(express.json({ limit: '4mb' }));
+  // Multitenancy (baizhi SaaS fork): bind X-Tenant-Id from the Go gateway
+  // into AsyncLocalStorage so every db.* call automatically scopes by tenant.
+  // Falls back to LEGACY_TENANT for direct/local access (dev).
+  app.use(tenantMiddleware);
   const projectPreviewScopes = createProjectPreviewScopeRegistry();
 
   // Plan §3.K1 — bearer-token middleware.
@@ -12220,6 +12232,14 @@ export async function startServer({
           err && err.message ? err.message : err,
         );
       }
+      // BYOK: merge an externally-injected provider/model block (e.g. a SaaS
+      // per-turn container sets OD_OPENCODE_PROVIDER_CONFIG with the user's
+      // OpenAI-compatible provider) so it coexists with the daemon-owned mcp +
+      // external_directory config instead of being clobbered by it.
+      opencodeConfigContent = mergeOpenCodeProviderConfig(
+        opencodeConfigContent,
+        process.env.OD_OPENCODE_PROVIDER_CONFIG,
+      );
     }
 
     // Pre-flight the composed prompt against any argv-byte budget the

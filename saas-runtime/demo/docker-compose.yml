@@ -1,0 +1,43 @@
+# ============================================================================
+# Open Design — 单用户完整 demo
+#
+# 一个容器 = 完整的 Open Design,浏览器打开就能用(聊天、生成设计稿、多轮迭代)。
+# 预置 BYOK,单用户,无 SaaS 控制面/计费/多租户。
+#
+# 用法:
+#   1. 复制 .env.example 为 .env,填上你的模型 key
+#   2. docker compose up -d --build       (首次构建几分钟:装依赖 + 构建 web/daemon)
+#   3. 浏览器打开 http://localhost:8080
+# ============================================================================
+
+name: open-design-demo
+
+services:
+  open-design:
+    build:
+      context: ../..                              # 仓库根(构建时拉 OD 源码)
+      dockerfile: saas-runtime/demo/Dockerfile
+    image: open-design-demo:latest
+    restart: unless-stopped
+    ports:
+      - "${DEMO_PORT:-8080}:8080"                 # 浏览器访问入口
+    environment:
+      OD_DATA_DIR: /data
+      # 放行浏览器跨端口 origin(= 访问端口)。daemon 在 7456,web 经 socat 在此端口访问。
+      OD_WEB_PORT: ${DEMO_PORT:-8080}
+      # 从别的机器/LAN IP 访问时,额外加你的访问 origin(逗号分隔),例如:
+      # OD_ALLOWED_ORIGINS: http://192.168.1.10:8080
+      OD_ALLOWED_ORIGINS: ${OD_ALLOWED_ORIGINS:-}
+      # ── BYOK:自带模型 key(在 .env 里填)。任意 OpenAI 兼容端点都行 ──
+      OD_BYOK_BASE_URL: ${OD_BYOK_BASE_URL:-https://api.deepseek.com}
+      OD_BYOK_API_KEY:  ${OD_BYOK_API_KEY:-}
+      OD_BYOK_MODEL:    ${OD_BYOK_MODEL:-deepseek-v4-pro}
+      OD_BYOK_PROVIDER: ${OD_BYOK_PROVIDER:-deepseek}
+      # ── Media(生图,火山引擎 VolcEngine)──
+      OD_VOLCENGINE_API_KEY: ${OD_VOLCENGINE_API_KEY:-}
+      OD_MEDIA_MODEL_ALIASES: '{"doubao-seedream-3-0-t2i-250415":"doubao-seedream-4-0-250828"}'
+    volumes:
+      - demo-data:/data                           # 单用户状态持久(项目/对话/制品)
+
+volumes:
+  demo-data:

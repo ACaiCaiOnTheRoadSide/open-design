@@ -502,6 +502,68 @@ export function buildOpenCodeMcpConfigContent(
   return JSON.stringify(config);
 }
 
+/**
+ * Merge an externally-injected OpenCode provider/model block into the
+ * daemon-built config string, instead of one overwriting the other.
+ *
+ * The daemon owns `mcp` + `permission.external_directory`; a BYOK caller
+ * (e.g. a SaaS per-turn container) supplies the user's provider via the
+ * `OD_OPENCODE_PROVIDER_CONFIG` env var — typically:
+ *   {"provider":{"deepseek":{"options":{"baseURL":"…","apiKey":"…"},
+ *    "models":{"deepseek-v4-pro":{}}}},"model":"deepseek/deepseek-v4-pro"}
+ *
+ * Without this merge the daemon's `{permission:{…}}` string clobbers the
+ * provider (OpenCode reads a single OPENCODE_CONFIG_CONTENT), leaving the
+ * model with no provider — an `AGENT_EXECUTION_FAILED` at child close.
+ * `provider` objects are shallow-merged per provider id; every other
+ * top-level key (e.g. `model`) is taken from the injected block. Returns
+ * `base` unchanged when the injected JSON is absent or unparseable.
+ */
+export function mergeOpenCodeProviderConfig(
+  base: string | null,
+  injectedJson: string | null | undefined,
+): string | null {
+  const raw = typeof injectedJson === 'string' ? injectedJson.trim() : '';
+  if (!raw) return base;
+  let injected: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return base;
+    injected = parsed as Record<string, unknown>;
+  } catch {
+    return base;
+  }
+  let baseObj: Record<string, unknown> = {};
+  if (typeof base === 'string' && base.trim()) {
+    try {
+      const parsed = JSON.parse(base);
+      if (parsed && typeof parsed === 'object') {
+        baseObj = parsed as Record<string, unknown>;
+      }
+    } catch {
+      baseObj = {};
+    }
+  }
+  const merged: Record<string, unknown> = { ...baseObj };
+  for (const [key, value] of Object.entries(injected)) {
+    if (
+      key === 'provider' &&
+      value &&
+      typeof value === 'object' &&
+      merged.provider &&
+      typeof merged.provider === 'object'
+    ) {
+      merged.provider = {
+        ...(merged.provider as Record<string, unknown>),
+        ...(value as Record<string, unknown>),
+      };
+    } else {
+      merged[key] = value;
+    }
+  }
+  return Object.keys(merged).length > 0 ? JSON.stringify(merged) : null;
+}
+
 function buildOpenCodeExternalDirectoryAllowlist(
   directories: string[] | undefined,
 ): Record<string, 'allow'> | null {

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { currentTenantId } from './multitenant.js';
 
 export const DEFAULT_TOOL_TOKEN_TTL_MS = 15 * 60 * 1000;
 
@@ -38,6 +39,15 @@ export interface ToolTokenGrant {
   token: string;
   runId: string;
   projectId: string;
+  // Multitenancy (baizhi fork): the tenant that owns this run. Captured at
+  // mint time from the request's ALS scope. Agent tool callbacks present
+  // the token (no X-Tenant-Id header), so the daemon restores tenant context
+  // from grant.tenantId. Without this, agent-initiated writes (media tasks,
+  // produced files) land under LEGACY_TENANT and become invisible to the
+  // owning tenant's reads. Optional: synthetic in-process grants (e.g.
+  // memory-connectors) run inside an existing request ALS scope and don't
+  // need restoration, so they may omit it.
+  tenantId?: string;
   allowedEndpoints: readonly ToolEndpoint[];
   allowedOperations: readonly ToolOperation[];
   issuedAt: string;
@@ -56,6 +66,9 @@ export interface ToolTokenGrant {
 export interface MintToolTokenOptions {
   runId: string;
   projectId: string;
+  // Tenant owning this run. Defaults to currentTenantId() at mint time when
+  // omitted (mint happens inside the request handler's ALS scope).
+  tenantId?: string;
   allowedEndpoints?: readonly ToolEndpoint[];
   allowedOperations?: readonly ToolOperation[];
   ttlMs?: number;
@@ -141,6 +154,7 @@ export class ToolTokenRegistry {
       tokenHash: hash,
       runId: options.runId,
       projectId: options.projectId,
+      tenantId: options.tenantId ?? currentTenantId(),
       allowedEndpoints: [...(options.allowedEndpoints ?? CHAT_TOOL_ENDPOINTS)],
       allowedOperations: [...(options.allowedOperations ?? CHAT_TOOL_OPERATIONS)],
       issuedAt: new Date(nowMs).toISOString(),

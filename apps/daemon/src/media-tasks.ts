@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { currentTenantId } from './multitenant.js';
 
 export type MediaTaskStatus =
   | 'queued'
@@ -126,6 +127,7 @@ export function insertMediaTask(
   db: Database.Database,
   input: MediaTaskInsert,
 ): MediaTaskRow {
+  const tenantId = currentTenantId();
   const now = Date.now();
   const status = input.status ?? 'queued';
   assertValidStatus(status);
@@ -133,8 +135,8 @@ export function insertMediaTask(
   db.prepare(
     `INSERT INTO media_tasks
        (id, project_id, status, surface, model, progress_json, file_json,
-        error_json, started_at, ended_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        error_json, started_at, ended_at, created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.projectId,
@@ -148,6 +150,7 @@ export function insertMediaTask(
     input.endedAt ?? null,
     input.createdAt ?? startedAt,
     input.updatedAt ?? now,
+    tenantId,
   );
   const row = getMediaTask(db, input.id);
   if (row === null) throw new Error(`Failed to fetch media task after insert: ${input.id}`);
@@ -158,9 +161,10 @@ export function getMediaTask(
   db: Database.Database,
   id: string,
 ): MediaTaskRow | null {
+  const tenantId = currentTenantId();
   const raw = db
-    .prepare(`SELECT ${COLS} FROM media_tasks WHERE id = ?`)
-    .get(id) as RawMediaTaskRow | undefined;
+    .prepare(`SELECT ${COLS} FROM media_tasks WHERE id = ? AND tenant_id = ?`)
+    .get(id, tenantId) as RawMediaTaskRow | undefined;
   return raw ? normalizeRow(raw) : null;
 }
 
@@ -169,6 +173,7 @@ export function updateMediaTask(
   id: string,
   patch: MediaTaskPatch,
 ): MediaTaskRow | null {
+  const tenantId = currentTenantId();
   const existing = getMediaTask(db, id);
   if (existing === null) return null;
   const status = patch.status ?? existing.status;
@@ -185,7 +190,7 @@ export function updateMediaTask(
             started_at = ?,
             ended_at = ?,
             updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND tenant_id = ?`,
   ).run(
     status,
     'surface' in patch ? patch.surface ?? null : existing.surface ?? null,
@@ -197,6 +202,7 @@ export function updateMediaTask(
     'endedAt' in patch ? patch.endedAt ?? null : existing.endedAt,
     updatedAt,
     id,
+    tenantId,
   );
   return getMediaTask(db, id);
 }
@@ -206,15 +212,16 @@ export function listMediaTasksByProject(
   projectId: string,
   options: { includeTerminal?: boolean } = {},
 ): MediaTaskRow[] {
+  const tenantId = currentTenantId();
   const includeTerminal = options.includeTerminal === true;
   const rows = db
     .prepare(
       `SELECT ${COLS}
          FROM media_tasks
-        WHERE project_id = ?
+        WHERE project_id = ? AND tenant_id = ?
         ORDER BY started_at DESC`,
     )
-    .all(projectId) as RawMediaTaskRow[];
+    .all(projectId, tenantId) as RawMediaTaskRow[];
   return rows
     .map(normalizeRow)
     .filter((row) => includeTerminal || !TERMINAL_STATUSES.has(row.status));
@@ -224,22 +231,25 @@ export function listRecentMediaTasks(
   db: Database.Database,
   options: { terminalTtlMs: number; now?: number },
 ): MediaTaskRow[] {
+  const tenantId = currentTenantId();
   const now = options.now ?? Date.now();
   const cutoff = now - options.terminalTtlMs;
   const rows = db
     .prepare(
       `SELECT ${COLS}
          FROM media_tasks
-        WHERE status IN ('queued', 'running')
-           OR COALESCE(ended_at, updated_at) >= ?
+        WHERE tenant_id = ?
+          AND (status IN ('queued', 'running')
+            OR COALESCE(ended_at, updated_at) >= ?)
         ORDER BY started_at DESC`,
     )
-    .all(cutoff) as RawMediaTaskRow[];
+    .all(tenantId, cutoff) as RawMediaTaskRow[];
   return rows.map(normalizeRow);
 }
 
 export function deleteMediaTask(db: Database.Database, id: string): void {
-  db.prepare(`DELETE FROM media_tasks WHERE id = ?`).run(id);
+  const tenantId = currentTenantId();
+  db.prepare(`DELETE FROM media_tasks WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 export function reconcileMediaTasksOnBoot(

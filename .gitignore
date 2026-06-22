@@ -69,6 +69,10 @@ docs/superpowers/
 # Local secrets (PostHog keys, BYOK creds for local testing, etc.)
 .env.local
 .env.*.local
+# Real .env files with secrets — only .env.example should be committed
+saas-runtime/.env
+# mTLS 证书/私钥(含生产),严禁提交;只留本地
+saas-runtime/cert/
 # Local design assistant context
 .impeccable.md
 

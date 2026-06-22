@@ -9,6 +9,7 @@ import {
   buildClaudeMcpJson,
   buildOpenCodeMcpConfigContent,
   isManagedProjectCwd,
+  mergeOpenCodeProviderConfig,
   readMcpConfig,
   sanitizeMcpServer,
   writeMcpConfig,
@@ -1145,5 +1146,89 @@ describe('MCP_TEMPLATES', () => {
     // GitHub repo slug). Getting this wrong silently 404s on the registry.
     expect(tpl?.args).toEqual(['-y', 'a11y-mcp-server']);
     expect(tpl?.envFields ?? []).toEqual([]);
+  });
+});
+
+describe('mergeOpenCodeProviderConfig', () => {
+  it('returns base unchanged when injected is null/undefined/empty', () => {
+    const base = JSON.stringify({ permission: { external_directory: {} } });
+    expect(mergeOpenCodeProviderConfig(base, null)).toBe(base);
+    expect(mergeOpenCodeProviderConfig(base, undefined)).toBe(base);
+    expect(mergeOpenCodeProviderConfig(base, '')).toBe(base);
+    expect(mergeOpenCodeProviderConfig(base, '   ')).toBe(base);
+  });
+
+  it('returns base unchanged when injected is invalid JSON', () => {
+    const base = JSON.stringify({ mcp: {} });
+    expect(mergeOpenCodeProviderConfig(base, '{not valid')).toBe(base);
+    expect(mergeOpenCodeProviderConfig(base, 'null')).toBe(base);
+    expect(mergeOpenCodeProviderConfig(base, '42')).toBe(base);
+  });
+
+  it('merges provider from injected into base that has no provider', () => {
+    const base = JSON.stringify({ permission: { external_directory: { '/tmp': 'allow' } } });
+    const injected = JSON.stringify({
+      provider: { deepseek: { options: { baseURL: 'https://api.deepseek.com', apiKey: 'sk-test' } } },
+      model: 'deepseek/deepseek-v4-pro',
+    });
+    const result = JSON.parse(mergeOpenCodeProviderConfig(base, injected)!);
+    expect(result.permission.external_directory).toEqual({ '/tmp': 'allow' });
+    expect(result.provider.deepseek.options.apiKey).toBe('sk-test');
+    expect(result.model).toBe('deepseek/deepseek-v4-pro');
+  });
+
+  it('shallow-merges provider objects when both base and injected have providers', () => {
+    const base = JSON.stringify({
+      provider: { existing: { options: { baseURL: 'https://existing.com' } } },
+      permission: {},
+    });
+    const injected = JSON.stringify({
+      provider: { deepseek: { options: { baseURL: 'https://api.deepseek.com' } } },
+    });
+    const result = JSON.parse(mergeOpenCodeProviderConfig(base, injected)!);
+    expect(result.provider.existing).toBeDefined();
+    expect(result.provider.deepseek).toBeDefined();
+  });
+
+  it('injected provider id overwrites same id in base (shallow per-id)', () => {
+    const base = JSON.stringify({
+      provider: { deepseek: { options: { baseURL: 'https://old.com', apiKey: 'old' } } },
+    });
+    const injected = JSON.stringify({
+      provider: { deepseek: { options: { baseURL: 'https://new.com', apiKey: 'new' } } },
+    });
+    const result = JSON.parse(mergeOpenCodeProviderConfig(base, injected)!);
+    expect(result.provider.deepseek.options.apiKey).toBe('new');
+  });
+
+  it('handles null base gracefully', () => {
+    const injected = JSON.stringify({ provider: { openai: {} }, model: 'openai/gpt-4o' });
+    const result = JSON.parse(mergeOpenCodeProviderConfig(null, injected)!);
+    expect(result.provider.openai).toBeDefined();
+    expect(result.model).toBe('openai/gpt-4o');
+  });
+
+  it('handles empty-string base gracefully', () => {
+    const injected = JSON.stringify({ model: 'deepseek/chat' });
+    const result = JSON.parse(mergeOpenCodeProviderConfig('', injected)!);
+    expect(result.model).toBe('deepseek/chat');
+  });
+
+  it('handles corrupt base JSON gracefully', () => {
+    const injected = JSON.stringify({ model: 'test' });
+    const result = JSON.parse(mergeOpenCodeProviderConfig('{broken', injected)!);
+    expect(result.model).toBe('test');
+  });
+
+  it('non-provider keys from injected overwrite base', () => {
+    const base = JSON.stringify({ model: 'old-model', permission: {} });
+    const injected = JSON.stringify({ model: 'new-model' });
+    const result = JSON.parse(mergeOpenCodeProviderConfig(base, injected)!);
+    expect(result.model).toBe('new-model');
+    expect(result.permission).toEqual({});
+  });
+
+  it('returns null when both inputs are empty', () => {
+    expect(mergeOpenCodeProviderConfig(null, null)).toBeNull();
   });
 });

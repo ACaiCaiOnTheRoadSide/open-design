@@ -1449,6 +1449,23 @@ function volcengineRatioFor(aspect?: string): string {
   return '16:9';
 }
 
+// Seedream images take an explicit WxH `size` (not a ratio). Map the OD
+// aspect vocabulary to a ~2048-long-edge box — every value here is
+// verified against doubao-seedream-4-0. Without this the volcengine
+// image body fell through to openaiSizeFor(), which has no seedream
+// branch and so returned 1024x1024 for everything: --aspect 16:9
+// silently produced a square. lefarcen.
+function volcengineImageSizeFor(aspect?: string): string {
+  switch (aspect) {
+    case '16:9': return '2048x1152';
+    case '9:16': return '1152x2048';
+    case '4:3': return '2048x1536';
+    case '3:4': return '1536x2048';
+    case '1:1':
+    default: return '2048x2048';
+  }
+}
+
 // Volcengine Seedream / Seededit images. Same auth, different endpoint:
 // POST /api/v3/images/generations (OpenAI-compatible payload).
 async function renderVolcengineImage(ctx: MediaContext, credentials: ProviderConfig): Promise<RenderResult> {
@@ -1461,10 +1478,9 @@ async function renderVolcengineImage(ctx: MediaContext, credentials: ProviderCon
     model: ctx.wireModel,
     prompt: ctx.prompt || 'A high-quality reference image.',
     response_format: 'b64_json',
-    // openaiSizeFor branches on the catalog id (gpt-image-* vs dall-e-*
-    // accept different size enums), so it must NOT see the post-alias
-    // wire name. lefarcen + codex P2 on PR #1309.
-    size: openaiSizeFor(ctx.model, ctx.aspect),
+    // Seedream takes an explicit WxH size; volcengineImageSizeFor maps the
+    // requested aspect to a 2048-long-edge box so 16:9 etc. are honoured.
+    size: volcengineImageSizeFor(ctx.aspect),
   };
   const resp = await fetch(`${baseUrl}/images/generations`, withMediaRequestInit(ctx, {
     method: 'POST',

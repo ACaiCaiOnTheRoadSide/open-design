@@ -91,6 +91,7 @@ export const IMAGE_MODELS: MediaModel[] = [
   { id: 'dall-e-3', label: 'dall-e-3', hint: 'OpenAI · classic', provider: 'openai', caps: ['t2i'] },
   { id: 'dall-e-2', label: 'dall-e-2', hint: 'OpenAI · legacy', provider: 'openai', caps: ['t2i'] },
 
+  { id: 'doubao-seedream-4-0-250828', label: 'seedream-4.0', hint: 'ByteDance · Doubao image (t2i + edit, multi-aspect)', provider: 'volcengine', caps: ['t2i', 'i2i'] },
   { id: 'doubao-seedream-3-0-t2i-250415', label: 'seedream-3.0', hint: 'ByteDance · Doubao image', provider: 'volcengine', caps: ['t2i'] },
   { id: 'doubao-seededit-3-0-i2i-250628', label: 'seededit-3.0', hint: 'ByteDance · image edit', provider: 'volcengine', caps: ['i2i'] },
 

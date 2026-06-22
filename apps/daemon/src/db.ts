@@ -9,9 +9,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { ProjectBrowserWorkspaceTab, ProjectTabsState } from '@open-design/contracts';
+import { fileURLToPath } from 'node:url';
 import { migrateCritique } from './critique/persistence.js';
 import { migrateMediaTasks } from './media-tasks.js';
 import { migratePlugins } from './plugins/persistence.js';
+import { migrateTenantId, currentTenantId } from './multitenant.js';
+import { resolveDaemonDbConfig } from './storage/daemon-db.js';
+import { openPgSync, type SqliteLike } from './storage/pg-sync.js';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, any>;
@@ -20,6 +24,12 @@ type ChatSessionMode = 'design' | 'chat';
 
 let dbInstance: SqliteDb | null = null;
 let dbFile: string | null = null;
+
+// When the daemon is backed by Postgres (OD_DAEMON_DB=postgres) the data layer
+// runs unchanged against a sync adapter (storage/pg-sync.ts). A few queries use
+// SQLite-only SQL (json_extract/json_each, rowid); they branch on this flag.
+let pgMode = false;
+export function isPgMode(): boolean { return pgMode; }
 
 function row(value: unknown): DbRow | null {
   return value && typeof value === 'object' ? value as DbRow : null;
@@ -30,10 +40,25 @@ function rows(value: unknown[]): DbRow[] {
 }
 
 export function openDatabase(projectRoot: string, { dataDir }: { dataDir?: string } = {}): SqliteDb {
+  const dbcfg = resolveDaemonDbConfig();
+  if (dbcfg.kind === 'postgres') {
+    if (dbInstance && pgMode) return dbInstance;
+    if (dbInstance) closeDatabase();
+    pgMode = true;
+    const adapter = openPgSync(dbcfg, process.env.OD_PG_PASSWORD ?? '');
+    runPgMigrations(adapter);
+    // The adapter implements the better-sqlite3 subset the daemon uses; the
+    // cast lets db.ts + all call sites stay unchanged.
+    dbInstance = adapter as unknown as SqliteDb;
+    dbFile = `pg://${dbcfg.postgres!.host}/${dbcfg.postgres!.database}`;
+    return dbInstance;
+  }
+
   const dir = dataDir ? path.resolve(dataDir) : path.join(projectRoot, '.od');
   const file = path.join(dir, 'app.sqlite');
   if (dbInstance && dbFile === file) return dbInstance;
   if (dbInstance) closeDatabase();
+  pgMode = false;
   fs.mkdirSync(dir, { recursive: true });
   const db = new Database(file);
   db.pragma('journal_mode = WAL');
@@ -42,6 +67,21 @@ export function openDatabase(projectRoot: string, { dataDir }: { dataDir?: strin
   dbInstance = db;
   dbFile = file;
   return db;
+}
+
+// Applies migrations/*.sql through the sync adapter (PG mode). The .sql files
+// own their BEGIN/COMMIT. Tracked in schema_migrations to run each once.
+function runPgMigrations(adapter: SqliteLike): void {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const dir = path.resolve(here, '../migrations');
+  adapter.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at BIGINT NOT NULL)`);
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+  for (const f of files) {
+    const done = adapter.prepare(`SELECT 1 FROM schema_migrations WHERE filename = ?`).get(f);
+    if (done) continue;
+    adapter.exec(fs.readFileSync(path.join(dir, f), 'utf8'));
+    adapter.prepare(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`).run(f, Date.now());
+  }
 }
 
 export function closeDatabase() {
@@ -350,6 +390,7 @@ function migrate(db: SqliteDb): void {
   migrateCritique(db);
   migrateMediaTasks(db);
   migratePlugins(db);
+  migrateTenantId(db);
 }
 
 function migratePreviewCommentsSlideKey(db: SqliteDb): void {
@@ -416,36 +457,39 @@ const DEPLOYMENT_COLS = `id, project_id AS projectId, file_name AS fileName,
   created_at AS createdAt, updated_at AS updatedAt`;
 
 export function listDeployments(db: SqliteDb, projectId: string) {
+  const tenantId = currentTenantId();
   return (db
     .prepare(
       `SELECT ${DEPLOYMENT_COLS}
          FROM deployments
-        WHERE project_id = ?
+        WHERE project_id = ? AND tenant_id = ?
         ORDER BY updated_at DESC`,
     )
-    .all(projectId) as DbRow[])
+    .all(projectId, tenantId) as DbRow[])
     .map(normalizeDeployment);
 }
 
 export function getDeployment(db: SqliteDb, projectId: string, fileName: string, providerId: string) {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT ${DEPLOYMENT_COLS}
          FROM deployments
-        WHERE project_id = ? AND file_name = ? AND provider_id = ?`,
+        WHERE project_id = ? AND file_name = ? AND provider_id = ? AND tenant_id = ?`,
     )
-    .get(projectId, fileName, providerId) as DbRow | undefined;
+    .get(projectId, fileName, providerId, tenantId) as DbRow | undefined;
   return row ? normalizeDeployment(row) : null;
 }
 
 export function getDeploymentById(db: SqliteDb, projectId: string, id: string) {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT ${DEPLOYMENT_COLS}
          FROM deployments
-        WHERE project_id = ? AND id = ?`,
+        WHERE project_id = ? AND id = ? AND tenant_id = ?`,
     )
-    .get(projectId, id) as DbRow | undefined;
+    .get(projectId, id, tenantId) as DbRow | undefined;
   return row ? normalizeDeployment(row) : null;
 }
 
@@ -490,12 +534,13 @@ export function upsertDeployment(db: SqliteDb, deployment: DbRow) {
     updatedAt: deployment.updatedAt ?? now,
   };
   const providerMetadataJson = stringifyJsonObjectOrNull(next.providerMetadata);
+  const tenantId = currentTenantId();
   db.prepare(
     `INSERT INTO deployments
        (id, project_id, file_name, provider_id, url, deployment_id,
         deployment_count, target, status, status_message, reachable_at,
-        provider_metadata_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        provider_metadata_json, created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(project_id, file_name, provider_id) DO UPDATE SET
        url = excluded.url,
        deployment_id = excluded.deployment_id,
@@ -505,7 +550,8 @@ export function upsertDeployment(db: SqliteDb, deployment: DbRow) {
        status_message = excluded.status_message,
        reachable_at = excluded.reachable_at,
        provider_metadata_json = excluded.provider_metadata_json,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at,
+       tenant_id = excluded.tenant_id`,
   ).run(
     next.id,
     next.projectId,
@@ -521,6 +567,7 @@ export function upsertDeployment(db: SqliteDb, deployment: DbRow) {
     providerMetadataJson,
     next.createdAt,
     next.updatedAt,
+    tenantId,
   );
   return getDeployment(db, next.projectId, next.fileName, next.providerId);
 }
@@ -572,17 +619,20 @@ const PROJECT_COLS = `id, name, skill_id AS skillId,
   updated_at AS updatedAt`;
 
 export function listProjects(db: SqliteDb) {
+  const tenantId = currentTenantId();
   const rows = db
     .prepare(
       `SELECT ${PROJECT_COLS}
          FROM projects
+        WHERE tenant_id = ?
         ORDER BY updated_at DESC`,
     )
-    .all() as DbRow[];
+    .all(tenantId) as DbRow[];
   return rows.map(normalizeProject);
 }
 
 export function listLatestProjectRunStatuses(db: SqliteDb) {
+  const tenantId = currentTenantId();
   const rows = db
     .prepare(
       `SELECT c.project_id AS projectId,
@@ -592,9 +642,10 @@ export function listLatestProjectRunStatuses(db: SqliteDb) {
          FROM messages m
          JOIN conversations c ON c.id = m.conversation_id
         WHERE m.run_status IS NOT NULL
+          AND c.tenant_id = ?
         ORDER BY updatedAt DESC`,
     )
-    .all() as DbRow[];
+    .all(tenantId) as DbRow[];
   const latestByProject = new Map<string, DbRow>();
   for (const row of rows) {
     if (!latestByProject.has(row.projectId)) {
@@ -609,6 +660,7 @@ export function listLatestProjectRunStatuses(db: SqliteDb) {
 }
 
 export function listProjectsAwaitingInput(db: SqliteDb) {
+  const tenantId = currentTenantId();
   const rows = db
     .prepare(
       `SELECT latest.projectId
@@ -624,6 +676,7 @@ export function listProjectsAwaitingInput(db: SqliteDb) {
              FROM messages m
              JOIN conversations c ON c.id = m.conversation_id
             WHERE m.role = 'assistant'
+              AND c.tenant_id = ?
               -- ask-question is an accepted alias for question-form (UI parser
               -- + daemon open-tag matcher), so an alias-form turn must also
               -- count as awaiting input.
@@ -644,23 +697,25 @@ export function listProjectsAwaitingInput(db: SqliteDb) {
                )
           )`,
     )
-    .all() as DbRow[];
+    .all(tenantId) as DbRow[];
   return new Set((rows as DbRow[]).map((row: DbRow) => row.projectId));
 }
 
 export function getProject(db: SqliteDb, id: string) {
+  const tenantId = currentTenantId();
   const row = db
-    .prepare(`SELECT ${PROJECT_COLS} FROM projects WHERE id = ?`)
-    .get(id) as DbRow | undefined;
+    .prepare(`SELECT ${PROJECT_COLS} FROM projects WHERE id = ? AND tenant_id = ?`)
+    .get(id, tenantId) as DbRow | undefined;
   return row ? normalizeProject(row) : null;
 }
 
 export function insertProject(db: SqliteDb, p: DbRow) {
+  const tenantId = currentTenantId();
   db.prepare(
     `INSERT INTO projects
        (id, name, skill_id, design_system_id, pending_prompt,
-        metadata_json, custom_instructions, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        metadata_json, custom_instructions, created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     p.id,
     p.name,
@@ -671,11 +726,13 @@ export function insertProject(db: SqliteDb, p: DbRow) {
     p.customInstructions ?? null,
     p.createdAt,
     p.updatedAt,
+    tenantId,
   );
   return getProject(db, p.id);
 }
 
 export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
+  const tenantId = currentTenantId();
   const existing = getProject(db, id);
   if (!existing) return null;
   const merged = {
@@ -692,7 +749,7 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
             metadata_json = ?,
             custom_instructions = ?,
             updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND tenant_id = ?`,
   ).run(
     merged.name,
     merged.skillId ?? null,
@@ -702,12 +759,14 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
     merged.customInstructions ?? null,
     merged.updatedAt,
     id,
+    tenantId,
   );
   return getProject(db, id);
 }
 
 export function deleteProject(db: SqliteDb, id: string) {
-  db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
+  const tenantId = currentTenantId();
+  db.prepare(`DELETE FROM projects WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 function normalizeProject(row: DbRow) {
@@ -751,25 +810,28 @@ function normalizeProjectRunStatus(status: unknown) {
 // ---------- templates ----------
 
 export function listTemplates(db: SqliteDb) {
+  const tenantId = currentTenantId();
   return (db
     .prepare(
       `SELECT id, name, description, source_project_id AS sourceProjectId,
               files_json AS filesJson, created_at AS createdAt
          FROM templates
+        WHERE tenant_id = ?
         ORDER BY created_at DESC`,
     )
-    .all() as DbRow[])
+    .all(tenantId) as DbRow[])
     .map(normalizeTemplate);
 }
 
 export function getTemplate(db: SqliteDb, id: string) {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT id, name, description, source_project_id AS sourceProjectId,
               files_json AS filesJson, created_at AS createdAt
-         FROM templates WHERE id = ?`,
+         FROM templates WHERE id = ? AND tenant_id = ?`,
     )
-    .get(id) as DbRow | undefined;
+    .get(id, tenantId) as DbRow | undefined;
   return row ? normalizeTemplate(row) : null;
 }
 
@@ -778,21 +840,23 @@ export function findTemplateByNameAndProject(
   name: string,
   sourceProjectId: string,
 ) {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT id, name, description, source_project_id AS sourceProjectId,
               files_json AS filesJson, created_at AS createdAt
          FROM templates
-        WHERE name = ? AND source_project_id = ?`,
+        WHERE name = ? AND source_project_id = ? AND tenant_id = ?`,
     )
-    .get(name, sourceProjectId) as DbRow | undefined;
+    .get(name, sourceProjectId, tenantId) as DbRow | undefined;
   return row ? normalizeTemplate(row) : null;
 }
 
 export function insertTemplate(db: SqliteDb, t: DbRow) {
+  const tenantId = currentTenantId();
   db.prepare(
-    `INSERT INTO templates (id, name, description, source_project_id, files_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO templates (id, name, description, source_project_id, files_json, created_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     t.id,
     t.name,
@@ -800,6 +864,7 @@ export function insertTemplate(db: SqliteDb, t: DbRow) {
     t.sourceProjectId ?? null,
     JSON.stringify(t.files ?? []),
     t.createdAt,
+    tenantId,
   );
   return getTemplate(db, t.id);
 }
@@ -809,14 +874,16 @@ export function updateTemplate(
   id: string,
   t: { description: string | null; files: unknown[] },
 ) {
+  const tenantId = currentTenantId();
   db.prepare(
-    `UPDATE templates SET description = ?, files_json = ? WHERE id = ?`,
-  ).run(t.description, JSON.stringify(t.files), id);
+    `UPDATE templates SET description = ?, files_json = ? WHERE id = ? AND tenant_id = ?`,
+  ).run(t.description, JSON.stringify(t.files), id, tenantId);
   return getTemplate(db, id);
 }
 
 export function deleteTemplate(db: SqliteDb, id: string) {
-  db.prepare(`DELETE FROM templates WHERE id = ?`).run(id);
+  const tenantId = currentTenantId();
+  db.prepare(`DELETE FROM templates WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 function normalizeTemplate(row: DbRow) {
@@ -839,13 +906,14 @@ function normalizeTemplate(row: DbRow) {
 // ---------- conversations ----------
 
 export function listConversations(db: SqliteDb, projectId: string) {
+  const tenantId = currentTenantId();
   return rows(db
     .prepare(
       `WITH project_conversations AS (
           SELECT id, project_id AS projectId, title, session_mode AS sessionMode,
                  created_at AS createdAt, updated_at AS updatedAt
             FROM conversations
-           WHERE project_id = ?
+           WHERE project_id = ? AND tenant_id = ?
         ),
         latest_runs AS (
           SELECT conversation_id AS conversationId,
@@ -897,18 +965,19 @@ export function listConversations(db: SqliteDb, projectId: string) {
           LEFT JOIN total_run_durations trd ON trd.conversationId = c.id
          ORDER BY c.updatedAt DESC`,
     )
-    .all(projectId)).map(normalizeConversation);
+    .all(projectId, tenantId)).map(normalizeConversation);
 }
 
 export function getConversation(db: SqliteDb, id: string) {
+  const tenantId = currentTenantId();
   const r = db
     .prepare(
       `SELECT id, project_id AS projectId, title, session_mode AS sessionMode,
               created_at AS createdAt, updated_at AS updatedAt,
               (SELECT COUNT(*) FROM messages WHERE conversation_id = conversations.id) AS messageCount
-         FROM conversations WHERE id = ?`,
+         FROM conversations WHERE id = ? AND tenant_id = ?`,
     )
-    .get(id) as DbRow | undefined;
+    .get(id, tenantId) as DbRow | undefined;
   if (!r) return null;
   return {
     ...normalizeConversation(r),
@@ -979,6 +1048,16 @@ function totalConversationRunDurationMs(db: SqliteDb, conversationId: string): n
 
 function terminalRunDurationSql(alias?: string) {
   const p = alias ? `${alias}.` : '';
+  if (pgMode) {
+    // Postgres: started/ended are BIGINT (ms epoch); CAST AS INTEGER would
+    // overflow int32 and json_each/json_extract don't exist. Terminal runs
+    // carry started_at/ended_at, so the events_json fallback degrades to 0.
+    return `CASE
+              WHEN ${p}started_at IS NOT NULL AND ${p}ended_at IS NOT NULL
+                THEN GREATEST(${p}ended_at - ${p}started_at, 0)
+              ELSE 0
+            END`;
+  }
   return `CASE
             WHEN ${p}started_at IS NOT NULL AND ${p}ended_at IS NOT NULL THEN
               CASE
@@ -1051,10 +1130,11 @@ function latestUsageDurationMs(eventsJson: unknown): number | undefined {
 }
 
 export function insertConversation(db: SqliteDb, c: DbRow) {
+  const tenantId = currentTenantId();
   db.prepare(
     `INSERT INTO conversations
-       (id, project_id, title, session_mode, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+       (id, project_id, title, session_mode, created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     c.id,
     c.projectId,
@@ -1062,11 +1142,13 @@ export function insertConversation(db: SqliteDb, c: DbRow) {
     normalizeConversationSessionMode(c.sessionMode),
     c.createdAt,
     c.updatedAt,
+    tenantId,
   );
   return getConversation(db, c.id);
 }
 
 export function updateConversation(db: SqliteDb, id: string, patch: DbRow) {
+  const tenantId = currentTenantId();
   const existing = getConversation(db, id);
   if (!existing) return null;
   const merged = {
@@ -1079,13 +1161,14 @@ export function updateConversation(db: SqliteDb, id: string, patch: DbRow) {
   };
   db.prepare(
     `UPDATE conversations
-        SET title = ?, session_mode = ?, updated_at = ? WHERE id = ?`,
-  ).run(merged.title ?? null, merged.sessionMode, merged.updatedAt, id);
+        SET title = ?, session_mode = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+  ).run(merged.title ?? null, merged.sessionMode, merged.updatedAt, id, tenantId);
   return getConversation(db, id);
 }
 
 export function deleteConversation(db: SqliteDb, id: string) {
-  db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
+  const tenantId = currentTenantId();
+  db.prepare(`DELETE FROM conversations WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 // ---------- agent sessions ----------
@@ -1095,12 +1178,13 @@ export function getAgentSession(
   conversationId: string,
   agentId: string,
 ): string | null {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT session_id FROM agent_sessions
-        WHERE conversation_id = ? AND agent_id = ?`,
+        WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
     )
-    .get(conversationId, agentId) as DbRow | undefined;
+    .get(conversationId, agentId, tenantId) as DbRow | undefined;
   return row && typeof row.session_id === 'string' ? row.session_id : null;
 }
 
@@ -1113,19 +1197,22 @@ export function upsertAgentSession(
     stablePromptHash?: string | null;
   },
 ): void {
+  const tenantId = currentTenantId();
   db.prepare(
-    `INSERT INTO agent_sessions (conversation_id, agent_id, session_id, stable_prompt_hash, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO agent_sessions (conversation_id, agent_id, session_id, stable_prompt_hash, updated_at, tenant_id)
+       VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(conversation_id, agent_id)
        DO UPDATE SET session_id = excluded.session_id,
                      stable_prompt_hash = excluded.stable_prompt_hash,
-                     updated_at = excluded.updated_at`,
+                     updated_at = excluded.updated_at,
+                     tenant_id = excluded.tenant_id`,
   ).run(
     input.conversationId,
     input.agentId,
     input.sessionId,
     input.stablePromptHash ?? null,
     Date.now(),
+    tenantId,
   );
 }
 
@@ -1134,12 +1221,13 @@ export function getAgentSessionRecord(
   conversationId: string,
   agentId: string,
 ): { sessionId: string; stablePromptHash: string | null } | null {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT session_id, stable_prompt_hash FROM agent_sessions
-        WHERE conversation_id = ? AND agent_id = ?`,
+        WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
     )
-    .get(conversationId, agentId) as DbRow | undefined;
+    .get(conversationId, agentId, tenantId) as DbRow | undefined;
   if (!row || typeof row.session_id !== 'string') return null;
   return {
     sessionId: row.session_id,
@@ -1154,10 +1242,11 @@ export function updateAgentSessionStableHash(
   agentId: string,
   stablePromptHash: string,
 ): void {
+  const tenantId = currentTenantId();
   db.prepare(
     `UPDATE agent_sessions SET stable_prompt_hash = ?, updated_at = ?
-      WHERE conversation_id = ? AND agent_id = ?`,
-  ).run(stablePromptHash, Date.now(), conversationId, agentId);
+      WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
+  ).run(stablePromptHash, Date.now(), conversationId, agentId, tenantId);
 }
 
 export function clearAgentSession(
@@ -1165,14 +1254,16 @@ export function clearAgentSession(
   conversationId: string,
   agentId: string,
 ): void {
+  const tenantId = currentTenantId();
   db.prepare(
-    `DELETE FROM agent_sessions WHERE conversation_id = ? AND agent_id = ?`,
-  ).run(conversationId, agentId);
+    `DELETE FROM agent_sessions WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
+  ).run(conversationId, agentId, tenantId);
 }
 
 // ---------- messages ----------
 
 export function listMessages(db: SqliteDb, conversationId: string) {
+  const tenantId = currentTenantId();
   return (db
     .prepare(
       `SELECT id, role, content, agent_id AS agentId, agent_name AS agentName,
@@ -1190,17 +1281,18 @@ export function listMessages(db: SqliteDb, conversationId: string) {
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages
-        WHERE conversation_id = ?
+        WHERE conversation_id = ? AND tenant_id = ?
         ORDER BY position ASC`,
     )
-    .all(conversationId) as DbRow[])
+    .all(conversationId, tenantId) as DbRow[])
     .map(normalizeMessage);
 }
 
 export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
+  const tenantId = currentTenantId();
   const existing = db
-    .prepare(`SELECT position FROM messages WHERE id = ?`)
-    .get(m.id) as DbRow | undefined;
+    .prepare(`SELECT position FROM messages WHERE id = ? AND tenant_id = ?`)
+    .get(m.id, tenantId) as DbRow | undefined;
   const now = Date.now();
   if (existing) {
     db.prepare(
@@ -1216,7 +1308,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
                 ELSE telemetry_finalized_at
               END,
               started_at = ?, ended_at = ?
-        WHERE id = ?`,
+        WHERE id = ? AND tenant_id = ?`,
     ).run(
       m.role,
       m.content,
@@ -1239,13 +1331,14 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.startedAt ?? null,
       m.endedAt ?? null,
       m.id,
+      tenantId,
     );
   } else {
     const max = db
       .prepare(
-        `SELECT COALESCE(MAX(position), -1) AS m FROM messages WHERE conversation_id = ?`,
+        `SELECT COALESCE(MAX(position), -1) AS m FROM messages WHERE conversation_id = ? AND tenant_id = ?`,
       )
-      .get(conversationId) as DbRow | undefined;
+      .get(conversationId, tenantId) as DbRow | undefined;
     const position = (max?.m ?? -1) + 1;
     // 23 values: id, conversation_id, role, content, agent_id, agent_name,
     // run_id, run_status, last_run_event_id, events_json, attachments_json,
@@ -1260,8 +1353,8 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
           attachments_json, comment_attachments_json, produced_files_json,
           feedback_json, pre_turn_file_names_json,
           session_mode, run_context_json, applied_plugin_snapshot_json,
-          telemetry_finalized_at, started_at, ended_at, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          telemetry_finalized_at, started_at, ended_at, position, created_at, tenant_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       m.id,
       conversationId,
@@ -1286,12 +1379,14 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.endedAt ?? null,
       position,
       now,
+      tenantId,
     );
   }
   // Bump conversation activity so the sidebar's recency sort works.
-  db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`).run(
+  db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ? AND tenant_id = ?`).run(
     now,
     conversationId,
+    tenantId,
   );
   const row = db
     .prepare(
@@ -1309,20 +1404,21 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
-         FROM messages WHERE id = ?`,
+         FROM messages WHERE id = ? AND tenant_id = ?`,
     )
-    .get(m.id) as DbRow | undefined;
+    .get(m.id, tenantId) as DbRow | undefined;
   return row ? normalizeMessage(row) : null;
 }
 
 export function getMessageTelemetryFinalizationState(db: SqliteDb, messageId: string) {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT telemetry_finalized_at AS telemetryFinalizedAt
          FROM messages
-        WHERE id = ?`,
+        WHERE id = ? AND tenant_id = ?`,
     )
-    .get(messageId) as DbRow | undefined;
+    .get(messageId, tenantId) as DbRow | undefined;
   if (!row) {
     return {
       exists: false,
@@ -1337,12 +1433,13 @@ export function getMessageTelemetryFinalizationState(db: SqliteDb, messageId: st
 }
 
 export function appendMessageStatusEvent(db: SqliteDb, messageId: string, event: DbRow) {
+  const tenantId = currentTenantId();
   const label = typeof event?.label === 'string' ? event.label.trim() : '';
   const detail = typeof event?.detail === 'string' ? event.detail.trim() : '';
   if (!label) return null;
   const row = db
-    .prepare(`SELECT events_json AS eventsJson FROM messages WHERE id = ?`)
-    .get(messageId) as DbRow | undefined;
+    .prepare(`SELECT events_json AS eventsJson FROM messages WHERE id = ? AND tenant_id = ?`)
+    .get(messageId, tenantId) as DbRow | undefined;
   if (!row) return null;
   const parsed = parseJsonOrUndef(row.eventsJson);
   const events = Array.isArray(parsed) ? parsed : [];
@@ -1354,18 +1451,19 @@ export function appendMessageStatusEvent(db: SqliteDb, messageId: string, event:
     ? { kind: 'status', label, detail }
     : { kind: 'status', label };
   const next = [...events, nextEvent];
-  db.prepare(`UPDATE messages SET events_json = ? WHERE id = ?`)
-    .run(JSON.stringify(next), messageId);
+  db.prepare(`UPDATE messages SET events_json = ? WHERE id = ? AND tenant_id = ?`)
+    .run(JSON.stringify(next), messageId, tenantId);
   return next;
 }
 
 export function appendMessageAgentEvent(db: SqliteDb, messageId: string, event: DbRow) {
+  const tenantId = currentTenantId();
   if (!event || typeof event !== 'object') return null;
   const kind = typeof event.kind === 'string' ? event.kind : '';
   if (!kind) return null;
   const row = db
-    .prepare(`SELECT content, events_json AS eventsJson FROM messages WHERE id = ?`)
-    .get(messageId) as DbRow | undefined;
+    .prepare(`SELECT content, events_json AS eventsJson FROM messages WHERE id = ? AND tenant_id = ?`)
+    .get(messageId, tenantId) as DbRow | undefined;
   if (!row) return null;
   const parsed = parseJsonOrUndef(row.eventsJson);
   const events = Array.isArray(parsed) ? parsed : [];
@@ -1375,13 +1473,14 @@ export function appendMessageAgentEvent(db: SqliteDb, messageId: string, event: 
   }
   const next = [...events, event];
   const textDelta = kind === 'text' && typeof event.text === 'string' ? event.text : '';
-  db.prepare(`UPDATE messages SET content = COALESCE(content, '') || ?, events_json = ? WHERE id = ?`)
-    .run(textDelta, JSON.stringify(next), messageId);
+  db.prepare(`UPDATE messages SET content = COALESCE(content, '') || ?, events_json = ? WHERE id = ? AND tenant_id = ?`)
+    .run(textDelta, JSON.stringify(next), messageId, tenantId);
   return next;
 }
 
 export function deleteMessage(db: SqliteDb, id: string) {
-  db.prepare(`DELETE FROM messages WHERE id = ?`).run(id);
+  const tenantId = currentTenantId();
+  db.prepare(`DELETE FROM messages WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 // ---------- preview comments ----------
@@ -1396,6 +1495,7 @@ const PREVIEW_COMMENT_STATUSES = new Set([
 ]);
 
 export function listPreviewComments(db: SqliteDb, projectId: string, conversationId: string) {
+  const tenantId = currentTenantId();
   return (db
     .prepare(
       `SELECT id, project_id AS projectId, conversation_id AS conversationId,
@@ -1407,14 +1507,15 @@ export function listPreviewComments(db: SqliteDb, projectId: string, conversatio
               slide_index AS slideIndex,
               note, status, created_at AS createdAt, updated_at AS updatedAt
          FROM preview_comments
-        WHERE project_id = ? AND conversation_id = ?
-        ORDER BY created_at ASC, rowid ASC`,
+        WHERE project_id = ? AND conversation_id = ? AND tenant_id = ?
+        ORDER BY created_at ASC, id ASC`,
     )
-    .all(projectId, conversationId) as DbRow[])
+    .all(projectId, conversationId, tenantId) as DbRow[])
     .map(normalizePreviewComment);
 }
 
 export function upsertPreviewComment(db: SqliteDb, projectId: string, conversationId: string, input: DbRow) {
+  const tenantId = currentTenantId();
   const target = input?.target ?? {};
   const note = typeof input?.note === 'string' ? input.note.trim() : '';
   const attachmentsProvided = Object.prototype.hasOwnProperty.call(input ?? {}, 'attachments');
@@ -1443,9 +1544,9 @@ export function upsertPreviewComment(db: SqliteDb, projectId: string, conversati
     .prepare(
       `SELECT id, created_at AS createdAt, attachments_json AS attachmentsJson
          FROM preview_comments
-        WHERE project_id = ? AND conversation_id = ? AND file_path = ? AND element_id = ? AND slide_key = ?`,
+        WHERE project_id = ? AND conversation_id = ? AND file_path = ? AND element_id = ? AND slide_key = ? AND tenant_id = ?`,
     )
-    .get(projectId, conversationId, filePath, elementId, slideKey) as DbRow | undefined;
+    .get(projectId, conversationId, filePath, elementId, slideKey, tenantId) as DbRow | undefined;
   const id = existing?.id ?? randomCommentId();
   const createdAt = existing?.createdAt ?? now;
   const existingAttachments = normalizePreviewCommentAttachments(parseJsonOrUndef(existing?.attachmentsJson));
@@ -1456,8 +1557,8 @@ export function upsertPreviewComment(db: SqliteDb, projectId: string, conversati
     `INSERT INTO preview_comments
        (id, project_id, conversation_id, file_path, element_id, selector, label,
         text, position_json, html_hint, selection_kind, member_count, pod_members_json,
-        style_json, attachments_json, slide_index, slide_key, note, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        style_json, attachments_json, slide_index, slide_key, note, status, created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(project_id, conversation_id, file_path, element_id, slide_key) DO UPDATE SET
        selector = excluded.selector,
        label = excluded.label,
@@ -1472,7 +1573,8 @@ export function upsertPreviewComment(db: SqliteDb, projectId: string, conversati
        slide_index = excluded.slide_index,
        note = excluded.note,
        status = 'open',
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at,
+       tenant_id = excluded.tenant_id`,
   ).run(
     id,
     projectId,
@@ -1495,32 +1597,36 @@ export function upsertPreviewComment(db: SqliteDb, projectId: string, conversati
     'open',
     createdAt,
     now,
+    tenantId,
   );
   return getPreviewComment(db, projectId, conversationId, id);
 }
 
 export function updatePreviewCommentStatus(db: SqliteDb, projectId: string, conversationId: string, id: string, status: string) {
   if (!PREVIEW_COMMENT_STATUSES.has(status)) throw new Error('invalid comment status');
+  const tenantId = currentTenantId();
   const now = Date.now();
   db.prepare(
     `UPDATE preview_comments
         SET status = ?, updated_at = ?
-      WHERE id = ? AND project_id = ? AND conversation_id = ?`,
-  ).run(status, now, id, projectId, conversationId);
+      WHERE id = ? AND project_id = ? AND conversation_id = ? AND tenant_id = ?`,
+  ).run(status, now, id, projectId, conversationId, tenantId);
   return getPreviewComment(db, projectId, conversationId, id);
 }
 
 export function deletePreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {
+  const tenantId = currentTenantId();
   const result = db
     .prepare(
       `DELETE FROM preview_comments
-        WHERE id = ? AND project_id = ? AND conversation_id = ?`,
+        WHERE id = ? AND project_id = ? AND conversation_id = ? AND tenant_id = ?`,
     )
-    .run(id, projectId, conversationId);
+    .run(id, projectId, conversationId, tenantId);
   return result.changes > 0;
 }
 
 function getPreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {
+  const tenantId = currentTenantId();
   const row = db
     .prepare(
       `SELECT id, project_id AS projectId, conversation_id AS conversationId,
@@ -1532,9 +1638,9 @@ function getPreviewComment(db: SqliteDb, projectId: string, conversationId: stri
               slide_index AS slideIndex,
               note, status, created_at AS createdAt, updated_at AS updatedAt
          FROM preview_comments
-        WHERE id = ? AND project_id = ? AND conversation_id = ?`,
+        WHERE id = ? AND project_id = ? AND conversation_id = ? AND tenant_id = ?`,
     )
-    .get(id, projectId, conversationId) as DbRow | undefined;
+    .get(id, projectId, conversationId, tenantId) as DbRow | undefined;
   return row ? normalizePreviewComment(row) : null;
 }
 
@@ -1724,26 +1830,29 @@ const ROUTINE_RUN_COLS = `id, routine_id AS routineId, trigger, status,
   completed_at AS completedAt, summary, error, error_code AS errorCode`;
 
 export function listRoutines(db: SqliteDb) {
+  const tenantId = currentTenantId();
   return (db
-    .prepare(`SELECT ${ROUTINE_COLS} FROM routines ORDER BY created_at ASC`)
-    .all() as DbRow[])
+    .prepare(`SELECT ${ROUTINE_COLS} FROM routines WHERE tenant_id = ? ORDER BY created_at ASC`)
+    .all(tenantId) as DbRow[])
     .map(normalizeRoutine);
 }
 
 export function getRoutine(db: SqliteDb, id: string) {
+  const tenantId = currentTenantId();
   const r = db
-    .prepare(`SELECT ${ROUTINE_COLS} FROM routines WHERE id = ?`)
-    .get(id) as DbRow | undefined;
+    .prepare(`SELECT ${ROUTINE_COLS} FROM routines WHERE id = ? AND tenant_id = ?`)
+    .get(id, tenantId) as DbRow | undefined;
   return r ? normalizeRoutine(r) : null;
 }
 
 export function insertRoutine(db: SqliteDb, r: DbRow) {
+  const tenantId = currentTenantId();
   db.prepare(
     `INSERT INTO routines
        (id, name, prompt, schedule_kind, schedule_value, schedule_json,
         project_mode, project_id, skill_id, agent_id, context_json, enabled,
-        created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     r.id,
     r.name,
@@ -1759,11 +1868,13 @@ export function insertRoutine(db: SqliteDb, r: DbRow) {
     r.enabled ? 1 : 0,
     r.createdAt,
     r.updatedAt,
+    tenantId,
   );
   return getRoutine(db, r.id);
 }
 
 export function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
+  const tenantId = currentTenantId();
   const existing = getRoutine(db, id);
   if (!existing) return null;
   const merged = {
@@ -1778,7 +1889,7 @@ export function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
             project_mode = ?, project_id = ?,
             skill_id = ?, agent_id = ?, context_json = ?,
             enabled = ?, updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND tenant_id = ?`,
   ).run(
     merged.name,
     merged.prompt,
@@ -1793,12 +1904,14 @@ export function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
     merged.enabled ? 1 : 0,
     merged.updatedAt,
     id,
+    tenantId,
   );
   return getRoutine(db, id);
 }
 
 export function deleteRoutine(db: SqliteDb, id: string): boolean {
-  const result = db.prepare(`DELETE FROM routines WHERE id = ?`).run(id);
+  const tenantId = currentTenantId();
+  const result = db.prepare(`DELETE FROM routines WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
   return result.changes > 0;
 }
 
@@ -1879,9 +1992,10 @@ export function insertRoutineRun(db: SqliteDb, r: DbRow) {
 
 export function insertScheduledRoutineRun(db: SqliteDb, r: DbRow, slotAt: number) {
   const insertClaim = db.prepare(
-    `INSERT OR IGNORE INTO routine_schedule_claims
+    `INSERT INTO routine_schedule_claims
        (routine_id, slot_at, claimed_at)
-     VALUES (?, ?, ?)`,
+     VALUES (?, ?, ?)
+     ON CONFLICT DO NOTHING`,
   );
   const insertRun = db.prepare(
     `INSERT INTO routine_runs
@@ -2003,15 +2117,16 @@ function parseProjectTabsStateJson(value: unknown): ProjectTabsState | null {
 }
 
 export function listTabs(db: SqliteDb, projectId: string) {
+  const tenantId = currentTenantId();
   const rows = db
     .prepare(
       `SELECT name, position, is_active AS isActive
-         FROM tabs WHERE project_id = ? ORDER BY position ASC`,
+         FROM tabs WHERE project_id = ? AND tenant_id = ? ORDER BY position ASC`,
     )
-    .all(projectId) as DbRow[];
+    .all(projectId, tenantId) as DbRow[];
   const state = db
-    .prepare(`SELECT project_id, updated_at AS updatedAt, state_json AS stateJson FROM tabs_state WHERE project_id = ? LIMIT 1`)
-    .get(projectId) as DbRow | undefined;
+    .prepare(`SELECT project_id, updated_at AS updatedAt, state_json AS stateJson FROM tabs_state WHERE project_id = ? AND tenant_id = ? LIMIT 1`)
+    .get(projectId, tenantId) as DbRow | undefined;
   const savedState = parseProjectTabsStateJson(state?.stateJson);
   if (savedState) {
     return {
@@ -2035,6 +2150,7 @@ export function setTabs(
   stateOrNames: ProjectTabsState | string[],
   activeName: string | null = null,
 ) {
+  const tenantId = currentTenantId();
   const state = normalizeProjectTabsState(
     Array.isArray(stateOrNames)
       ? { tabs: stateOrNames, active: activeName }
@@ -2042,19 +2158,20 @@ export function setTabs(
   ) ?? { tabs: [], active: null };
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO tabs_state (project_id, updated_at, state_json)
-       VALUES (?, ?, ?)
+      `INSERT INTO tabs_state (project_id, updated_at, state_json, tenant_id)
+       VALUES (?, ?, ?, ?)
        ON CONFLICT(project_id) DO UPDATE SET
          updated_at = excluded.updated_at,
-         state_json = excluded.state_json`,
-    ).run(projectId, Date.now(), JSON.stringify(state));
-    db.prepare(`DELETE FROM tabs WHERE project_id = ?`).run(projectId);
+         state_json = excluded.state_json,
+         tenant_id = excluded.tenant_id`,
+    ).run(projectId, Date.now(), JSON.stringify(state), tenantId);
+    db.prepare(`DELETE FROM tabs WHERE project_id = ? AND tenant_id = ?`).run(projectId, tenantId);
     const ins = db.prepare(
-      `INSERT INTO tabs (project_id, name, position, is_active)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO tabs (project_id, name, position, is_active, tenant_id)
+       VALUES (?, ?, ?, ?, ?)`,
     );
     state.tabs.forEach((name: string, i: number) => {
-      ins.run(projectId, name, i, name === state.active ? 1 : 0);
+      ins.run(projectId, name, i, name === state.active ? 1 : 0, tenantId);
     });
   });
   tx();

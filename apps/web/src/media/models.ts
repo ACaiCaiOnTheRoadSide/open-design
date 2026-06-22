@@ -364,6 +364,13 @@ export const IMAGE_MODELS: MediaModel[] = [
 
   // Volcengine — Doubao Seedream image generation.
   {
+    id: 'doubao-seedream-4-0-250828',
+    label: 'seedream-4.0',
+    hint: 'ByteDance · Doubao image (t2i + edit, multi-aspect)',
+    provider: 'volcengine',
+    caps: ['t2i', 'i2i'],
+  },
+  {
     id: 'doubao-seedream-3-0-t2i-250415',
     label: 'seedream-3.0',
     hint: 'ByteDance · Doubao image',
