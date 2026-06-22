@@ -14440,7 +14440,7 @@ export async function startServer({
     if (resolvedSnapshot?.ok) {
       try {
         const { linkSnapshotToRun } = await import('./plugins/snapshots.js');
-        linkSnapshotToRun(db, resolvedSnapshot.snapshotId, run.id);
+        await linkSnapshotToRun(db, resolvedSnapshot.snapshotId, run.id);
       } catch {
         // Linking is best-effort here; in-memory run still carries the id.
       }
@@ -15245,7 +15245,7 @@ export async function startServer({
         run.appliedPluginSnapshotId = resolvedRoutineSnapshot.snapshotId;
         run.pluginId = resolvedRoutineSnapshot.snapshot.pluginId;
         const { linkSnapshotToRun } = await import('./plugins/snapshots.js');
-        linkSnapshotToRun(db, resolvedRoutineSnapshot.snapshotId, run.id);
+        await linkSnapshotToRun(db, resolvedRoutineSnapshot.snapshotId, run.id);
       }
       await upsertMessage(db, conversationId, {
         id: `routine-user-${run.id}`,

@@ -264,7 +264,7 @@ export function registerLiveArtifactRoutes(app: Express, ctx: RegisterLiveArtifa
         projectId,
         artifactId: req.params.artifactId,
       });
-      updateProject(db, projectId, {});
+      await updateProject(db, projectId, {});
       emitLiveArtifactEvent({ projectId }, 'deleted', existing.artifact);
       res.json({ ok: true });
     } catch (err: any) {

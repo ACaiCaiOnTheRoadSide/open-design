@@ -141,7 +141,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         bodyTimeout: LONG_MEDIA_PROXY_TIMEOUT_MS,
       });
       task.status = 'running';
-      persistMediaTask(task);
+      await persistMediaTask(task);
       generateMedia({
         projectRoot: PROJECT_ROOT,
         projectsRoot: PROJECTS_DIR,
@@ -174,7 +174,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           task.status = 'done';
           task.file = meta;
           task.endedAt = Date.now();
-          persistMediaTask(task);
+          void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
           notifyTaskWaiters(task);
           console.error(
             `[task ${taskId.slice(0, 8)}] done size=${meta?.size} mime=${meta?.mime} ` +
@@ -189,7 +189,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
             code: err?.code,
           };
           task.endedAt = Date.now();
-          persistMediaTask(task);
+          void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
           notifyTaskWaiters(task);
           console.error(
             `[task ${taskId.slice(0, 8)}] failed status=${task.error.status} ` +
@@ -212,7 +212,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           code: err?.code,
         };
         task.endedAt = Date.now();
-        persistMediaTask(task);
+        void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
         notifyTaskWaiters(task);
       }
       throw err;
