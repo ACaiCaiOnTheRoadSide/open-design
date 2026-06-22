@@ -86,7 +86,7 @@ export function registerHandoffRoutes(app: Express, ctx: RegisterHandoffRoutesDe
         return sendApiError(res, 400, 'BAD_REQUEST', 'invalid conversationId');
       }
 
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
@@ -94,7 +94,7 @@ export function registerHandoffRoutes(app: Express, ctx: RegisterHandoffRoutesDe
       // Handoff is conversation-scoped — the conversation must exist AND
       // belong to this project, otherwise the synthesized transcript would
       // either be empty or (worse) summarize an unrelated project's chat.
-      const conversation = getConversation(db, conversationId);
+      const conversation = await getConversation(db, conversationId);
       if (!conversation || conversation.projectId !== req.params.id) {
         return sendApiError(
           res,

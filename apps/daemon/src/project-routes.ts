@@ -776,11 +776,11 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       designSystems: designSystems.map((d) => ({ id: d.id, title: d.title })),
       craft: [],
       atoms: FIRST_PARTY_ATOMS.map((a) => ({ id: a.id, label: a.label })),
-      scenarios: collectBundledScenarios(),
+      scenarios: await collectBundledScenarios(),
     };
   }
 
-  function collectBundledScenarios() {
+  async function collectBundledScenarios() {
     type ScenarioEntry = {
       id: string;
       taskKind: 'new-generation' | 'figma-migration' | 'code-migration' | 'tune-collab';
@@ -788,7 +788,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     };
     const byTaskKind = new Map<ScenarioEntry['taskKind'], ScenarioEntry>();
     try {
-      const all = listInstalledPlugins(db);
+      const all = await listInstalledPlugins(db);
       for (const row of all) {
         if (row.sourceKind !== 'bundled') continue;
         const od = row.manifest.od;
@@ -887,17 +887,17 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       : BUILT_IN_PROJECT_LOCATION_ID;
   }
 
-  function unregisterProjectsForRemovedLocations(
+  async function unregisterProjectsForRemovedLocations(
     previousLocations: Array<{ id: string; path: string; builtIn?: boolean }>,
     nextLocations: Array<{ id?: string; path: string }>,
-  ): string[] {
+  ): Promise<string[]> {
     const nextIds = new Set(nextLocations.map((location) => location.id).filter(Boolean));
     const nextPaths = new Set(nextLocations.map((location) => location.path));
     const removed = previousLocations.filter(
       (location) => !location.builtIn && !nextIds.has(location.id) && !nextPaths.has(location.path),
     );
     if (removed.length === 0) return [];
-    return listProjects(db)
+    return (await listProjects(db))
       .filter((project: any) => removed.some((location) => projectBelongsToLocation(project, location)))
       .map((project: any) => project.id);
   }
@@ -935,7 +935,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       }
       const config = await writeAppConfig(ctx.paths.RUNTIME_DATA_DIR, { projectLocations: prepared });
       const locations = allProjectLocations(PROJECTS_DIR, config.projectLocations);
-      const removedProjectIds = unregisterProjectsForRemovedLocations(previousLocations, config.projectLocations ?? []);
+      const removedProjectIds = await unregisterProjectsForRemovedLocations(previousLocations, config.projectLocations ?? []);
       /** @type {import('@open-design/contracts').ProjectLocationsResponse} */
       const body = { locations, removedProjectIds };
       res.json(body);
@@ -963,12 +963,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         scanned += found.length;
         for (const entry of found) {
           const { manifest } = entry;
-          if (getProject(db, manifest.id)) {
+          if (await getProject(db, manifest.id)) {
             existing.push(manifest.id);
             continue;
           }
           try {
-            const project = insertProject(db, {
+            const project = await insertProject(db, {
               id: manifest.id,
               name: manifest.name,
               skillId: manifest.skillId ?? null,
@@ -984,7 +984,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
               createdAt: manifest.createdAt,
               updatedAt: manifest.updatedAt,
             });
-            insertConversation(db, {
+            await insertConversation(db, {
               id: randomId(),
               projectId: manifest.id,
               title: null,
@@ -1008,8 +1008,8 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   app.get('/api/projects', async (_req, res) => {
     try {
       const locations = await configuredProjectLocations();
-      const latestRunStatuses = listLatestProjectRunStatuses(db);
-      const awaitingInputProjects = listProjectsAwaitingInput(db);
+      const latestRunStatuses = await listLatestProjectRunStatuses(db);
+      const awaitingInputProjects = await listProjectsAwaitingInput(db);
       const activeRunStatuses = new Map();
       for (const run of design.runs.list()) {
         if (!run.projectId) continue;
@@ -1028,7 +1028,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       }
       /** @type {import('@open-design/contracts').ProjectsResponse} */
       const body = {
-        projects: listProjects(db)
+        projects: (await listProjects(db))
           .filter((project: any) => projectVisibleForLocations(project, locations))
           .map((project: any) => ({
             ...project,
@@ -1131,7 +1131,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         if (!location || location.builtIn) {
           return sendApiError(res, 400, 'BAD_REQUEST', 'unknown project location');
         }
-        if (getProject(db, id)) {
+        if (await getProject(db, id)) {
           return sendApiError(res, 400, 'BAD_REQUEST', 'project id already exists');
         }
         externalProjectDir = await createLocationProjectDir(location, id);
@@ -1188,7 +1188,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             designSystemId: normalizedDesignSystemId,
           });
         }
-        project = insertProject(db, {
+        project = await insertProject(db, {
           id,
           name: name.trim(),
           skillId: normalizedSkillId,
@@ -1213,7 +1213,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const initialSessionMode = normalizeChatSessionMode(
         req.body?.conversationMode ?? req.body?.sessionMode,
       );
-      insertConversation(db, {
+      await insertConversation(db, {
         id: cid,
         projectId: id,
         title: null,
@@ -1230,14 +1230,14 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         explicitPlugin ? (req.body as Record<string, unknown>) : null;
       if (!resolveBody && initialSessionMode === 'design') {
         const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(projectMetadata);
-        if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
+        if (fallbackPluginId && (await getInstalledPlugin(db, fallbackPluginId))) {
           resolveBody = { ...(req.body || {}), pluginId: fallbackPluginId };
         }
       }
       let resolvedSnapshot = null;
       if (resolveBody) {
         const registry = await loadPluginRegistryView();
-        const resolved = resolvePluginSnapshot({
+        const resolved = await resolvePluginSnapshot({
           db,
           body: resolveBody,
           projectId: id,
@@ -1271,7 +1271,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         metadata.kind === 'template' &&
         typeof metadata.templateId === 'string'
       ) {
-        const tpl = getTemplate(db, metadata.templateId);
+        const tpl = await getTemplate(db, metadata.templateId);
         if (tpl && Array.isArray(tpl.files) && tpl.files.length > 0) {
           await ensureProject(PROJECTS_DIR, id, projectMetadata);
           for (const f of tpl.files) {
@@ -1300,7 +1300,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       }
       /** @type {import('@open-design/contracts').CreateProjectResponse} */
       const body = {
-        project: resolvedSnapshot?.ok ? getProject(db, id) ?? project : project,
+        project: resolvedSnapshot?.ok ? (await getProject(db, id)) ?? project : project,
         conversationId: cid,
         ...(resolvedSnapshot?.ok
           ? { appliedPluginSnapshotId: resolvedSnapshot.snapshotId }
@@ -1313,7 +1313,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   });
 
   app.get('/api/projects/:id', async (req, res) => {
-    const project = getProject(db, req.params.id);
+    const project = await getProject(db, req.params.id);
     const locations = await configuredProjectLocations();
     if (!project || !projectVisibleForLocations(project, locations))
       return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
@@ -1340,7 +1340,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // project record onto the incoming patch so the user can keep
       // patching other metadata without ever losing their import root.
       if (patch.metadata && typeof patch.metadata === 'object') {
-        const existing = getProject(db, req.params.id);
+        const existing = await getProject(db, req.params.id);
         const existingMeta = existing?.metadata;
         if ('fromTrustedPicker' in patch.metadata
             && patch.metadata.fromTrustedPicker !== existingMeta?.fromTrustedPicker) {
@@ -1382,7 +1382,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         }
       }
       if (patch.metadata?.linkedDirs) {
-        const existing = getProject(db, req.params.id);
+        const existing = await getProject(db, req.params.id);
         const validated = validateLinkedDirs(patch.metadata.linkedDirs);
         if (validated.error) {
           return sendApiError(res, 400, 'INVALID_LINKED_DIR', validated.error);
@@ -1419,7 +1419,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         }
         patch.skillId = skillValidation.id;
       }
-      const project = updateProject(db, req.params.id, patch);
+      const project = await updateProject(db, req.params.id, patch);
       if (!project)
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
       /** @type {import('@open-design/contracts').ProjectResponse} */
@@ -1432,7 +1432,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
 
   app.delete('/api/projects/:id', async (req, res) => {
     try {
-      dbDeleteProject(db, req.params.id);
+      await dbDeleteProject(db, req.params.id);
       await removeProjectDir(PROJECTS_DIR, req.params.id).catch(() => {});
       /** @type {import('@open-design/contracts').OkResponse} */
       const body = { ok: true };
@@ -1449,8 +1449,8 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   // Subscribers come and go as users open/close project tabs; the underlying
   // chokidar watcher is refcounted in project-watchers.ts so we never hold
   // descriptors for projects no UI is looking at.
-  app.get('/api/projects/:id/events', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.get('/api/projects/:id/events', async (req, res) => {
+    if (!(await getProject(db, req.params.id))) {
       return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
     }
     let sub: any;
@@ -1465,7 +1465,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         activeProjectEventSinks.set(req.params.id, sinks);
       }
       sinks.add(projectEventSink);
-      const watchProject = getProject(db, req.params.id);
+      const watchProject = await getProject(db, req.params.id);
       sub = subscribeFileEvents(PROJECTS_DIR, req.params.id, (evt: any) => {
         sse.send('file-changed', evt);
       }, { metadata: watchProject?.metadata });
@@ -1490,15 +1490,15 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
 
   // ---- Conversations --------------------------------------------------------
 
-  app.get('/api/projects/:id/conversations', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.get('/api/projects/:id/conversations', async (req, res) => {
+    if (!(await getProject(db, req.params.id))) {
       return res.status(404).json({ error: 'project not found' });
     }
-    res.json({ conversations: listConversations(db, req.params.id) });
+    res.json({ conversations: await listConversations(db, req.params.id) });
   });
 
-  app.post('/api/projects/:id/conversations', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.post('/api/projects/:id/conversations', async (req, res) => {
+    if (!(await getProject(db, req.params.id))) {
       return res.status(404).json({ error: 'project not found' });
     }
     const { title, seedFromConversationId, forkAfterMessageId } = req.body || {};
@@ -1512,7 +1512,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         : null;
     const sourceConversation =
       typeof seedFromConversationId === 'string' && seedFromConversationId
-        ? getConversation(db, seedFromConversationId)
+        ? await getConversation(db, seedFromConversationId)
         : null;
     // Client-supplied fork snapshot. The chat "Fork" action sends the exact
     // messages the user is looking at (up to the fork point). We prefer it over
@@ -1537,7 +1537,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         }
       }
     } else if (sourceConversation && sourceConversation.projectId === req.params.id) {
-      seedMessages = listMessages(db, seedFromConversationId);
+      seedMessages = await listMessages(db, seedFromConversationId);
       if (requestedForkMessageId) {
         const forkIndex = seedMessages.findIndex((message) => message.id === requestedForkMessageId);
         if (forkIndex < 0) {
@@ -1554,7 +1554,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         : sourceConversation && sourceConversation.projectId === req.params.id
           ? normalizeChatSessionMode(sourceConversation.sessionMode)
           : 'design';
-    const conv = insertConversation(db, {
+    const conv = await insertConversation(db, {
       id: randomId(),
       projectId: req.params.id,
       title: typeof title === 'string' ? title.trim() || null : null,
@@ -1572,7 +1572,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         // run pointers (runId/runStatus/lastRunEventId): they belong to the
         // OTHER conversation's runs, and a copied still-`running` assistant
         // turn would otherwise render a perpetual spinner in the side chat.
-        upsertMessage(db, conv.id, {
+        await upsertMessage(db, conv.id, {
           ...m,
           id: randomId(),
           runId: undefined,
@@ -1584,36 +1584,36 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     res.json({ conversation: conv });
   });
 
-  app.patch('/api/projects/:id/conversations/:cid', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.patch('/api/projects/:id/conversations/:cid', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'not found' });
     }
-    const updated = updateConversation(db, req.params.cid, req.body || {});
+    const updated = await updateConversation(db, req.params.cid, req.body || {});
     res.json({ conversation: updated });
   });
 
-  app.delete('/api/projects/:id/conversations/:cid', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.delete('/api/projects/:id/conversations/:cid', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'not found' });
     }
-    deleteConversation(db, req.params.cid);
+    await deleteConversation(db, req.params.cid);
     res.json({ ok: true });
   });
 
   // ---- Messages -------------------------------------------------------------
 
-  app.get('/api/projects/:id/conversations/:cid/messages', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.get('/api/projects/:id/conversations/:cid/messages', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
-    res.json({ messages: listMessages(db, req.params.cid) });
+    res.json({ messages: await listMessages(db, req.params.cid) });
   });
 
-  app.put('/api/projects/:id/conversations/:cid/messages/:mid', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.put('/api/projects/:id/conversations/:cid/messages/:mid', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
@@ -1621,12 +1621,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     if (m.id && m.id !== req.params.mid) {
       return res.status(400).json({ error: 'id mismatch' });
     }
-    const saved = upsertMessage(db, req.params.cid, {
+    const saved = await upsertMessage(db, req.params.cid, {
       ...m,
       id: req.params.mid,
     });
     // Bump the parent project's updatedAt so the project list re-orders.
-    updateProject(db, req.params.id, {});
+    await updateProject(db, req.params.id, {});
     ctx.telemetry?.reportFinalizedMessage(saved, m, {
       analyticsContext: readAnalyticsContext(req),
       projectId: req.params.id,
@@ -1637,29 +1637,29 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
 
   // ---- Preview comments ----------------------------------------------------
 
-  app.get('/api/projects/:id/conversations/:cid/comments', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.get('/api/projects/:id/conversations/:cid/comments', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
     res.json({
-      comments: listPreviewComments(db, req.params.id, req.params.cid),
+      comments: await listPreviewComments(db, req.params.id, req.params.cid),
     });
   });
 
-  app.post('/api/projects/:id/conversations/:cid/comments', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.post('/api/projects/:id/conversations/:cid/comments', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
     try {
-      const comment = upsertPreviewComment(
+      const comment = await upsertPreviewComment(
         db,
         req.params.id,
         req.params.cid,
         req.body || {},
       );
-      updateProject(db, req.params.id, {});
+      await updateProject(db, req.params.id, {});
       res.json({ comment });
     } catch (err: any) {
       res.status(400).json({ error: String(err?.message || err) });
@@ -1668,13 +1668,13 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
 
   app.patch(
     '/api/projects/:id/conversations/:cid/comments/:commentId',
-    (req, res) => {
-      const conv = getConversation(db, req.params.cid);
+    async (req, res) => {
+      const conv = await getConversation(db, req.params.cid);
       if (!conv || conv.projectId !== req.params.id) {
         return res.status(404).json({ error: 'conversation not found' });
       }
       try {
-        const comment = updatePreviewCommentStatus(
+        const comment = await updatePreviewCommentStatus(
           db,
           req.params.id,
           req.params.cid,
@@ -1683,7 +1683,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         );
         if (!comment)
           return res.status(404).json({ error: 'comment not found' });
-        updateProject(db, req.params.id, {});
+        await updateProject(db, req.params.id, {});
         res.json({ comment });
       } catch (err: any) {
         res.status(400).json({ error: String(err?.message || err) });
@@ -1693,34 +1693,34 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
 
   app.delete(
     '/api/projects/:id/conversations/:cid/comments/:commentId',
-    (req, res) => {
-      const conv = getConversation(db, req.params.cid);
+    async (req, res) => {
+      const conv = await getConversation(db, req.params.cid);
       if (!conv || conv.projectId !== req.params.id) {
         return res.status(404).json({ error: 'conversation not found' });
       }
-      const ok = deletePreviewComment(
+      const ok = await deletePreviewComment(
         db,
         req.params.id,
         req.params.cid,
         req.params.commentId,
       );
       if (!ok) return res.status(404).json({ error: 'comment not found' });
-      updateProject(db, req.params.id, {});
+      await updateProject(db, req.params.id, {});
       res.json({ ok: true });
     },
   );
 
   // ---- Tabs -----------------------------------------------------------------
 
-  app.get('/api/projects/:id/tabs', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.get('/api/projects/:id/tabs', async (req, res) => {
+    if (!(await getProject(db, req.params.id))) {
       return res.status(404).json({ error: 'project not found' });
     }
-    res.json(listTabs(db, req.params.id));
+    res.json(await listTabs(db, req.params.id));
   });
 
-  app.put('/api/projects/:id/tabs', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.put('/api/projects/:id/tabs', async (req, res) => {
+    if (!(await getProject(db, req.params.id))) {
       return res.status(404).json({ error: 'project not found' });
     }
     const { tabs = [], active = null, browserTabs = [] } = req.body || {};
@@ -1730,7 +1730,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     if (!Array.isArray(browserTabs)) {
       return res.status(400).json({ error: 'browserTabs must be an array' });
     }
-    const result = setTabs(
+    const result = await setTabs(
       db,
       req.params.id,
       {
@@ -1749,12 +1749,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   // starting point. Created via the project's Share menu (snapshots
   // every .html file in the project folder at the moment of save).
 
-  app.get('/api/templates', (_req, res) => {
-    res.json({ templates: listTemplates(db) });
+  app.get('/api/templates', async (_req, res) => {
+    res.json({ templates: await listTemplates(db) });
   });
 
-  app.get('/api/templates/:id', (req, res) => {
-    const t = getTemplate(db, req.params.id);
+  app.get('/api/templates/:id', async (req, res) => {
+    const t = await getTemplate(db, req.params.id);
     if (!t) return res.status(404).json({ error: 'not found' });
     res.json({ template: t });
   });
@@ -1771,7 +1771,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       if (typeof sourceProjectId !== 'string') {
         return res.status(400).json({ error: 'sourceProjectId required' });
       }
-      const sourceProject = getProject(db, sourceProjectId);
+      const sourceProject = await getProject(db, sourceProjectId);
       if (!sourceProject) {
         return res.status(404).json({ error: 'source project not found' });
       }
@@ -1800,15 +1800,15 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       }
       const trimmedName = name.trim();
       const descValue = typeof description === 'string' ? description : null;
-      const existing = findTemplateByNameAndProject(db, trimmedName, sourceProjectId);
+      const existing = await findTemplateByNameAndProject(db, trimmedName, sourceProjectId);
       let t;
       if (existing) {
-        t = updateTemplate(db, existing.id, {
+        t = await updateTemplate(db, existing.id, {
           description: descValue,
           files: snapshot,
         });
       } else {
-        t = insertTemplate(db, {
+        t = await insertTemplate(db, {
           id: randomId(),
           name: trimmedName,
           description: descValue,
@@ -1823,8 +1823,8 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     }
   });
 
-  app.delete('/api/templates/:id', (req, res) => {
-    deleteTemplate(db, req.params.id);
+  app.delete('/api/templates/:id', async (req, res) => {
+    await deleteTemplate(db, req.params.id);
     res.json({ ok: true });
   });
 
@@ -2054,7 +2054,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   app.get('/api/projects/:id/files', async (req, res) => {
     try {
       const since = Number(req.query?.since);
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const files = await listFiles(PROJECTS_DIR, req.params.id, {
         since: Number.isFinite(since) ? since : undefined,
         metadata: project?.metadata,
@@ -2076,7 +2076,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       }
       const pattern = req.query.pattern ? String(req.query.pattern) : null;
       const max = Math.min(Number(req.query.max) || 200, 1000);
-      const searchProject = getProject(db, req.params.id);
+      const searchProject = await getProject(db, req.params.id);
       const matches = await searchProjectFiles(PROJECTS_DIR, req.params.id, query, {
         pattern,
         max,
@@ -2090,7 +2090,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
   app.get('/api/projects/:id/folders', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
@@ -2111,7 +2111,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (typeof name !== 'string' || !name.trim()) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'name required');
       }
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
@@ -2135,7 +2135,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (typeof folderPath !== 'string' || !folderPath.trim()) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'path required');
       }
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
@@ -2155,7 +2155,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
   app.get('/api/projects/:id/design-system-package-audit', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -2171,7 +2171,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
   app.get('/api/projects/:id/preview-url', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -2215,7 +2215,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         sendApiError(res, 400, 'BAD_REQUEST', 'invalid preview scope');
         return;
       }
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -2272,7 +2272,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const params = req.params as unknown as { 0?: string; 1?: string };
       const projectId = String(params[0] ?? '');
       const relPath = String(params[1] ?? '');
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       // PreviewModal loads artifact HTML via srcdoc, giving the iframe Origin: "null".
       // data: URIs, file://, and some sandboxed iframes also send null — all are
       // local-only callers, so this is safe. Real cross-origin sites send a real
@@ -2334,7 +2334,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const params = req.params as unknown as { 0?: string; 1?: string };
       const projectId = String(params[0] ?? '');
       const rawSplat = String(params[1] ?? '');
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       await deleteProjectFile(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
       /** @type {import('@open-design/contracts').DeleteProjectFileResponse} */
       const body = { ok: true };
@@ -2352,7 +2352,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
   app.get('/api/projects/:id/files/:name/preview', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const file = await readProjectFile(
         PROJECTS_DIR,
         req.params.id,
@@ -2382,7 +2382,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const params = req.params as unknown as { 0?: string; 1?: string };
       const projectId = String(params[0] ?? '');
       const fileSplat = String(params[1] ?? '');
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       const file = await readProjectFile(
         PROJECTS_DIR,
         projectId,
@@ -2414,7 +2414,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     },
     async (req, res) => {
       try {
-        const uploadProject = getProject(db, req.params.id);
+        const uploadProject = await getProject(db, req.params.id);
         await ensureProject(PROJECTS_DIR, req.params.id, uploadProject?.metadata);
         if (req.file) {
           const buf = await fs.promises.readFile(req.file.path);
@@ -2519,7 +2519,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (typeof from !== 'string' || typeof to !== 'string') {
         return sendApiError(res, 400, 'BAD_REQUEST', 'from and to required');
       }
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const result = await renameProjectFile(
         PROJECTS_DIR,
         req.params.id,
@@ -2544,7 +2544,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
   app.delete('/api/projects/:id/files/:name', async (req, res) => {
     try {
-      const delProject = getProject(db, req.params.id);
+      const delProject = await getProject(db, req.params.id);
       await deleteProjectFile(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
       /** @type {import('@open-design/contracts').DeleteProjectFileResponse} */
       const body = { ok: true };

@@ -9,11 +9,11 @@
 // `pruneExpiredSnapshots(db, { before: cutoff })` synchronously without
 // touching the periodic timer.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import { pruneExpiredSnapshots, type PruneExpiredResult } from './snapshots.js';
 import { readPluginEnvKnobs } from '../app-config.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface SnapshotGcOptions {
   db: SqliteDb;
@@ -30,14 +30,14 @@ export interface SnapshotGcOptions {
 
 export interface SnapshotGcHandle {
   stop(): void;
-  // Force-runs a sweep synchronously. Useful for the CLI escape hatch
+  // Force-runs a sweep. Useful for the CLI escape hatch
   // and for tests that don't want to sleep through the timer.
-  sweep(now?: number): PruneExpiredResult;
+  sweep(now?: number): Promise<PruneExpiredResult>;
 }
 
 const NOOP_HANDLE: SnapshotGcHandle = {
   stop: () => undefined,
-  sweep: () => ({ removed: 0, ids: [] }),
+  sweep: async () => ({ removed: 0, ids: [] }),
 };
 
 export function startSnapshotGc(opts: SnapshotGcOptions): SnapshotGcHandle {
@@ -50,7 +50,7 @@ export function startSnapshotGc(opts: SnapshotGcOptions): SnapshotGcHandle {
     return NOOP_HANDLE;
   }
 
-  const tick = () => {
+  const tick = async () => {
     try {
       // Plan §3.M1 / spec PB2 — feed OD_SNAPSHOT_RETENTION_DAYS into
       // pruneExpiredSnapshots so referenced rows whose project has
@@ -58,7 +58,7 @@ export function startSnapshotGc(opts: SnapshotGcOptions): SnapshotGcHandle {
       // window. The unreferenced-TTL sweep stays the v1 default
       // path; retention only kicks in when the operator opted in.
       const knobs = readPluginEnvKnobs();
-      const result = pruneExpiredSnapshots(opts.db, {
+      const result = await pruneExpiredSnapshots(opts.db, {
         ...(typeof knobs.snapshotRetentionDays === 'number' && knobs.snapshotRetentionDays > 0
           ? { retentionDays: knobs.snapshotRetentionDays }
           : {}),
@@ -81,7 +81,7 @@ export function startSnapshotGc(opts: SnapshotGcOptions): SnapshotGcHandle {
     stop: () => {
       clearInterval(timer);
     },
-    sweep: (now?: number) => {
+    sweep: async (now?: number) => {
       const knobs = readPluginEnvKnobs();
       return pruneExpiredSnapshots(opts.db, {
         ...(now ? { now } : {}),

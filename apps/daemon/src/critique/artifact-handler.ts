@@ -1,7 +1,7 @@
 import { promises as fs, constants as fsConstants } from 'node:fs';
 import * as path from 'node:path';
 import type { Request, Response } from 'express';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import { getCritiqueRun } from './persistence.js';
 import { mimeForExtension } from './artifact-writer.js';
 
@@ -39,7 +39,7 @@ const DEFAULT_RESPONSE_SIZE_CAP_BYTES = 4 * 1024 * 1024;
  * @see specs/current/critique-theater.md § rerun endpoint (Task 6.2)
  */
 export function handleCritiqueArtifact(
-  db: Database.Database,
+  db: AsyncDb,
   options: { artifactsRoot: string; responseCapBytes?: number },
 ): (req: Request, res: Response) => Promise<void> {
   const artifactsRoot = path.resolve(options.artifactsRoot);
@@ -74,7 +74,7 @@ export function handleCritiqueArtifact(
       return;
     }
 
-    const row = getCritiqueRun(db, runId);
+    const row = await getCritiqueRun(db, runId);
 
     // Cross-project leak guard: a request against project p1 must not
     // reveal that runId actually lives in p2. 404 (not 403) so the

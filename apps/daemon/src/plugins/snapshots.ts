@@ -13,7 +13,7 @@
 //     reproducibility wins over freshness.
 
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import { readPluginEnvKnobs } from '../app-config.js';
 import {
   OPEN_DESIGN_PLUGIN_SPEC_VERSION,
@@ -27,7 +27,7 @@ import {
   type ResolvedContext,
 } from '@open-design/contracts';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 type DbRow = Record<string, unknown>;
 
 export interface CreateSnapshotInput {
@@ -63,7 +63,7 @@ export interface CreateSnapshotInput {
   query?: string | undefined;
 }
 
-export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): AppliedPluginSnapshot {
+export async function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Promise<AppliedPluginSnapshot> {
   const id = randomUUID();
   const now = Date.now();
   const knobs = readPluginEnvKnobs();
@@ -76,7 +76,7 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
       ? now + knobs.snapshotUnreferencedTtlDays * 24 * 60 * 60 * 1000
       : null;
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO applied_plugin_snapshots (
       id, project_id, conversation_id, run_id, plugin_id, plugin_spec_version, plugin_version,
       manifest_source_digest, source_marketplace_id, source_marketplace_entry_name,
@@ -134,21 +134,21 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
   return snapshot;
 }
 
-export function getSnapshot(db: SqliteDb, snapshotId: string): AppliedPluginSnapshot | null {
-  const row = db.prepare(`SELECT * FROM applied_plugin_snapshots WHERE id = ?`).get(snapshotId) as DbRow | undefined;
+export async function getSnapshot(db: SqliteDb, snapshotId: string): Promise<AppliedPluginSnapshot | null> {
+  const row = await db.prepare(`SELECT * FROM applied_plugin_snapshots WHERE id = ?`).get(snapshotId) as DbRow | undefined;
   if (!row) return null;
   return rowToSnapshot(row);
 }
 
-export function listSnapshotsForProject(db: SqliteDb, projectId: string): AppliedPluginSnapshot[] {
-  const rows = db
+export async function listSnapshotsForProject(db: SqliteDb, projectId: string): Promise<AppliedPluginSnapshot[]> {
+  const rows = await db
     .prepare(`SELECT * FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC`)
     .all(projectId) as DbRow[];
   return rows.map(rowToSnapshot);
 }
 
-export function linkSnapshotToRun(db: SqliteDb, snapshotId: string, runId: string): void {
-  db.prepare(`
+export async function linkSnapshotToRun(db: SqliteDb, snapshotId: string, runId: string): Promise<void> {
+  await db.prepare(`
     UPDATE applied_plugin_snapshots
        SET run_id = ?, expires_at = NULL
      WHERE id = ?
@@ -160,30 +160,30 @@ export function linkSnapshotToRun(db: SqliteDb, snapshotId: string, runId: strin
 // and also clears `expires_at` because a project-pinned snapshot is now
 // referenced (PB2 reproducibility-first). Idempotent — re-linking the
 // same id is a no-op.
-export function linkSnapshotToProject(db: SqliteDb, snapshotId: string, projectId: string): void {
-  db.prepare(
+export async function linkSnapshotToProject(db: SqliteDb, snapshotId: string, projectId: string): Promise<void> {
+  await db.prepare(
     `UPDATE applied_plugin_snapshots
         SET project_id = ?, expires_at = NULL
       WHERE id = ?`,
   ).run(projectId, snapshotId);
-  db.prepare(
+  await db.prepare(
     `UPDATE projects
         SET applied_plugin_snapshot_id = ?
       WHERE id = ?`,
   ).run(snapshotId, projectId);
 }
 
-export function restoreProjectSnapshotLink(
+export async function restoreProjectSnapshotLink(
   db: SqliteDb,
   projectId: string,
   snapshotIdToDiscard: string,
   previousSnapshotId: string | null | undefined,
   discardedRunId?: string | null | undefined,
-): void {
+): Promise<void> {
   const previous = typeof previousSnapshotId === 'string' && previousSnapshotId.length > 0
     ? previousSnapshotId
     : null;
-  db.prepare(
+  await db.prepare(
     `UPDATE projects
         SET applied_plugin_snapshot_id = ?
       WHERE id = ?
@@ -191,7 +191,7 @@ export function restoreProjectSnapshotLink(
   ).run(previous, projectId, snapshotIdToDiscard);
   const expiry = unreferencedSnapshotExpiry();
   if (typeof discardedRunId === 'string' && discardedRunId.length > 0) {
-    const result = db.prepare(
+    const result = await db.prepare(
       `UPDATE applied_plugin_snapshots
           SET run_id = NULL,
               expires_at = ?
@@ -201,7 +201,7 @@ export function restoreProjectSnapshotLink(
     ).run(expiry, snapshotIdToDiscard, projectId, discardedRunId);
     if (result.changes > 0) return;
   }
-  db.prepare(
+  await db.prepare(
     `UPDATE applied_plugin_snapshots
         SET expires_at = ?
       WHERE id = ?
@@ -218,25 +218,25 @@ function unreferencedSnapshotExpiry(): number | null {
 // Pin a snapshot to a conversation row. Same shape as
 // `linkSnapshotToProject` but mutates `conversations.applied_plugin_snapshot_id`.
 // Used when a plugin is applied inside an existing chat composer (§8.4).
-export function linkSnapshotToConversation(
+export async function linkSnapshotToConversation(
   db: SqliteDb,
   snapshotId: string,
   conversationId: string,
-): void {
-  db.prepare(
+): Promise<void> {
+  await db.prepare(
     `UPDATE applied_plugin_snapshots
         SET conversation_id = ?, expires_at = NULL
       WHERE id = ?`,
   ).run(conversationId, snapshotId);
-  db.prepare(
+  await db.prepare(
     `UPDATE conversations
         SET applied_plugin_snapshot_id = ?
       WHERE id = ?`,
   ).run(snapshotId, conversationId);
 }
 
-export function markSnapshotStale(db: SqliteDb, snapshotId: string): void {
-  db.prepare(`UPDATE applied_plugin_snapshots SET status = 'stale' WHERE id = ?`).run(snapshotId);
+export async function markSnapshotStale(db: SqliteDb, snapshotId: string): Promise<void> {
+  await db.prepare(`UPDATE applied_plugin_snapshots SET status = 'stale' WHERE id = ?`).run(snapshotId);
 }
 
 // Phase 5 / PB2 enforcement (§16). Deletes every `applied_plugin_snapshots`
@@ -275,20 +275,20 @@ export interface PruneExpiredOptions {
   retentionDays?: number;
 }
 
-export function pruneExpiredSnapshots(
+export async function pruneExpiredSnapshots(
   db: SqliteDb,
   options: PruneExpiredOptions = {},
-): PruneExpiredResult {
+): Promise<PruneExpiredResult> {
   const now = options.now ?? Date.now();
   const cutoff = typeof options.before === 'number' ? options.before : now;
-  const expiredIds = db
+  const expiredIds = await db
     .prepare(
       `SELECT id FROM applied_plugin_snapshots
         WHERE expires_at IS NOT NULL AND expires_at <= ?`,
     )
     .all(cutoff) as Array<{ id: string }>;
   const beforeIds = typeof options.before === 'number'
-    ? (db
+    ? (await db
         .prepare(
           `SELECT id FROM applied_plugin_snapshots
             WHERE expires_at IS NULL AND run_id IS NULL AND applied_at <= ?`,
@@ -305,7 +305,7 @@ export function pruneExpiredSnapshots(
   const retentionIds: Array<{ id: string }> = [];
   if (typeof options.retentionDays === 'number' && options.retentionDays > 0) {
     const retentionCutoff = now - options.retentionDays * 24 * 60 * 60 * 1000;
-    const rows = db
+    const rows = await db
       .prepare(
         `SELECT s.id AS id
            FROM applied_plugin_snapshots s
@@ -322,12 +322,12 @@ export function pruneExpiredSnapshots(
   const unique = Array.from(new Set(ids));
   if (unique.length === 0) return { removed: 0, ids: [] };
   const placeholders = unique.map(() => '?').join(', ');
-  db.prepare(`DELETE FROM applied_plugin_snapshots WHERE id IN (${placeholders})`).run(...unique);
+  await db.prepare(`DELETE FROM applied_plugin_snapshots WHERE id IN (${placeholders})`).run(...unique);
   return { removed: unique.length, ids: unique };
 }
 
-export function countSnapshotsForProject(db: SqliteDb, projectId: string): number {
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM applied_plugin_snapshots WHERE project_id = ?`).get(projectId) as DbRow;
+export async function countSnapshotsForProject(db: SqliteDb, projectId: string): Promise<number> {
+  const row = await db.prepare(`SELECT COUNT(*) AS n FROM applied_plugin_snapshots WHERE project_id = ?`).get(projectId) as DbRow;
   return Number(row['n'] ?? 0);
 }
 

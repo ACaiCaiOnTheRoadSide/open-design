@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import type { CritiqueConfig, PanelEvent } from '@open-design/contracts/critique';
 import { panelEventToSse } from '@open-design/contracts/critique';
 import type { CritiqueSseEvent } from '@open-design/contracts/critique';
@@ -75,7 +75,7 @@ export interface OrchestratorParams {
    */
   skill?: string;
   cfg: CritiqueConfig;
-  db: Database.Database;
+  db: AsyncDb;
   bus: CritiqueSseBus;
   /**
    * Source of CLI stdout. The orchestrator is transport-agnostic: a real
@@ -189,7 +189,7 @@ export async function runOrchestrator(
   }
 
   // 1. Insert a 'running' row.
-  insertCritiqueRun(db, {
+  await insertCritiqueRun(db, {
     id: runId,
     projectId,
     conversationId,
@@ -502,7 +502,7 @@ export async function runOrchestrator(
           // patch the row stays at artifactPath=null until the
           // bottom-of-orchestrator updateCritiqueRun fires, which is
           // after any client request triggered by critique.ship.
-          updateCritiqueRun(db, runId, { artifactPath });
+          await updateCritiqueRun(db, runId, { artifactPath });
         } catch (err) {
           // ArtifactTooLargeError / ArtifactEmptyError are agent-side
           // problems (the parser already validated non-empty, so empty
@@ -776,7 +776,7 @@ export async function runOrchestrator(
   }
 
   // Persist final state.
-  updateCritiqueRun(db, runId, {
+  await updateCritiqueRun(db, runId, {
     status: finalStatus,
     score: finalComposite,
     rounds: roundsSummary,

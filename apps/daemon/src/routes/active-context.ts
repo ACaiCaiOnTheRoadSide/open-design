@@ -43,7 +43,10 @@ type GetActiveOutput =
 interface ActiveContextDomainDeps {
   store: ActiveContextStore;
   db: unknown;
-  getProject: (db: unknown, projectId: string) => { name?: string | null } | null | undefined;
+  getProject: (
+    db: unknown,
+    projectId: string,
+  ) => Promise<{ name?: string | null } | null | undefined>;
   now: () => number;
 }
 
@@ -78,16 +81,16 @@ function handlePostActive(
   return ok({ active: true, ...next });
 }
 
-function handleGetActive(
+async function handleGetActive(
   _input: void,
   deps: ActiveContextDomainDeps,
-): Result<GetActiveOutput> {
+): Promise<Result<GetActiveOutput>> {
   const current = deps.store.current;
   if (!current || deps.now() - current.ts > ACTIVE_CONTEXT_TTL_MS) {
     deps.store.current = null;
     return ok({ active: false });
   }
-  const project = deps.getProject(deps.db, current.projectId);
+  const project = await deps.getProject(deps.db, current.projectId);
   return ok({
     active: true,
     projectId: current.projectId,

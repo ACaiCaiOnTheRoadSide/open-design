@@ -8,13 +8,13 @@
 // `genui_surfaces` from anywhere else — the F8 invariant relies on a single
 // writer.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import type {
   GenUISurfaceSpec,
 } from '@open-design/contracts';
 import { randomUUID } from 'node:crypto';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export type SurfaceStatus = 'pending' | 'resolved' | 'timeout' | 'invalidated';
 export type SurfaceTier = 'run' | 'conversation' | 'project';
@@ -110,12 +110,12 @@ function rowFromDb(row: SurfaceDbRow): SurfaceRow {
 // Insert a freshly-requested surface row in `pending` status. Returns the
 // stored row. Callers should always check `lookupResolved()` first to honor
 // the F8 cross-conversation cache.
-export function requestSurface(db: SqliteDb, input: RequestSurfaceInput): SurfaceRow {
+export async function requestSurface(db: SqliteDb, input: RequestSurfaceInput): Promise<SurfaceRow> {
   const id = randomUUID();
   const now = Date.now();
   const conversationId = input.conversationId ?? null;
   const runId = input.runId ?? null;
-  db.prepare(
+  await db.prepare(
     `INSERT INTO genui_surfaces (
        id, project_id, conversation_id, run_id, plugin_snapshot_id,
        surface_id, kind, persist, schema_digest, value_json, status,
@@ -134,13 +134,13 @@ export function requestSurface(db: SqliteDb, input: RequestSurfaceInput): Surfac
     now,
     input.expiresAt ?? null,
   );
-  const row = db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(id) as SurfaceDbRow;
+  const row = await db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(id) as SurfaceDbRow;
   return rowFromDb(row);
 }
 
-export function respondSurface(db: SqliteDb, input: RespondSurfaceInput): SurfaceRow {
+export async function respondSurface(db: SqliteDb, input: RespondSurfaceInput): Promise<SurfaceRow> {
   const now = Date.now();
-  db.prepare(
+  await db.prepare(
     `UPDATE genui_surfaces
         SET value_json   = ?,
             status       = 'resolved',
@@ -155,7 +155,7 @@ export function respondSurface(db: SqliteDb, input: RespondSurfaceInput): Surfac
     input.expiresAt ?? null,
     input.rowId,
   );
-  const row = db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(input.rowId) as SurfaceDbRow | undefined;
+  const row = await db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(input.rowId) as SurfaceDbRow | undefined;
   if (!row) throw new Error(`genui_surfaces row ${input.rowId} disappeared after respond`);
   return rowFromDb(row);
 }
@@ -163,10 +163,10 @@ export function respondSurface(db: SqliteDb, input: RespondSurfaceInput): Surfac
 // Pre-answer a surface (spec §10.3.4 `od ui prefill`). Writes a row in
 // `resolved` state without a prior `pending` row; subsequent
 // `lookupResolved()` will hit the cache and skip the broadcast.
-export function prefillSurface(db: SqliteDb, input: PrefillSurfaceInput): SurfaceRow {
+export async function prefillSurface(db: SqliteDb, input: PrefillSurfaceInput): Promise<SurfaceRow> {
   const id = randomUUID();
   const now = Date.now();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO genui_surfaces (
        id, project_id, conversation_id, run_id, plugin_snapshot_id,
        surface_id, kind, persist, schema_digest, value_json, status,
@@ -185,13 +185,13 @@ export function prefillSurface(db: SqliteDb, input: PrefillSurfaceInput): Surfac
     now,
     input.expiresAt ?? null,
   );
-  const row = db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(id) as SurfaceDbRow;
+  const row = await db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(id) as SurfaceDbRow;
   return rowFromDb(row);
 }
 
 // F8: lookup an existing resolved surface answer at the right tier.
 // Returns null when the cache misses; the caller should then `requestSurface()`.
-export function lookupResolved(
+export async function lookupResolved(
   db: SqliteDb,
   args: {
     projectId:       string;
@@ -201,18 +201,18 @@ export function lookupResolved(
     schemaDigest?:   string | null | undefined;
     now?:            number;
   },
-): SurfaceRow | null {
+): Promise<SurfaceRow | null> {
   const now = args.now ?? Date.now();
   let row: SurfaceDbRow | undefined;
   if (args.persist === 'project') {
-    row = db.prepare(
+    row = await db.prepare(
       `SELECT * FROM genui_surfaces
         WHERE project_id = ? AND surface_id = ? AND status = 'resolved'
         ORDER BY responded_at DESC LIMIT 1`,
     ).get(args.projectId, args.surfaceId) as SurfaceDbRow | undefined;
   } else if (args.persist === 'conversation') {
     if (!args.conversationId) return null;
-    row = db.prepare(
+    row = await db.prepare(
       `SELECT * FROM genui_surfaces
         WHERE conversation_id = ? AND surface_id = ? AND status = 'resolved'
         ORDER BY responded_at DESC LIMIT 1`,
@@ -223,12 +223,12 @@ export function lookupResolved(
   }
   if (!row) return null;
   if (row.expires_at !== null && row.expires_at <= now) {
-    invalidateRow(db, row.id);
+    await invalidateRow(db, row.id);
     return null;
   }
   if (args.schemaDigest !== undefined && args.schemaDigest !== null) {
     if (row.schema_digest !== null && row.schema_digest !== args.schemaDigest) {
-      invalidateRow(db, row.id);
+      await invalidateRow(db, row.id);
       return null;
     }
   }
@@ -237,11 +237,11 @@ export function lookupResolved(
 
 // Cross-conversation revoke (spec §10.3.3 user revoke). Flips the row to
 // `invalidated`; subsequent lookups miss and the next run re-asks the user.
-export function revokeSurface(
+export async function revokeSurface(
   db: SqliteDb,
   args: { projectId: string; surfaceId: string },
-): number {
-  const info = db.prepare(
+): Promise<number> {
+  const info = await db.prepare(
     `UPDATE genui_surfaces
         SET status = 'invalidated', responded_by = COALESCE(responded_by, 'user')
       WHERE project_id = ? AND surface_id = ? AND status != 'invalidated'`,
@@ -249,36 +249,36 @@ export function revokeSurface(
   return Number(info.changes ?? 0);
 }
 
-export function markTimeout(db: SqliteDb, rowId: string): SurfaceRow | null {
-  db.prepare(`UPDATE genui_surfaces SET status = 'timeout' WHERE id = ? AND status = 'pending'`).run(rowId);
-  const row = db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(rowId) as SurfaceDbRow | undefined;
+export async function markTimeout(db: SqliteDb, rowId: string): Promise<SurfaceRow | null> {
+  await db.prepare(`UPDATE genui_surfaces SET status = 'timeout' WHERE id = ? AND status = 'pending'`).run(rowId);
+  const row = await db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(rowId) as SurfaceDbRow | undefined;
   return row ? rowFromDb(row) : null;
 }
 
-export function listSurfacesForRun(db: SqliteDb, runId: string): SurfaceRow[] {
-  const rows = db.prepare(
+export async function listSurfacesForRun(db: SqliteDb, runId: string): Promise<SurfaceRow[]> {
+  const rows = await db.prepare(
     `SELECT * FROM genui_surfaces WHERE run_id = ? ORDER BY requested_at ASC`,
   ).all(runId) as SurfaceDbRow[];
   return rows.map(rowFromDb);
 }
 
-export function listSurfacesForProject(db: SqliteDb, projectId: string): SurfaceRow[] {
-  const rows = db.prepare(
+export async function listSurfacesForProject(db: SqliteDb, projectId: string): Promise<SurfaceRow[]> {
+  const rows = await db.prepare(
     `SELECT * FROM genui_surfaces WHERE project_id = ? ORDER BY requested_at DESC`,
   ).all(projectId) as SurfaceDbRow[];
   return rows.map(rowFromDb);
 }
 
-export function getSurface(db: SqliteDb, rowId: string): SurfaceRow | null {
-  const row = db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(rowId) as SurfaceDbRow | undefined;
+export async function getSurface(db: SqliteDb, rowId: string): Promise<SurfaceRow | null> {
+  const row = await db.prepare(`SELECT * FROM genui_surfaces WHERE id = ?`).get(rowId) as SurfaceDbRow | undefined;
   return row ? rowFromDb(row) : null;
 }
 
-export function findPendingByRunAndSurfaceId(
+export async function findPendingByRunAndSurfaceId(
   db: SqliteDb,
   args: { runId: string; surfaceId: string },
-): SurfaceRow | null {
-  const row = db.prepare(
+): Promise<SurfaceRow | null> {
+  const row = await db.prepare(
     `SELECT * FROM genui_surfaces
       WHERE run_id = ? AND surface_id = ? AND status = 'pending'
       ORDER BY requested_at DESC LIMIT 1`,
@@ -286,6 +286,6 @@ export function findPendingByRunAndSurfaceId(
   return row ? rowFromDb(row) : null;
 }
 
-function invalidateRow(db: SqliteDb, rowId: string): void {
-  db.prepare(`UPDATE genui_surfaces SET status = 'invalidated' WHERE id = ?`).run(rowId);
+async function invalidateRow(db: SqliteDb, rowId: string): Promise<void> {
+  await db.prepare(`UPDATE genui_surfaces SET status = 'invalidated' WHERE id = ?`).run(rowId);
 }

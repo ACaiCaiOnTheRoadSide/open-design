@@ -93,17 +93,17 @@ export async function detectSkillPluginCandidate(input: DetectSkillPluginCandida
   };
 }
 
-export function insertSkillPluginCandidate(
+export async function insertSkillPluginCandidate(
   db: SqliteDb,
   candidate: Omit<SkillPluginCandidate, 'id' | 'createdAt' | 'updatedAt' | 'status'> & { fingerprint: string },
   now = Date.now(),
-): SkillPluginCandidate | null {
-  const existing = db.prepare(
+): Promise<SkillPluginCandidate | null> {
+  const existing = await db.prepare(
     `SELECT * FROM skill_plugin_candidates WHERE project_id = ? AND fingerprint = ?`,
   ).get(candidate.projectId, candidate.fingerprint) as DbRow | undefined;
   if (existing) return rowToCandidate(existing);
   const id = crypto.randomUUID();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO skill_plugin_candidates
        (id, project_id, run_id, conversation_id, assistant_message_id, fingerprint, status,
         title, description, confidence, source_refs_json, provenance_json, draft_path,
@@ -125,11 +125,11 @@ export function insertSkillPluginCandidate(
     now,
     now,
   );
-  return getSkillPluginCandidate(db, id);
+  return await getSkillPluginCandidate(db, id);
 }
 
-export function listSkillPluginCandidates(db: SqliteDb, projectId: string, includeDismissed = false): SkillPluginCandidate[] {
-  const rows = db.prepare(
+export async function listSkillPluginCandidates(db: SqliteDb, projectId: string, includeDismissed = false): Promise<SkillPluginCandidate[]> {
+  const rows = await db.prepare(
     `SELECT * FROM skill_plugin_candidates
       WHERE project_id = ? ${includeDismissed ? '' : `AND status != 'dismissed'`}
       ORDER BY created_at DESC`,
@@ -137,19 +137,19 @@ export function listSkillPluginCandidates(db: SqliteDb, projectId: string, inclu
   return rows.map(rowToCandidate);
 }
 
-export function getSkillPluginCandidate(db: SqliteDb, id: string): SkillPluginCandidate | null {
-  const row = db.prepare(`SELECT * FROM skill_plugin_candidates WHERE id = ?`).get(id) as DbRow | undefined;
+export async function getSkillPluginCandidate(db: SqliteDb, id: string): Promise<SkillPluginCandidate | null> {
+  const row = await db.prepare(`SELECT * FROM skill_plugin_candidates WHERE id = ?`).get(id) as DbRow | undefined;
   return row ? rowToCandidate(row) : null;
 }
 
-export function dismissSkillPluginCandidate(db: SqliteDb, projectId: string, id: string, now = Date.now()): SkillPluginCandidate | null {
-  const result = db.prepare(
+export async function dismissSkillPluginCandidate(db: SqliteDb, projectId: string, id: string, now = Date.now()): Promise<SkillPluginCandidate | null> {
+  const result = await db.prepare(
     `UPDATE skill_plugin_candidates
         SET status = 'dismissed', dismissed_at = ?, updated_at = ?
       WHERE project_id = ? AND id = ?`,
   ).run(now, now, projectId, id);
   if (result.changes === 0) return null;
-  return getSkillPluginCandidate(db, id);
+  return await getSkillPluginCandidate(db, id);
 }
 
 export async function generateSkillPluginDraft(
@@ -159,7 +159,7 @@ export async function generateSkillPluginDraft(
   id: string,
   now = Date.now(),
 ): Promise<SkillPluginDraftGenerationResult | null> {
-  const candidate = getSkillPluginCandidate(db, id);
+  const candidate = await getSkillPluginCandidate(db, id);
   if (!candidate || candidate.projectId !== projectId || candidate.status === 'dismissed') return null;
   const slug = uniqueSlug(slugify(candidate.title || 'skill-plugin'));
   const draftPath = `plugin-source/${slug}`;
@@ -188,12 +188,12 @@ export async function generateSkillPluginDraft(
     code: d.code,
     message: d.message,
   }));
-  db.prepare(
+  await db.prepare(
     `UPDATE skill_plugin_candidates
         SET draft_path = ?, updated_at = ?
       WHERE id = ?`,
   ).run(draftPath, now, id);
-  const updated = getSkillPluginCandidate(db, id) ?? candidate;
+  const updated = await getSkillPluginCandidate(db, id) ?? candidate;
   return {
     ok: validationResult.ok,
     candidate: updated,

@@ -17,6 +17,7 @@ import { modelIdForTracking } from '@open-design/contracts/analytics';
 import { readAppConfig } from './app-config.js';
 import type { AppVersionInfo } from './app-version.js';
 import { listMessages } from './db.js';
+import type { AsyncDb } from './storage/pg-async.js';
 import {
   deriveLangfuseDeliveryState,
   readTelemetrySinkConfig,
@@ -105,7 +106,7 @@ interface FinalTraceSafeManifests {
 }
 
 export interface ReportRunCompletedFromDaemonOpts {
-  db: unknown;
+  db: AsyncDb;
   dataDir: string;
   run: DaemonRunRecord;
   persistedRunStatus?: string;
@@ -848,9 +849,7 @@ export async function reportRunCompletedFromDaemon(
         // Best-effort. Web persists assistant content via PUT /messages/:id
         // during the SSE stream, so by close time it is normally up to date,
         // but we tolerate a partial / missing message rather than throwing.
-        const messages = (
-          listMessages as (db: unknown, cid: string) => unknown[]
-        )(db, run.conversationId);
+        const messages = await listMessages(db, run.conversationId);
         const allMessages = messages as Array<Record<string, unknown>>;
         const assistantIndex = allMessages.findIndex(
           (x) => x.id === run.assistantMessageId,

@@ -55,7 +55,7 @@
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import type { AsyncDb } from './storage/pg-async.js';
 import { projectDir } from './projects.js';
 
 const SCHEMA_VERSION = 2;
@@ -77,7 +77,7 @@ type PersistedAgentEvent =
   | { kind: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number; durationMs?: number }
   | { kind: 'raw'; line: string };
 
-type Db = Database.Database;
+type Db = AsyncDb;
 
 interface ConversationRow {
   id: string;
@@ -141,12 +141,12 @@ export class TranscriptExportLockedError extends Error {
   }
 }
 
-export function exportProjectTranscript(
+export async function exportProjectTranscript(
   db: Db,
   projectsRoot: string,
   projectId: string,
   options: TranscriptExportOptions = {},
-): TranscriptExportResult {
+): Promise<TranscriptExportResult> {
   const dir = projectDir(projectsRoot, projectId);
   // The project may have DB rows but no on-disk directory yet (a synthesis
   // caller can hit this immediately after `insertProject`). mkdirSync with
@@ -181,14 +181,14 @@ export function exportProjectTranscript(
     // conversation (the resume/handoff flow); otherwise every conversation
     // in the project is exported.
     const { conversationId } = options;
-    const conversations = db
+    const conversations = (await db
       .prepare(
         `SELECT id, title, created_at AS createdAt, updated_at AS updatedAt
            FROM conversations
           WHERE project_id = ?${conversationId ? ' AND id = ?' : ''}
           ORDER BY created_at ASC`,
       )
-      .all(...(conversationId ? [projectId, conversationId] : [projectId])) as ConversationRow[];
+      .all(...(conversationId ? [projectId, conversationId] : [projectId]))) as ConversationRow[];
 
     const messageStmt = db.prepare(
       `SELECT id, role, content, position,
@@ -222,7 +222,7 @@ export function exportProjectTranscript(
     let commentAttachmentCount = 0;
 
     for (const conv of conversations) {
-      const rows = messageStmt.all(conv.id) as MessageRow[];
+      const rows = (await messageStmt.all(conv.id)) as MessageRow[];
       const messages: BuiltMessage[] = rows.map((row) => {
         const parsed = parseEvents(row.eventsJson);
         if (parsed.reason === 'malformed' || parsed.reason === 'not_array') {

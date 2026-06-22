@@ -26,8 +26,8 @@ export function registerTerminalRoutes(app: Express, ctx: RegisterTerminalRoutes
 
   // Resolve the session and assert it belongs to the path project. Returns
   // null and sends a 404 when missing/foreign so callers can early-return.
-  const resolveSession = (req: any, res: any) => {
-    if (!getProject(db, req.params.id)) {
+  const resolveSession = async (req: any, res: any) => {
+    if (!(await getProject(db, req.params.id))) {
       sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       return null;
     }
@@ -39,15 +39,15 @@ export function registerTerminalRoutes(app: Express, ctx: RegisterTerminalRoutes
     return session;
   };
 
-  app.get('/api/projects/:id/terminals', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.get('/api/projects/:id/terminals', async (req, res) => {
+    if (!(await getProject(db, req.params.id))) {
       return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
     }
     res.json({ terminals: terminals.list({ projectId: req.params.id }).map((s) => terminals.statusBody(s)) });
   });
 
   app.post('/api/projects/:id/terminals', async (req, res) => {
-    const project = getProject(db, req.params.id);
+    const project = await getProject(db, req.params.id);
     if (!project) {
       return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
     }
@@ -70,14 +70,14 @@ export function registerTerminalRoutes(app: Express, ctx: RegisterTerminalRoutes
     }
   });
 
-  app.get('/api/projects/:id/terminals/:tid/stream', (req, res) => {
-    const session = resolveSession(req, res);
+  app.get('/api/projects/:id/terminals/:tid/stream', async (req, res) => {
+    const session = await resolveSession(req, res);
     if (!session) return;
     terminals.stream(session, req, res, createSseResponse);
   });
 
-  app.post('/api/projects/:id/terminals/:tid/stdin', (req, res) => {
-    const session = resolveSession(req, res);
+  app.post('/api/projects/:id/terminals/:tid/stdin', async (req, res) => {
+    const session = await resolveSession(req, res);
     if (!session) return;
     const data = req.body?.data;
     if (typeof data !== 'string') {
@@ -87,8 +87,8 @@ export function registerTerminalRoutes(app: Express, ctx: RegisterTerminalRoutes
     res.json({ ok });
   });
 
-  app.post('/api/projects/:id/terminals/:tid/resize', (req, res) => {
-    const session = resolveSession(req, res);
+  app.post('/api/projects/:id/terminals/:tid/resize', async (req, res) => {
+    const session = await resolveSession(req, res);
     if (!session) return;
     const { cols, rows } = req.body || {};
     if (!Number.isFinite(Number(cols)) || !Number.isFinite(Number(rows))) {
@@ -98,8 +98,8 @@ export function registerTerminalRoutes(app: Express, ctx: RegisterTerminalRoutes
     res.json({ ok, terminal: terminals.statusBody(session) });
   });
 
-  const handleKill = (req: any, res: any) => {
-    const session = resolveSession(req, res);
+  const handleKill = async (req: any, res: any) => {
+    const session = await resolveSession(req, res);
     if (!session) return;
     terminals.kill(session, 'SIGTERM');
     res.json({ terminal: terminals.statusBody(session) });

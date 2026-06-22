@@ -18,7 +18,6 @@
 // plug in critique-theater scoring, build-test signals, etc. without
 // changing the public contract.
 
-import type Database from 'better-sqlite3';
 import type {
   AppliedPluginSnapshot,
   GenUISurfaceSpec,
@@ -27,11 +26,10 @@ import type {
 import { runPipeline, type PipelineEnv, type PipelineEventSink, type StageOutcomeRecord, type StageRunner } from './pipeline.js';
 import { requestOrReuseSurface } from '../genui/registry.js';
 import type { GenUIEventSink } from '../genui/events.js';
-
-type SqliteDb = Database.Database;
+import type { AsyncDb } from '../storage/pg-async.js';
 
 export interface PipelineRunnerInput {
-  db:        SqliteDb;
+  db:        AsyncDb;
   runId:     string;
   projectId: string;
   conversationId?: string | null | undefined;
@@ -64,7 +62,7 @@ export async function runPipelineForRun(
   const surfaces = input.snapshot.genuiSurfaces ?? [];
   for (const surface of surfaces) {
     if (surface.trigger?.stageId) continue;
-    raiseSurface(input, surface);
+    await raiseSurface(input, surface);
   }
 
   // Wrap the user-supplied stage runner so we can intercept stage entry
@@ -73,7 +71,7 @@ export async function runPipelineForRun(
   const wrapped: StageRunner = async ({ stage, iteration, snapshot }) => {
     if (iteration === 0) {
       for (const surface of surfaces) {
-        if (surface.trigger?.stageId === stage.id) raiseSurface(input, surface);
+        if (surface.trigger?.stageId === stage.id) await raiseSurface(input, surface);
       }
     }
     return input.runStage({ stage, iteration, snapshot });
@@ -90,9 +88,9 @@ export async function runPipelineForRun(
   });
 }
 
-function raiseSurface(input: PipelineRunnerInput, surface: GenUISurfaceSpec): void {
+async function raiseSurface(input: PipelineRunnerInput, surface: GenUISurfaceSpec): Promise<void> {
   try {
-    requestOrReuseSurface(input.db, {
+    await requestOrReuseSurface(input.db, {
       projectId:        input.projectId,
       conversationId:   input.conversationId ?? null,
       runId:            input.runId,

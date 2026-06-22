@@ -14,7 +14,7 @@
 // caller-provided `GenUIEventSink` from `events.ts`. Tests can swap either.
 
 import { createHash } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import type { GenUISurfaceSpec } from '@open-design/contracts';
 import {
   buildStateSyncedEvent,
@@ -35,7 +35,7 @@ import {
   type SurfaceTier,
 } from './store.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 // Stable digest of a JSON-Schema-shaped object. Used by `genui_surfaces`
 // rows so a schema upgrade auto-invalidates cached answers (spec §10.3.3).
@@ -77,15 +77,15 @@ export interface RequestOrReuseResult {
 // matching schema digest and unexpired row, emit a response event with
 // `respondedBy: 'cache'` and return the cached row. On miss, insert a
 // pending row and emit a request event.
-export function requestOrReuseSurface(
+export async function requestOrReuseSurface(
   db: SqliteDb,
   input: RequestOrReuseInput,
-): RequestOrReuseResult {
+): Promise<RequestOrReuseResult> {
   const surface = input.surface;
   const persist: SurfaceTier = surface.persist;
   const digest = surface.schema ? schemaDigest(surface.schema) : null;
   if (persist !== 'run') {
-    const cached = lookupResolved(db, {
+    const cached = await lookupResolved(db, {
       projectId:      input.projectId,
       conversationId: input.conversationId,
       surfaceId:      surface.id,
@@ -103,7 +103,7 @@ export function requestOrReuseSurface(
       return { reused: true, row: cached };
     }
   }
-  const row = requestSurface(db, {
+  const row = await requestSurface(db, {
     projectId:        input.projectId,
     conversationId:   input.conversationId,
     runId:            input.runId,
@@ -128,8 +128,8 @@ export interface RespondInput extends RespondSurfaceInput {
   emit?:        GenUIEventSink;
 }
 
-export function respondSurface(db: SqliteDb, input: RespondInput): SurfaceRow {
-  const row = respondSurfaceRow(db, input);
+export async function respondSurface(db: SqliteDb, input: RespondInput): Promise<SurfaceRow> {
+  const row = await respondSurfaceRow(db, input);
   input.emit?.(
     buildSurfaceResponseEvent({
       surfaceRow:  row,
@@ -150,7 +150,7 @@ export interface RevokeInput {
   surfaceId:  string;
 }
 
-export function revokeProjectSurface(db: SqliteDb, input: RevokeInput): number {
+export async function revokeProjectSurface(db: SqliteDb, input: RevokeInput): Promise<number> {
   return revokeSurfaceRow(db, input);
 }
 
@@ -165,7 +165,7 @@ export interface PrefillInput {
   expiresAt?:       number | null;
 }
 
-export function prefillProjectSurface(db: SqliteDb, input: PrefillInput): SurfaceRow {
+export async function prefillProjectSurface(db: SqliteDb, input: PrefillInput): Promise<SurfaceRow> {
   const digest = input.schema !== undefined ? schemaDigest(input.schema) : null;
   return prefillSurface(db, {
     projectId:        input.projectId,

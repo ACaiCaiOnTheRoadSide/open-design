@@ -53,7 +53,7 @@ export async function inspectSqliteDatabase(input: {
   // 1. Schema version (user_version pragma).
   let schemaVersion: number | null = null;
   try {
-    const v = db.pragma('user_version', { simple: true });
+    const v = await db.pragma('user_version', { simple: true });
     schemaVersion = typeof v === 'number' ? v : Number(v);
     if (!Number.isFinite(schemaVersion)) schemaVersion = null;
   } catch {
@@ -63,7 +63,7 @@ export async function inspectSqliteDatabase(input: {
   // 2. Table list with row counts.
   const tables: DaemonDbTableInfo[] = [];
   try {
-    const names = db
+    const names = await db
       .prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
       .all() as Array<{ name: string }>;
     for (const { name } of names) {
@@ -71,7 +71,7 @@ export async function inspectSqliteDatabase(input: {
       try {
         const safe = sanitizeTableName(name);
         if (!safe) continue;
-        const row = db.prepare(`SELECT count(*) AS c FROM "${safe}"`).get() as { c: number } | undefined;
+        const row = await db.prepare(`SELECT count(*) AS c FROM "${safe}"`).get() as { c: number } | undefined;
         tables.push({ name: safe, rowCount: row?.c ?? 0 });
       } catch {
         // A malformed view / corrupted table shouldn't fail the
@@ -151,7 +151,7 @@ export interface VerifyDbOptions {
   quick?: boolean;
 }
 
-export function verifySqliteIntegrity(opts: VerifyDbOptions): DbIntegrityReport {
+export async function verifySqliteIntegrity(opts: VerifyDbOptions): Promise<DbIntegrityReport> {
   const { db, quick = false } = opts;
   const startedAt = Date.now();
   const issues: DbIntegrityIssue[] = [];
@@ -159,7 +159,7 @@ export function verifySqliteIntegrity(opts: VerifyDbOptions): DbIntegrityReport 
   // 1. integrity_check / quick_check.
   const pragma = quick ? 'quick_check' : 'integrity_check';
   try {
-    const rows = db.pragma(pragma) as Array<Record<string, unknown>>;
+    const rows = await db.pragma(pragma) as Array<Record<string, unknown>>;
     for (const row of rows) {
       // SQLite returns the string under either `integrity_check`,
       // `quick_check`, or just the first column. Normalise to the
@@ -175,7 +175,7 @@ export function verifySqliteIntegrity(opts: VerifyDbOptions): DbIntegrityReport 
 
   // 2. foreign_key_check.
   try {
-    const rows = db.pragma('foreign_key_check') as Array<{ table?: string; rowid?: number; parent?: string; fkid?: number }>;
+    const rows = await db.pragma('foreign_key_check') as Array<{ table?: string; rowid?: number; parent?: string; fkid?: number }>;
     for (const row of rows) {
       const tbl = row.table ?? '?';
       const parent = row.parent ?? '?';

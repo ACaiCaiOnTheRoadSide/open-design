@@ -4,7 +4,6 @@
 // (HTML artifacts, sketches, uploads); this database tracks the metadata
 // that used to live in localStorage.
 
-import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -15,9 +14,9 @@ import { migrateMediaTasks } from './media-tasks.js';
 import { migratePlugins } from './plugins/persistence.js';
 import { migrateTenantId, currentTenantId } from './multitenant.js';
 import { resolveDaemonDbConfig } from './storage/daemon-db.js';
-import { openPgSync, type SqliteLike } from './storage/pg-sync.js';
+import { openPgAsync, type AsyncDb } from './storage/pg-async.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 type DbRow = Record<string, any>;
 type JsonObject = Record<string, unknown>;
 type ChatSessionMode = 'design' | 'chat';
@@ -39,412 +38,38 @@ function rows(value: unknown[]): DbRow[] {
   return value.map((item) => row(item) ?? {});
 }
 
-export function openDatabase(projectRoot: string, { dataDir }: { dataDir?: string } = {}): SqliteDb {
+export async function openDatabase(projectRoot: string, { dataDir }: { dataDir?: string } = {}): Promise<SqliteDb> {
   const dbcfg = resolveDaemonDbConfig();
-  if (dbcfg.kind === 'postgres') {
-    if (dbInstance && pgMode) return dbInstance;
-    if (dbInstance) closeDatabase();
-    pgMode = true;
-    const adapter = openPgSync(dbcfg, process.env.OD_PG_PASSWORD ?? '');
-    runPgMigrations(adapter);
-    // The adapter implements the better-sqlite3 subset the daemon uses; the
-    // cast lets db.ts + all call sites stay unchanged.
-    dbInstance = adapter as unknown as SqliteDb;
-    dbFile = `pg://${dbcfg.postgres!.host}/${dbcfg.postgres!.database}`;
-    return dbInstance;
-  }
-
-  const dir = dataDir ? path.resolve(dataDir) : path.join(projectRoot, '.od');
-  const file = path.join(dir, 'app.sqlite');
-  if (dbInstance && dbFile === file) return dbInstance;
-  if (dbInstance) closeDatabase();
-  pgMode = false;
-  fs.mkdirSync(dir, { recursive: true });
-  const db = new Database(file);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  migrate(db);
-  dbInstance = db;
-  dbFile = file;
-  return db;
+  if (dbInstance && pgMode) return dbInstance;
+  if (dbInstance) await closeDatabase();
+  pgMode = true;
+  const adapter = openPgAsync(dbcfg, process.env.OD_PG_PASSWORD ?? '');
+  await runPgMigrations(adapter);
+  dbInstance = adapter;
+  dbFile = `pg://${dbcfg.postgres!.host}/${dbcfg.postgres!.database}`;
+  return dbInstance;
 }
 
-// Applies migrations/*.sql through the sync adapter (PG mode). The .sql files
+// Applies migrations/*.sql through the async adapter (PG mode). The .sql files
 // own their BEGIN/COMMIT. Tracked in schema_migrations to run each once.
-function runPgMigrations(adapter: SqliteLike): void {
+async function runPgMigrations(adapter: AsyncDb): Promise<void> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const dir = path.resolve(here, '../migrations');
-  adapter.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at BIGINT NOT NULL)`);
+  await adapter.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at BIGINT NOT NULL)`);
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
   for (const f of files) {
-    const done = adapter.prepare(`SELECT 1 FROM schema_migrations WHERE filename = ?`).get(f);
+    const done = await adapter.prepare(`SELECT 1 FROM schema_migrations WHERE filename = ?`).get(f);
     if (done) continue;
-    adapter.exec(fs.readFileSync(path.join(dir, f), 'utf8'));
-    adapter.prepare(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`).run(f, Date.now());
+    await adapter.exec(fs.readFileSync(path.join(dir, f), 'utf8'));
+    await adapter.prepare(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`).run(f, Date.now());
   }
 }
 
-export function closeDatabase() {
+export async function closeDatabase() {
   if (!dbInstance) return;
-  dbInstance.close();
+  await dbInstance.close();
   dbInstance = null;
   dbFile = null;
-}
-
-function migrate(db: SqliteDb): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      skill_id TEXT,
-      design_system_id TEXT,
-      pending_prompt TEXT,
-      metadata_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS templates (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      source_project_id TEXT,
-      files_json TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      title TEXT,
-      session_mode TEXT NOT NULL DEFAULT 'design',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_conv_project
-      ON conversations(project_id, updated_at DESC);
-
-    CREATE TABLE IF NOT EXISTS agent_sessions (
-      conversation_id TEXT NOT NULL,
-      agent_id        TEXT NOT NULL,
-      session_id      TEXT NOT NULL,
-      stable_prompt_hash TEXT,
-      updated_at      INTEGER NOT NULL,
-      PRIMARY KEY (conversation_id, agent_id),
-      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      agent_id TEXT,
-      agent_name TEXT,
-      events_json TEXT,
-      attachments_json TEXT,
-      produced_files_json TEXT,
-      feedback_json TEXT,
-      pre_turn_file_names_json TEXT,
-      session_mode TEXT,
-      run_context_json TEXT,
-      applied_plugin_snapshot_json TEXT,
-      telemetry_finalized_at INTEGER,
-      started_at INTEGER,
-      ended_at INTEGER,
-      position INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_messages_conv
-      ON messages(conversation_id, position);
-
-    CREATE TABLE IF NOT EXISTS preview_comments (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      conversation_id TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      element_id TEXT NOT NULL,
-      selector TEXT NOT NULL,
-      label TEXT NOT NULL,
-      text TEXT NOT NULL,
-      position_json TEXT NOT NULL,
-      html_hint TEXT NOT NULL,
-      selection_kind TEXT,
-      member_count INTEGER,
-      pod_members_json TEXT,
-      style_json TEXT,
-      attachments_json TEXT,
-      slide_index INTEGER,
-      slide_key INTEGER NOT NULL DEFAULT -1,
-      note TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(project_id, conversation_id, file_path, element_id, slide_key),
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_preview_comments_conversation
-      ON preview_comments(project_id, conversation_id, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_preview_comments_conversation_created
-      ON preview_comments(project_id, conversation_id, created_at ASC);
-
-    CREATE TABLE IF NOT EXISTS tabs (
-      project_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      is_active INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY(project_id, name),
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS tabs_state (
-      project_id TEXT PRIMARY KEY,
-      updated_at INTEGER NOT NULL,
-      state_json TEXT,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_tabs_project
-      ON tabs(project_id, position);
-
-    CREATE TABLE IF NOT EXISTS deployments (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      file_name TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      url TEXT NOT NULL,
-      deployment_id TEXT,
-      deployment_count INTEGER NOT NULL DEFAULT 1,
-      target TEXT NOT NULL DEFAULT 'preview',
-      status TEXT NOT NULL DEFAULT 'ready',
-      status_message TEXT,
-      reachable_at INTEGER,
-      provider_metadata_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(project_id, file_name, provider_id),
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_deployments_project
-      ON deployments(project_id, updated_at DESC);
-
-    CREATE TABLE IF NOT EXISTS routines (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      prompt TEXT NOT NULL,
-      schedule_kind TEXT NOT NULL,
-      schedule_value TEXT NOT NULL,
-      schedule_json TEXT,
-      project_mode TEXT NOT NULL,
-      project_id TEXT,
-      skill_id TEXT,
-      agent_id TEXT,
-      context_json TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS routine_runs (
-      id TEXT PRIMARY KEY,
-      routine_id TEXT NOT NULL,
-      trigger TEXT NOT NULL,
-      status TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      conversation_id TEXT NOT NULL,
-      agent_run_id TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      completed_at INTEGER,
-      summary TEXT,
-      error TEXT,
-      error_code TEXT,
-      FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS routine_schedule_claims (
-      routine_id TEXT NOT NULL,
-      slot_at INTEGER NOT NULL,
-      claimed_at INTEGER NOT NULL,
-      PRIMARY KEY(routine_id, slot_at),
-      FOREIGN KEY(routine_id) REFERENCES routines(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_routine_runs_routine
-      ON routine_runs(routine_id, started_at DESC);
-  `);
-  // Forward-compatible column add for databases created before metadata_json.
-  // SQLite has no IF NOT EXISTS for ALTER, so we check pragma_table_info.
-  const cols = db.prepare(`PRAGMA table_info(projects)`).all() as DbRow[];
-  if (!cols.some((c: DbRow) => c.name === 'metadata_json')) {
-    db.exec(`ALTER TABLE projects ADD COLUMN metadata_json TEXT`);
-  }
-  if (!cols.some((c: DbRow) => c.name === 'custom_instructions')) {
-    db.exec(`ALTER TABLE projects ADD COLUMN custom_instructions TEXT`);
-  }
-  const conversationCols = db.prepare(`PRAGMA table_info(conversations)`).all() as DbRow[];
-  if (!conversationCols.some((c: DbRow) => c.name === 'session_mode')) {
-    db.exec(`ALTER TABLE conversations ADD COLUMN session_mode TEXT NOT NULL DEFAULT 'design'`);
-  }
-  const messageCols = db.prepare(`PRAGMA table_info(messages)`).all() as DbRow[];
-  if (!messageCols.some((c: DbRow) => c.name === 'agent_id')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN agent_id TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'agent_name')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN agent_name TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'run_id')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN run_id TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'run_status')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN run_status TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'last_run_event_id')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN last_run_event_id TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'comment_attachments_json')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN comment_attachments_json TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'feedback_json')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN feedback_json TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'pre_turn_file_names_json')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN pre_turn_file_names_json TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'session_mode')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN session_mode TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'run_context_json')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN run_context_json TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'applied_plugin_snapshot_json')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN applied_plugin_snapshot_json TEXT`);
-  }
-  if (!messageCols.some((c: DbRow) => c.name === 'telemetry_finalized_at')) {
-    db.exec(`ALTER TABLE messages ADD COLUMN telemetry_finalized_at INTEGER`);
-  }
-  const routineRunCols = db.prepare(`PRAGMA table_info(routine_runs)`).all() as DbRow[];
-  if (!routineRunCols.some((c: DbRow) => c.name === 'error_code')) {
-    db.exec(`ALTER TABLE routine_runs ADD COLUMN error_code TEXT`);
-  }
-
-  const previewCommentCols = db.prepare(`PRAGMA table_info(preview_comments)`).all() as DbRow[];
-  if (!previewCommentCols.some((c: DbRow) => c.name === 'selection_kind')) {
-    db.exec(`ALTER TABLE preview_comments ADD COLUMN selection_kind TEXT`);
-  }
-  if (!previewCommentCols.some((c: DbRow) => c.name === 'member_count')) {
-    db.exec(`ALTER TABLE preview_comments ADD COLUMN member_count INTEGER`);
-  }
-  if (!previewCommentCols.some((c: DbRow) => c.name === 'pod_members_json')) {
-    db.exec(`ALTER TABLE preview_comments ADD COLUMN pod_members_json TEXT`);
-  }
-  if (!previewCommentCols.some((c: DbRow) => c.name === 'style_json')) {
-    db.exec(`ALTER TABLE preview_comments ADD COLUMN style_json TEXT`);
-  }
-  if (!previewCommentCols.some((c: DbRow) => c.name === 'attachments_json')) {
-    db.exec(`ALTER TABLE preview_comments ADD COLUMN attachments_json TEXT`);
-  }
-  if (!previewCommentCols.some((c: DbRow) => c.name === 'slide_index')) {
-    db.exec(`ALTER TABLE preview_comments ADD COLUMN slide_index INTEGER`);
-  }
-  migratePreviewCommentsSlideKey(db);
-  const deploymentCols = db.prepare(`PRAGMA table_info(deployments)`).all() as DbRow[];
-  if (!deploymentCols.some((c: DbRow) => c.name === 'status')) {
-    db.exec(`ALTER TABLE deployments ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'`);
-  }
-  if (!deploymentCols.some((c: DbRow) => c.name === 'status_message')) {
-    db.exec(`ALTER TABLE deployments ADD COLUMN status_message TEXT`);
-  }
-  if (!deploymentCols.some((c: DbRow) => c.name === 'reachable_at')) {
-    db.exec(`ALTER TABLE deployments ADD COLUMN reachable_at INTEGER`);
-  }
-  if (!deploymentCols.some((c: DbRow) => c.name === 'provider_metadata_json')) {
-    db.exec(`ALTER TABLE deployments ADD COLUMN provider_metadata_json TEXT`);
-  }
-  // schedule_json holds the full RoutineSchedule object (kind discriminator
-  // plus kind-specific fields like time/timezone/weekday). The legacy
-  // schedule_kind/schedule_value columns are kept populated for query
-  // convenience and as a fallback when reading rows written before this
-  // column existed.
-  const routineCols = db.prepare(`PRAGMA table_info(routines)`).all() as DbRow[];
-  if (routineCols.length > 0 && !routineCols.some((c: DbRow) => c.name === 'schedule_json')) {
-    db.exec(`ALTER TABLE routines ADD COLUMN schedule_json TEXT`);
-  }
-  if (routineCols.length > 0 && !routineCols.some((c: DbRow) => c.name === 'context_json')) {
-    db.exec(`ALTER TABLE routines ADD COLUMN context_json TEXT`);
-  }
-  const agentSessionCols = db.prepare(`PRAGMA table_info(agent_sessions)`).all() as DbRow[];
-  if (agentSessionCols.length > 0 && !agentSessionCols.some((c: DbRow) => c.name === 'stable_prompt_hash')) {
-    db.exec(`ALTER TABLE agent_sessions ADD COLUMN stable_prompt_hash TEXT`);
-  }
-  const tabsStateCols = db.prepare(`PRAGMA table_info(tabs_state)`).all() as DbRow[];
-  if (tabsStateCols.length > 0 && !tabsStateCols.some((c: DbRow) => c.name === 'state_json')) {
-    db.exec(`ALTER TABLE tabs_state ADD COLUMN state_json TEXT`);
-  }
-  migrateCritique(db);
-  migrateMediaTasks(db);
-  migratePlugins(db);
-  migrateTenantId(db);
-}
-
-function migratePreviewCommentsSlideKey(db: SqliteDb): void {
-  const table = db
-    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'preview_comments'`)
-    .get() as DbRow | undefined;
-  const tableSql = String(table?.sql ?? '');
-  const hasSlideKey = /\bslide_key\b/i.test(tableSql);
-  const hasLegacyUnique = /UNIQUE\s*\(\s*project_id\s*,\s*conversation_id\s*,\s*file_path\s*,\s*element_id\s*\)/i
-    .test(tableSql);
-  if (hasSlideKey && !hasLegacyUnique) return;
-
-  db.exec(`
-    CREATE TABLE preview_comments_next (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      conversation_id TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      element_id TEXT NOT NULL,
-      selector TEXT NOT NULL,
-      label TEXT NOT NULL,
-      text TEXT NOT NULL,
-      position_json TEXT NOT NULL,
-      html_hint TEXT NOT NULL,
-      selection_kind TEXT,
-      member_count INTEGER,
-      pod_members_json TEXT,
-      style_json TEXT,
-      attachments_json TEXT,
-      slide_index INTEGER,
-      slide_key INTEGER NOT NULL DEFAULT -1,
-      note TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(project_id, conversation_id, file_path, element_id, slide_key),
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    INSERT INTO preview_comments_next
-      (id, project_id, conversation_id, file_path, element_id, selector, label,
-       text, position_json, html_hint, selection_kind, member_count, pod_members_json,
-       style_json, attachments_json, slide_index, slide_key, note, status, created_at, updated_at)
-    SELECT id, project_id, conversation_id, file_path, element_id, selector, label,
-       text, position_json, html_hint, selection_kind, member_count, pod_members_json,
-       style_json, attachments_json, slide_index, COALESCE(slide_index, -1), note, status, created_at, updated_at
-      FROM preview_comments;
-
-    DROP TABLE preview_comments;
-    ALTER TABLE preview_comments_next RENAME TO preview_comments;
-    CREATE INDEX IF NOT EXISTS idx_preview_comments_conversation
-      ON preview_comments(project_id, conversation_id, updated_at DESC);
-  `);
 }
 
 // ---------- deployments ----------
@@ -456,22 +81,22 @@ const DEPLOYMENT_COLS = `id, project_id AS projectId, file_name AS fileName,
   provider_metadata_json AS providerMetadataJson,
   created_at AS createdAt, updated_at AS updatedAt`;
 
-export function listDeployments(db: SqliteDb, projectId: string) {
+export async function listDeployments(db: SqliteDb, projectId: string) {
   const tenantId = currentTenantId();
-  return (db
+  return ((await db
     .prepare(
       `SELECT ${DEPLOYMENT_COLS}
          FROM deployments
         WHERE project_id = ? AND tenant_id = ?
         ORDER BY updated_at DESC`,
     )
-    .all(projectId, tenantId) as DbRow[])
+    .all(projectId, tenantId)) as DbRow[])
     .map(normalizeDeployment);
 }
 
-export function getDeployment(db: SqliteDb, projectId: string, fileName: string, providerId: string) {
+export async function getDeployment(db: SqliteDb, projectId: string, fileName: string, providerId: string) {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT ${DEPLOYMENT_COLS}
          FROM deployments
@@ -481,9 +106,9 @@ export function getDeployment(db: SqliteDb, projectId: string, fileName: string,
   return row ? normalizeDeployment(row) : null;
 }
 
-export function getDeploymentById(db: SqliteDb, projectId: string, id: string) {
+export async function getDeploymentById(db: SqliteDb, projectId: string, id: string) {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT ${DEPLOYMENT_COLS}
          FROM deployments
@@ -493,8 +118,8 @@ export function getDeploymentById(db: SqliteDb, projectId: string, id: string) {
   return row ? normalizeDeployment(row) : null;
 }
 
-export function upsertDeployment(db: SqliteDb, deployment: DbRow) {
-  const existing = getDeployment(
+export async function upsertDeployment(db: SqliteDb, deployment: DbRow) {
+  const existing = await getDeployment(
     db,
     deployment.projectId,
     deployment.fileName,
@@ -535,7 +160,7 @@ export function upsertDeployment(db: SqliteDb, deployment: DbRow) {
   };
   const providerMetadataJson = stringifyJsonObjectOrNull(next.providerMetadata);
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO deployments
        (id, project_id, file_name, provider_id, url, deployment_id,
         deployment_count, target, status, status_message, reachable_at,
@@ -618,9 +243,9 @@ const PROJECT_COLS = `id, name, skill_id AS skillId,
   created_at AS createdAt,
   updated_at AS updatedAt`;
 
-export function listProjects(db: SqliteDb) {
+export async function listProjects(db: SqliteDb) {
   const tenantId = currentTenantId();
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT ${PROJECT_COLS}
          FROM projects
@@ -631,9 +256,9 @@ export function listProjects(db: SqliteDb) {
   return rows.map(normalizeProject);
 }
 
-export function listLatestProjectRunStatuses(db: SqliteDb) {
+export async function listLatestProjectRunStatuses(db: SqliteDb) {
   const tenantId = currentTenantId();
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT c.project_id AS projectId,
               m.run_id AS runId,
@@ -659,9 +284,9 @@ export function listLatestProjectRunStatuses(db: SqliteDb) {
   return latestByProject;
 }
 
-export function listProjectsAwaitingInput(db: SqliteDb) {
+export async function listProjectsAwaitingInput(db: SqliteDb) {
   const tenantId = currentTenantId();
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT latest.projectId
          FROM (
@@ -701,17 +326,17 @@ export function listProjectsAwaitingInput(db: SqliteDb) {
   return new Set((rows as DbRow[]).map((row: DbRow) => row.projectId));
 }
 
-export function getProject(db: SqliteDb, id: string) {
+export async function getProject(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(`SELECT ${PROJECT_COLS} FROM projects WHERE id = ? AND tenant_id = ?`)
     .get(id, tenantId) as DbRow | undefined;
   return row ? normalizeProject(row) : null;
 }
 
-export function insertProject(db: SqliteDb, p: DbRow) {
+export async function insertProject(db: SqliteDb, p: DbRow) {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO projects
        (id, name, skill_id, design_system_id, pending_prompt,
         metadata_json, custom_instructions, created_at, updated_at, tenant_id)
@@ -731,16 +356,16 @@ export function insertProject(db: SqliteDb, p: DbRow) {
   return getProject(db, p.id);
 }
 
-export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
+export async function updateProject(db: SqliteDb, id: string, patch: DbRow) {
   const tenantId = currentTenantId();
-  const existing = getProject(db, id);
+  const existing = await getProject(db, id);
   if (!existing) return null;
   const merged = {
     ...existing,
     ...patch,
     updatedAt: typeof patch.updatedAt === 'number' ? patch.updatedAt : Date.now(),
   };
-  db.prepare(
+  await db.prepare(
     `UPDATE projects
         SET name = ?,
             skill_id = ?,
@@ -764,9 +389,9 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
   return getProject(db, id);
 }
 
-export function deleteProject(db: SqliteDb, id: string) {
+export async function deleteProject(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  db.prepare(`DELETE FROM projects WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+  await db.prepare(`DELETE FROM projects WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 function normalizeProject(row: DbRow) {
@@ -809,9 +434,9 @@ function normalizeProjectRunStatus(status: unknown) {
 
 // ---------- templates ----------
 
-export function listTemplates(db: SqliteDb) {
+export async function listTemplates(db: SqliteDb) {
   const tenantId = currentTenantId();
-  return (db
+  return ((await db
     .prepare(
       `SELECT id, name, description, source_project_id AS sourceProjectId,
               files_json AS filesJson, created_at AS createdAt
@@ -819,13 +444,13 @@ export function listTemplates(db: SqliteDb) {
         WHERE tenant_id = ?
         ORDER BY created_at DESC`,
     )
-    .all(tenantId) as DbRow[])
+    .all(tenantId)) as DbRow[])
     .map(normalizeTemplate);
 }
 
-export function getTemplate(db: SqliteDb, id: string) {
+export async function getTemplate(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT id, name, description, source_project_id AS sourceProjectId,
               files_json AS filesJson, created_at AS createdAt
@@ -835,13 +460,13 @@ export function getTemplate(db: SqliteDb, id: string) {
   return row ? normalizeTemplate(row) : null;
 }
 
-export function findTemplateByNameAndProject(
+export async function findTemplateByNameAndProject(
   db: SqliteDb,
   name: string,
   sourceProjectId: string,
 ) {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT id, name, description, source_project_id AS sourceProjectId,
               files_json AS filesJson, created_at AS createdAt
@@ -852,9 +477,9 @@ export function findTemplateByNameAndProject(
   return row ? normalizeTemplate(row) : null;
 }
 
-export function insertTemplate(db: SqliteDb, t: DbRow) {
+export async function insertTemplate(db: SqliteDb, t: DbRow) {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO templates (id, name, description, source_project_id, files_json, created_at, tenant_id)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
@@ -869,21 +494,21 @@ export function insertTemplate(db: SqliteDb, t: DbRow) {
   return getTemplate(db, t.id);
 }
 
-export function updateTemplate(
+export async function updateTemplate(
   db: SqliteDb,
   id: string,
   t: { description: string | null; files: unknown[] },
 ) {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `UPDATE templates SET description = ?, files_json = ? WHERE id = ? AND tenant_id = ?`,
   ).run(t.description, JSON.stringify(t.files), id, tenantId);
   return getTemplate(db, id);
 }
 
-export function deleteTemplate(db: SqliteDb, id: string) {
+export async function deleteTemplate(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  db.prepare(`DELETE FROM templates WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+  await db.prepare(`DELETE FROM templates WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 function normalizeTemplate(row: DbRow) {
@@ -905,9 +530,9 @@ function normalizeTemplate(row: DbRow) {
 
 // ---------- conversations ----------
 
-export function listConversations(db: SqliteDb, projectId: string) {
+export async function listConversations(db: SqliteDb, projectId: string) {
   const tenantId = currentTenantId();
-  return rows(db
+  return rows(await db
     .prepare(
       `WITH project_conversations AS (
           SELECT id, project_id AS projectId, title, session_mode AS sessionMode,
@@ -968,9 +593,9 @@ export function listConversations(db: SqliteDb, projectId: string) {
     .all(projectId, tenantId)).map(normalizeConversation);
 }
 
-export function getConversation(db: SqliteDb, id: string) {
+export async function getConversation(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  const r = db
+  const r = await db
     .prepare(
       `SELECT id, project_id AS projectId, title, session_mode AS sessionMode,
               created_at AS createdAt, updated_at AS updatedAt,
@@ -981,8 +606,8 @@ export function getConversation(db: SqliteDb, id: string) {
   if (!r) return null;
   return {
     ...normalizeConversation(r),
-    latestRun: latestConversationRunSummary(db, r.id) ?? undefined,
-    ...numberProperty('totalDurationMs', totalConversationRunDurationMs(db, r.id)),
+    latestRun: (await latestConversationRunSummary(db, r.id)) ?? undefined,
+    ...numberProperty('totalDurationMs', await totalConversationRunDurationMs(db, r.id)),
   };
 }
 
@@ -1015,8 +640,8 @@ function numberProperty(key: string, value: unknown) {
   return typeof n === 'number' && Number.isFinite(n) ? { [key]: n } : {};
 }
 
-function latestConversationRunSummary(db: SqliteDb, conversationId: string) {
-  const row = db
+async function latestConversationRunSummary(db: SqliteDb, conversationId: string) {
+  const row = await db
     .prepare(
       `SELECT run_status AS runStatus,
               started_at AS startedAt,
@@ -1033,8 +658,8 @@ function latestConversationRunSummary(db: SqliteDb, conversationId: string) {
   return conversationRunSummaryFromRow(row);
 }
 
-function totalConversationRunDurationMs(db: SqliteDb, conversationId: string): number | undefined {
-  const row = db
+async function totalConversationRunDurationMs(db: SqliteDb, conversationId: string): Promise<number | undefined> {
+  const row = await db
     .prepare(
       `SELECT SUM(${terminalRunDurationSql()}) AS totalDurationMs
          FROM messages
@@ -1129,9 +754,9 @@ function latestUsageDurationMs(eventsJson: unknown): number | undefined {
   return undefined;
 }
 
-export function insertConversation(db: SqliteDb, c: DbRow) {
+export async function insertConversation(db: SqliteDb, c: DbRow) {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO conversations
        (id, project_id, title, session_mode, created_at, updated_at, tenant_id)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -1147,9 +772,9 @@ export function insertConversation(db: SqliteDb, c: DbRow) {
   return getConversation(db, c.id);
 }
 
-export function updateConversation(db: SqliteDb, id: string, patch: DbRow) {
+export async function updateConversation(db: SqliteDb, id: string, patch: DbRow) {
   const tenantId = currentTenantId();
-  const existing = getConversation(db, id);
+  const existing = await getConversation(db, id);
   if (!existing) return null;
   const merged = {
     ...existing,
@@ -1159,27 +784,27 @@ export function updateConversation(db: SqliteDb, id: string, patch: DbRow) {
       : existing.sessionMode,
     updatedAt: typeof patch.updatedAt === 'number' ? patch.updatedAt : Date.now(),
   };
-  db.prepare(
+  await db.prepare(
     `UPDATE conversations
         SET title = ?, session_mode = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
   ).run(merged.title ?? null, merged.sessionMode, merged.updatedAt, id, tenantId);
   return getConversation(db, id);
 }
 
-export function deleteConversation(db: SqliteDb, id: string) {
+export async function deleteConversation(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  db.prepare(`DELETE FROM conversations WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+  await db.prepare(`DELETE FROM conversations WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 // ---------- agent sessions ----------
 
-export function getAgentSession(
+export async function getAgentSession(
   db: SqliteDb,
   conversationId: string,
   agentId: string,
-): string | null {
+): Promise<string | null> {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT session_id FROM agent_sessions
         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
@@ -1188,7 +813,7 @@ export function getAgentSession(
   return row && typeof row.session_id === 'string' ? row.session_id : null;
 }
 
-export function upsertAgentSession(
+export async function upsertAgentSession(
   db: SqliteDb,
   input: {
     conversationId: string;
@@ -1196,9 +821,9 @@ export function upsertAgentSession(
     sessionId: string;
     stablePromptHash?: string | null;
   },
-): void {
+): Promise<void> {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO agent_sessions (conversation_id, agent_id, session_id, stable_prompt_hash, updated_at, tenant_id)
        VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(conversation_id, agent_id)
@@ -1216,13 +841,13 @@ export function upsertAgentSession(
   );
 }
 
-export function getAgentSessionRecord(
+export async function getAgentSessionRecord(
   db: SqliteDb,
   conversationId: string,
   agentId: string,
-): { sessionId: string; stablePromptHash: string | null } | null {
+): Promise<{ sessionId: string; stablePromptHash: string | null } | null> {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT session_id, stable_prompt_hash FROM agent_sessions
         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
@@ -1236,35 +861,35 @@ export function getAgentSessionRecord(
   };
 }
 
-export function updateAgentSessionStableHash(
+export async function updateAgentSessionStableHash(
   db: SqliteDb,
   conversationId: string,
   agentId: string,
   stablePromptHash: string,
-): void {
+): Promise<void> {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `UPDATE agent_sessions SET stable_prompt_hash = ?, updated_at = ?
       WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
   ).run(stablePromptHash, Date.now(), conversationId, agentId, tenantId);
 }
 
-export function clearAgentSession(
+export async function clearAgentSession(
   db: SqliteDb,
   conversationId: string,
   agentId: string,
-): void {
+): Promise<void> {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `DELETE FROM agent_sessions WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
   ).run(conversationId, agentId, tenantId);
 }
 
 // ---------- messages ----------
 
-export function listMessages(db: SqliteDb, conversationId: string) {
+export async function listMessages(db: SqliteDb, conversationId: string) {
   const tenantId = currentTenantId();
-  return (db
+  return ((await db
     .prepare(
       `SELECT id, role, content, agent_id AS agentId, agent_name AS agentName,
               run_id AS runId, run_status AS runStatus,
@@ -1284,18 +909,18 @@ export function listMessages(db: SqliteDb, conversationId: string) {
         WHERE conversation_id = ? AND tenant_id = ?
         ORDER BY position ASC`,
     )
-    .all(conversationId, tenantId) as DbRow[])
+    .all(conversationId, tenantId)) as DbRow[])
     .map(normalizeMessage);
 }
 
-export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
+export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
   const tenantId = currentTenantId();
-  const existing = db
+  const existing = await db
     .prepare(`SELECT position FROM messages WHERE id = ? AND tenant_id = ?`)
     .get(m.id, tenantId) as DbRow | undefined;
   const now = Date.now();
   if (existing) {
-    db.prepare(
+    await db.prepare(
       `UPDATE messages
           SET role = ?, content = ?, agent_id = ?, agent_name = ?,
               run_id = ?, run_status = ?, last_run_event_id = ?,
@@ -1334,7 +959,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       tenantId,
     );
   } else {
-    const max = db
+    const max = await db
       .prepare(
         `SELECT COALESCE(MAX(position), -1) AS m FROM messages WHERE conversation_id = ? AND tenant_id = ?`,
       )
@@ -1346,7 +971,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
     // pre_turn_file_names_json, session_mode, run_context_json,
     // applied_plugin_snapshot_json, telemetry_finalized_at, started_at,
     // ended_at, position, created_at.
-    db.prepare(
+    await db.prepare(
       `INSERT INTO messages
          (id, conversation_id, role, content, agent_id, agent_name,
           run_id, run_status, last_run_event_id, events_json,
@@ -1383,12 +1008,12 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
     );
   }
   // Bump conversation activity so the sidebar's recency sort works.
-  db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ? AND tenant_id = ?`).run(
+  await db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ? AND tenant_id = ?`).run(
     now,
     conversationId,
     tenantId,
   );
-  const row = db
+  const row = await db
     .prepare(
       `SELECT id, role, content, agent_id AS agentId, agent_name AS agentName,
               run_id AS runId, run_status AS runStatus,
@@ -1410,9 +1035,9 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
   return row ? normalizeMessage(row) : null;
 }
 
-export function getMessageTelemetryFinalizationState(db: SqliteDb, messageId: string) {
+export async function getMessageTelemetryFinalizationState(db: SqliteDb, messageId: string) {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT telemetry_finalized_at AS telemetryFinalizedAt
          FROM messages
@@ -1432,12 +1057,12 @@ export function getMessageTelemetryFinalizationState(db: SqliteDb, messageId: st
   };
 }
 
-export function appendMessageStatusEvent(db: SqliteDb, messageId: string, event: DbRow) {
+export async function appendMessageStatusEvent(db: SqliteDb, messageId: string, event: DbRow) {
   const tenantId = currentTenantId();
   const label = typeof event?.label === 'string' ? event.label.trim() : '';
   const detail = typeof event?.detail === 'string' ? event.detail.trim() : '';
   if (!label) return null;
-  const row = db
+  const row = await db
     .prepare(`SELECT events_json AS eventsJson FROM messages WHERE id = ? AND tenant_id = ?`)
     .get(messageId, tenantId) as DbRow | undefined;
   if (!row) return null;
@@ -1451,17 +1076,17 @@ export function appendMessageStatusEvent(db: SqliteDb, messageId: string, event:
     ? { kind: 'status', label, detail }
     : { kind: 'status', label };
   const next = [...events, nextEvent];
-  db.prepare(`UPDATE messages SET events_json = ? WHERE id = ? AND tenant_id = ?`)
+  await db.prepare(`UPDATE messages SET events_json = ? WHERE id = ? AND tenant_id = ?`)
     .run(JSON.stringify(next), messageId, tenantId);
   return next;
 }
 
-export function appendMessageAgentEvent(db: SqliteDb, messageId: string, event: DbRow) {
+export async function appendMessageAgentEvent(db: SqliteDb, messageId: string, event: DbRow) {
   const tenantId = currentTenantId();
   if (!event || typeof event !== 'object') return null;
   const kind = typeof event.kind === 'string' ? event.kind : '';
   if (!kind) return null;
-  const row = db
+  const row = await db
     .prepare(`SELECT content, events_json AS eventsJson FROM messages WHERE id = ? AND tenant_id = ?`)
     .get(messageId, tenantId) as DbRow | undefined;
   if (!row) return null;
@@ -1473,14 +1098,14 @@ export function appendMessageAgentEvent(db: SqliteDb, messageId: string, event: 
   }
   const next = [...events, event];
   const textDelta = kind === 'text' && typeof event.text === 'string' ? event.text : '';
-  db.prepare(`UPDATE messages SET content = COALESCE(content, '') || ?, events_json = ? WHERE id = ? AND tenant_id = ?`)
+  await db.prepare(`UPDATE messages SET content = COALESCE(content, '') || ?, events_json = ? WHERE id = ? AND tenant_id = ?`)
     .run(textDelta, JSON.stringify(next), messageId, tenantId);
   return next;
 }
 
-export function deleteMessage(db: SqliteDb, id: string) {
+export async function deleteMessage(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  db.prepare(`DELETE FROM messages WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+  await db.prepare(`DELETE FROM messages WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
 // ---------- preview comments ----------
@@ -1494,9 +1119,9 @@ const PREVIEW_COMMENT_STATUSES = new Set([
   'failed',
 ]);
 
-export function listPreviewComments(db: SqliteDb, projectId: string, conversationId: string) {
+export async function listPreviewComments(db: SqliteDb, projectId: string, conversationId: string) {
   const tenantId = currentTenantId();
-  return (db
+  return ((await db
     .prepare(
       `SELECT id, project_id AS projectId, conversation_id AS conversationId,
               file_path AS filePath, element_id AS elementId, selector, label,
@@ -1510,11 +1135,11 @@ export function listPreviewComments(db: SqliteDb, projectId: string, conversatio
         WHERE project_id = ? AND conversation_id = ? AND tenant_id = ?
         ORDER BY created_at ASC, id ASC`,
     )
-    .all(projectId, conversationId, tenantId) as DbRow[])
+    .all(projectId, conversationId, tenantId)) as DbRow[])
     .map(normalizePreviewComment);
 }
 
-export function upsertPreviewComment(db: SqliteDb, projectId: string, conversationId: string, input: DbRow) {
+export async function upsertPreviewComment(db: SqliteDb, projectId: string, conversationId: string, input: DbRow) {
   const tenantId = currentTenantId();
   const target = input?.target ?? {};
   const note = typeof input?.note === 'string' ? input.note.trim() : '';
@@ -1540,7 +1165,7 @@ export function upsertPreviewComment(db: SqliteDb, projectId: string, conversati
   const slideIndex = Number.isFinite(target.slideIndex) ? Math.max(0, Math.round(target.slideIndex)) : null;
   const slideKey = slideIndex ?? -1;
   const now = Date.now();
-  const existing = db
+  const existing = await db
     .prepare(
       `SELECT id, created_at AS createdAt, attachments_json AS attachmentsJson
          FROM preview_comments
@@ -1553,7 +1178,7 @@ export function upsertPreviewComment(db: SqliteDb, projectId: string, conversati
   const attachments = attachmentsProvided ? incomingAttachments : existingAttachments;
   // A comment must carry either a note or at least one image attachment.
   if (!note && attachments.length === 0) throw new Error('comment note required');
-  db.prepare(
+  await db.prepare(
     `INSERT INTO preview_comments
        (id, project_id, conversation_id, file_path, element_id, selector, label,
         text, position_json, html_hint, selection_kind, member_count, pod_members_json,
@@ -1602,11 +1227,11 @@ export function upsertPreviewComment(db: SqliteDb, projectId: string, conversati
   return getPreviewComment(db, projectId, conversationId, id);
 }
 
-export function updatePreviewCommentStatus(db: SqliteDb, projectId: string, conversationId: string, id: string, status: string) {
+export async function updatePreviewCommentStatus(db: SqliteDb, projectId: string, conversationId: string, id: string, status: string) {
   if (!PREVIEW_COMMENT_STATUSES.has(status)) throw new Error('invalid comment status');
   const tenantId = currentTenantId();
   const now = Date.now();
-  db.prepare(
+  await db.prepare(
     `UPDATE preview_comments
         SET status = ?, updated_at = ?
       WHERE id = ? AND project_id = ? AND conversation_id = ? AND tenant_id = ?`,
@@ -1614,9 +1239,9 @@ export function updatePreviewCommentStatus(db: SqliteDb, projectId: string, conv
   return getPreviewComment(db, projectId, conversationId, id);
 }
 
-export function deletePreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {
+export async function deletePreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {
   const tenantId = currentTenantId();
-  const result = db
+  const result = await db
     .prepare(
       `DELETE FROM preview_comments
         WHERE id = ? AND project_id = ? AND conversation_id = ? AND tenant_id = ?`,
@@ -1625,9 +1250,9 @@ export function deletePreviewComment(db: SqliteDb, projectId: string, conversati
   return result.changes > 0;
 }
 
-function getPreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {
+async function getPreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {
   const tenantId = currentTenantId();
-  const row = db
+  const row = await db
     .prepare(
       `SELECT id, project_id AS projectId, conversation_id AS conversationId,
               file_path AS filePath, element_id AS elementId, selector, label,
@@ -1829,25 +1454,25 @@ const ROUTINE_RUN_COLS = `id, routine_id AS routineId, trigger, status,
   agent_run_id AS agentRunId, started_at AS startedAt,
   completed_at AS completedAt, summary, error, error_code AS errorCode`;
 
-export function listRoutines(db: SqliteDb) {
+export async function listRoutines(db: SqliteDb) {
   const tenantId = currentTenantId();
-  return (db
+  return ((await db
     .prepare(`SELECT ${ROUTINE_COLS} FROM routines WHERE tenant_id = ? ORDER BY created_at ASC`)
-    .all(tenantId) as DbRow[])
+    .all(tenantId)) as DbRow[])
     .map(normalizeRoutine);
 }
 
-export function getRoutine(db: SqliteDb, id: string) {
+export async function getRoutine(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
-  const r = db
+  const r = await db
     .prepare(`SELECT ${ROUTINE_COLS} FROM routines WHERE id = ? AND tenant_id = ?`)
     .get(id, tenantId) as DbRow | undefined;
   return r ? normalizeRoutine(r) : null;
 }
 
-export function insertRoutine(db: SqliteDb, r: DbRow) {
+export async function insertRoutine(db: SqliteDb, r: DbRow) {
   const tenantId = currentTenantId();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO routines
        (id, name, prompt, schedule_kind, schedule_value, schedule_json,
         project_mode, project_id, skill_id, agent_id, context_json, enabled,
@@ -1873,16 +1498,16 @@ export function insertRoutine(db: SqliteDb, r: DbRow) {
   return getRoutine(db, r.id);
 }
 
-export function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
+export async function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
   const tenantId = currentTenantId();
-  const existing = getRoutine(db, id);
+  const existing = await getRoutine(db, id);
   if (!existing) return null;
   const merged = {
     ...existing,
     ...patch,
     updatedAt: typeof patch.updatedAt === 'number' ? patch.updatedAt : Date.now(),
   };
-  db.prepare(
+  await db.prepare(
     `UPDATE routines
         SET name = ?, prompt = ?,
             schedule_kind = ?, schedule_value = ?, schedule_json = ?,
@@ -1909,9 +1534,9 @@ export function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
   return getRoutine(db, id);
 }
 
-export function deleteRoutine(db: SqliteDb, id: string): boolean {
+export async function deleteRoutine(db: SqliteDb, id: string): Promise<boolean> {
   const tenantId = currentTenantId();
-  const result = db.prepare(`DELETE FROM routines WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+  const result = await db.prepare(`DELETE FROM routines WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
   return result.changes > 0;
 }
 
@@ -1934,8 +1559,8 @@ function normalizeRoutine(row: DbRow) {
   };
 }
 
-export function listRoutineRuns(db: SqliteDb, routineId: string, limit = 20) {
-  return (db
+export async function listRoutineRuns(db: SqliteDb, routineId: string, limit = 20) {
+  return ((await db
     .prepare(
       `SELECT ${ROUTINE_RUN_COLS}
          FROM routine_runs
@@ -1943,12 +1568,12 @@ export function listRoutineRuns(db: SqliteDb, routineId: string, limit = 20) {
         ORDER BY started_at DESC
         LIMIT ?`,
     )
-    .all(routineId, limit) as DbRow[])
+    .all(routineId, limit)) as DbRow[])
     .map(normalizeRoutineRun);
 }
 
-export function getLatestRoutineRun(db: SqliteDb, routineId: string) {
-  const r = db
+export async function getLatestRoutineRun(db: SqliteDb, routineId: string) {
+  const r = await db
     .prepare(
       `SELECT ${ROUTINE_RUN_COLS}
          FROM routine_runs
@@ -1960,15 +1585,15 @@ export function getLatestRoutineRun(db: SqliteDb, routineId: string) {
   return r ? normalizeRoutineRun(r) : null;
 }
 
-export function getRoutineRun(db: SqliteDb, id: string) {
-  const r = db
+export async function getRoutineRun(db: SqliteDb, id: string) {
+  const r = await db
     .prepare(`SELECT ${ROUTINE_RUN_COLS} FROM routine_runs WHERE id = ?`)
     .get(id) as DbRow | undefined;
   return r ? normalizeRoutineRun(r) : null;
 }
 
-export function insertRoutineRun(db: SqliteDb, r: DbRow) {
-  db.prepare(
+export async function insertRoutineRun(db: SqliteDb, r: DbRow) {
+  await db.prepare(
     `INSERT INTO routine_runs
        (id, routine_id, trigger, status, project_id, conversation_id,
         agent_run_id, started_at, completed_at, summary, error, error_code)
@@ -1990,7 +1615,7 @@ export function insertRoutineRun(db: SqliteDb, r: DbRow) {
   return getRoutineRun(db, r.id);
 }
 
-export function insertScheduledRoutineRun(db: SqliteDb, r: DbRow, slotAt: number) {
+export async function insertScheduledRoutineRun(db: SqliteDb, r: DbRow, slotAt: number) {
   const insertClaim = db.prepare(
     `INSERT INTO routine_schedule_claims
        (routine_id, slot_at, claimed_at)
@@ -2003,10 +1628,10 @@ export function insertScheduledRoutineRun(db: SqliteDb, r: DbRow, slotAt: number
         agent_run_id, started_at, completed_at, summary, error, error_code)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  const tx = db.transaction(() => {
-    const claim = insertClaim.run(r.routineId, slotAt, Date.now());
+  const tx = db.transaction(async () => {
+    const claim = await insertClaim.run(r.routineId, slotAt, Date.now());
     if (claim.changes === 0) return false;
-    insertRun.run(
+    await insertRun.run(
       r.id,
       r.routineId,
       r.trigger,
@@ -2022,18 +1647,18 @@ export function insertScheduledRoutineRun(db: SqliteDb, r: DbRow, slotAt: number
     );
     return true;
   });
-  if (!tx()) return null;
+  if (!(await tx())) return null;
   return getRoutineRun(db, r.id);
 }
 
-export function updateRoutineRun(db: SqliteDb, id: string, patch: DbRow) {
-  const existing = getRoutineRun(db, id);
+export async function updateRoutineRun(db: SqliteDb, id: string, patch: DbRow) {
+  const existing = await getRoutineRun(db, id);
   if (!existing) return null;
   const merged = {
     ...existing,
     ...patch,
   };
-  db.prepare(
+  await db.prepare(
     `UPDATE routine_runs
         SET status = ?, project_id = ?, conversation_id = ?, agent_run_id = ?,
             completed_at = ?, summary = ?, error = ?, error_code = ?
@@ -2116,15 +1741,15 @@ function parseProjectTabsStateJson(value: unknown): ProjectTabsState | null {
   }
 }
 
-export function listTabs(db: SqliteDb, projectId: string) {
+export async function listTabs(db: SqliteDb, projectId: string) {
   const tenantId = currentTenantId();
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT name, position, is_active AS isActive
          FROM tabs WHERE project_id = ? AND tenant_id = ? ORDER BY position ASC`,
     )
     .all(projectId, tenantId) as DbRow[];
-  const state = db
+  const state = await db
     .prepare(`SELECT project_id, updated_at AS updatedAt, state_json AS stateJson FROM tabs_state WHERE project_id = ? AND tenant_id = ? LIMIT 1`)
     .get(projectId, tenantId) as DbRow | undefined;
   const savedState = parseProjectTabsStateJson(state?.stateJson);
@@ -2144,7 +1769,7 @@ export function listTabs(db: SqliteDb, projectId: string) {
   };
 }
 
-export function setTabs(
+export async function setTabs(
   db: SqliteDb,
   projectId: string,
   stateOrNames: ProjectTabsState | string[],
@@ -2156,8 +1781,8 @@ export function setTabs(
       ? { tabs: stateOrNames, active: activeName }
       : stateOrNames,
   ) ?? { tabs: [], active: null };
-  const tx = db.transaction(() => {
-    db.prepare(
+  const tx = db.transaction(async () => {
+    await db.prepare(
       `INSERT INTO tabs_state (project_id, updated_at, state_json, tenant_id)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(project_id) DO UPDATE SET
@@ -2165,15 +1790,16 @@ export function setTabs(
          state_json = excluded.state_json,
          tenant_id = excluded.tenant_id`,
     ).run(projectId, Date.now(), JSON.stringify(state), tenantId);
-    db.prepare(`DELETE FROM tabs WHERE project_id = ? AND tenant_id = ?`).run(projectId, tenantId);
+    await db.prepare(`DELETE FROM tabs WHERE project_id = ? AND tenant_id = ?`).run(projectId, tenantId);
     const ins = db.prepare(
       `INSERT INTO tabs (project_id, name, position, is_active, tenant_id)
        VALUES (?, ?, ?, ?, ?)`,
     );
-    state.tabs.forEach((name: string, i: number) => {
-      ins.run(projectId, name, i, name === state.active ? 1 : 0, tenantId);
-    });
+    for (let i = 0; i < state.tabs.length; i += 1) {
+      const name = state.tabs[i];
+      await ins.run(projectId, name, i, name === state.active ? 1 : 0, tenantId);
+    }
   });
-  tx();
+  await tx();
   return listTabs(db, projectId);
 }

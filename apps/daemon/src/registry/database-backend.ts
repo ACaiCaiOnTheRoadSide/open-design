@@ -1,4 +1,3 @@
-import type Database from 'better-sqlite3';
 import type { MarketplaceManifest, MarketplacePluginEntry } from '@open-design/contracts';
 import type {
   RegistryEntry,
@@ -7,9 +6,10 @@ import type {
   RegistryTrust,
   RegistryYankOutcome,
 } from '@open-design/registry-protocol';
+import type { AsyncDb } from '../storage/pg-async.js';
 import { StaticRegistryBackend, toRegistryEntry } from './static-backend.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface DatabaseRegistryBackendOptions {
   id: string;
@@ -20,19 +20,30 @@ export interface DatabaseRegistryBackendOptions {
 export class DatabaseRegistryBackend extends StaticRegistryBackend {
   readonly db: SqliteDb;
 
+  /** Cached manifest, refreshed asynchronously (init() / after writes) since db reads are now async. */
+  private dbManifest: MarketplaceManifest;
+
   constructor(options: DatabaseRegistryBackendOptions) {
-    ensureRegistryTables(options.db);
+    const empty: MarketplaceManifest = { specVersion: '1.0.0', name: options.id, version: '0.0.0', plugins: [] };
     super({
       id: options.id,
       kind: 'db',
       trust: options.trust ?? 'restricted',
-      manifest: manifestFromDb(options.db, options.id),
+      manifest: empty,
     });
     this.db = options.db;
+    this.dbManifest = empty;
+  }
+
+  /** Async setup that used to run in the (sync) constructor: create tables + load manifest. */
+  async init(): Promise<void> {
+    await ensureRegistryTables(this.db);
+    this.dbManifest = await manifestFromDb(this.db, this.id);
   }
 
   async publish(request: RegistryPublishRequest): Promise<RegistryPublishOutcome> {
-    upsertRegistryEntry(this.db, this.id, request.entry);
+    await upsertRegistryEntry(this.db, this.id, request.entry);
+    this.dbManifest = await manifestFromDb(this.db, this.id);
     const [vendor, name] = request.entry.name.split('/');
     return {
       ok: true,
@@ -46,7 +57,7 @@ export class DatabaseRegistryBackend extends StaticRegistryBackend {
   }
 
   async yank(name: string, version: string, reason: string): Promise<RegistryYankOutcome> {
-    const row = this.db.prepare(`
+    const row = await this.db.prepare(`
       SELECT entry_json FROM registry_entries WHERE backend_id = ? AND name = ?
     `).get(this.id, name) as { entry_json: string } | undefined;
     if (!row) {
@@ -57,23 +68,24 @@ export class DatabaseRegistryBackend extends StaticRegistryBackend {
     const nextVersions = versions.map((item) => item.version === version
       ? { ...item, yanked: true, yankedAt: new Date().toISOString(), yankReason: reason }
       : item);
-    upsertRegistryEntry(this.db, this.id, {
+    await upsertRegistryEntry(this.db, this.id, {
       ...entry,
       versions: nextVersions,
       ...(entry.version === version
         ? { yanked: true, yankedAt: new Date().toISOString(), yankReason: reason }
         : {}),
     });
+    this.dbManifest = await manifestFromDb(this.db, this.id);
     return { ok: true, name, version, reason, warnings: [] };
   }
 
   protected override getManifest(): MarketplaceManifest {
-    return manifestFromDb(this.db, this.id);
+    return this.dbManifest;
   }
 }
 
-export function ensureRegistryTables(db: SqliteDb): void {
-  db.exec(`
+export async function ensureRegistryTables(db: SqliteDb): Promise<void> {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS registry_entries (
       backend_id TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -85,13 +97,13 @@ export function ensureRegistryTables(db: SqliteDb): void {
   `);
 }
 
-export function upsertRegistryEntry(
+export async function upsertRegistryEntry(
   db: SqliteDb,
   backendId: string,
   entry: RegistryEntry,
   now = Date.now(),
-): void {
-  db.prepare(`
+): Promise<void> {
+  await db.prepare(`
     INSERT INTO registry_entries (backend_id, name, version, entry_json, updated_at)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(backend_id, name) DO UPDATE SET
@@ -101,8 +113,8 @@ export function upsertRegistryEntry(
   `).run(backendId, entry.name, entry.version, JSON.stringify(entry), now);
 }
 
-function manifestFromDb(db: SqliteDb, backendId: string): MarketplaceManifest {
-  const rows = db.prepare(`
+async function manifestFromDb(db: SqliteDb, backendId: string): Promise<MarketplaceManifest> {
+  const rows = await db.prepare(`
     SELECT entry_json FROM registry_entries WHERE backend_id = ? ORDER BY name ASC
   `).all(backendId) as Array<{ entry_json: string }>;
   const plugins: MarketplacePluginEntry[] = [];

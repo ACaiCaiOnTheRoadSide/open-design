@@ -36,11 +36,11 @@ import type {
   PluginSourceKind,
   TrustTier,
 } from '@open-design/contracts';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import { recordPluginEvent } from './events.js';
 import { upsertPluginLockfileEntry } from './lockfile.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface InstallProgressEvent {
   kind: 'progress';
@@ -740,7 +740,7 @@ export async function* installFromLocalFolder(
   warnings.push(...parsed.warnings);
 
   yield { kind: 'progress', phase: 'persisting', message: 'Writing installed_plugins row' };
-  upsertInstalledPlugin(db, parsed.record);
+  await upsertInstalledPlugin(db, parsed.record);
   if (opts.lockfilePath) {
     await upsertPluginLockfileEntry(opts.lockfilePath, parsed.record);
   }
@@ -780,7 +780,7 @@ export async function uninstallPlugin(
   id: string,
   roots: RegistryRoots = defaultRegistryRoots(),
 ): Promise<UninstallResult> {
-  const removed = deleteInstalledPlugin(db, id);
+  const removed = await deleteInstalledPlugin(db, id);
   const folder = path.join(roots.userPluginsRoot, id);
   let removedFolder: string | undefined;
   try {

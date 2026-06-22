@@ -101,7 +101,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     options: { projectId: string; grant: ToolTokenGrant | null },
   ) => {
     const projectId = options.projectId;
-    const project = getProject(db, projectId);
+    const project = await getProject(db, projectId);
     if (!project) return res.status(404).json({ error: 'project not found' });
 
     const surface = req.body?.surface;
@@ -592,16 +592,16 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     res.on('close', wake);
   });
 
-  app.get('/api/projects/:id/media/tasks', (req, res) => {
+  app.get('/api/projects/:id/media/tasks', async (req, res) => {
     if (!isLocalSameOrigin(req, getResolvedPort())) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const projectId = req.params.id;
     const includeDone =
       req.query.includeDone === '1' || req.query.includeDone === 'true';
-    const tasks = listMediaTasksByProject(db, projectId, {
+    const tasks = (await listMediaTasksByProject(db, projectId, {
       includeTerminal: includeDone,
-    }).map((t: any) => ({
+    })).map((t: any) => ({
         taskId: t.id,
         status: t.status,
         startedAt: t.startedAt,

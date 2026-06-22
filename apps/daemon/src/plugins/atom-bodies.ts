@@ -14,10 +14,10 @@
 
 import path from 'node:path';
 import { promises as fsp } from 'node:fs';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import { getInstalledPlugin } from './registry.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface AtomBodyEntry {
   atomId: string;
@@ -40,7 +40,7 @@ export async function loadAtomBodies(
   const out: AtomBodyEntry[] = [];
   for (const id of atomIds) {
     const slug = id.toLowerCase();
-    const plugin = preferBundledPlugin(db, slug);
+    const plugin = await preferBundledPlugin(db, slug);
     if (!plugin) continue;
     let raw: string;
     try {
@@ -55,11 +55,11 @@ export async function loadAtomBodies(
   return out;
 }
 
-function preferBundledPlugin(db: SqliteDb, id: string) {
+async function preferBundledPlugin(db: SqliteDb, id: string) {
   // Look first for a bundled record with the requested id.
-  const bundled = db
+  const bundled = (await db
     .prepare(`SELECT id FROM installed_plugins WHERE id = ? AND source_kind = 'bundled' LIMIT 1`)
-    .get(id) as { id?: string } | undefined;
+    .get(id)) as { id?: string } | undefined;
   if (bundled?.id) {
     return getInstalledPlugin(db, bundled.id);
   }

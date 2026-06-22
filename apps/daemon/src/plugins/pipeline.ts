@@ -21,7 +21,6 @@
 // can drain it into an array.
 
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
 import type {
   AppliedPluginSnapshot,
   PluginPipeline,
@@ -33,8 +32,9 @@ import {
   buildPipelineStageStartedEvent,
 } from '../genui/events.js';
 import { evaluateUntil, parseUntil, type UntilSignals } from './until.js';
+import type { AsyncDb } from '../storage/pg-async.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface PipelineEnv {
   maxIterations: number; // OD_MAX_DEVLOOP_ITERATIONS
@@ -134,7 +134,7 @@ async function runStageWithDevloop(
     if (expression) {
       stageConverged = evaluateUntil(expression, merged).satisfied;
     }
-    recordIteration(input.db, {
+    await recordIteration(input.db, {
       runId:    input.runId,
       stageId:  stage.id,
       iteration,
@@ -203,10 +203,10 @@ interface RecordIterationInput {
   tokensUsed:            number | null;
 }
 
-export function recordIteration(db: SqliteDb, input: RecordIterationInput): DevloopIterationRow {
+export async function recordIteration(db: SqliteDb, input: RecordIterationInput): Promise<DevloopIterationRow> {
   const id = randomUUID();
   const endedAt = Date.now();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO run_devloop_iterations
        (id, run_id, stage_id, iteration, artifact_diff_summary, critique_summary, tokens_used, ended_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -232,8 +232,8 @@ export function recordIteration(db: SqliteDb, input: RecordIterationInput): Devl
   };
 }
 
-export function listIterationsForRun(db: SqliteDb, runId: string): DevloopIterationRow[] {
-  const rows = db.prepare(
+export async function listIterationsForRun(db: SqliteDb, runId: string): Promise<DevloopIterationRow[]> {
+  const rows = await db.prepare(
     `SELECT * FROM run_devloop_iterations WHERE run_id = ? ORDER BY iteration ASC, ended_at ASC`,
   ).all(runId) as Array<{
     id: string; run_id: string; stage_id: string; iteration: number;

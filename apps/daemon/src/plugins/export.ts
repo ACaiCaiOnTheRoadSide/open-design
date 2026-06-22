@@ -19,12 +19,12 @@
 
 import path from 'node:path';
 import { promises as fsp } from 'node:fs';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import type { AppliedPluginSnapshot } from '@open-design/contracts';
 import { getInstalledPlugin } from './registry.js';
 import { getSnapshot } from './snapshots.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export type ExportTarget = 'od' | 'claude-plugin' | 'agent-skill';
 
@@ -53,7 +53,7 @@ export class ExportError extends Error {
 }
 
 export async function exportPlugin(input: ExportInput): Promise<ExportResult> {
-  const snapshot = pickSnapshot(input);
+  const snapshot = await pickSnapshot(input);
   if (!snapshot) {
     throw new ExportError(
       input.snapshotId
@@ -61,7 +61,7 @@ export async function exportPlugin(input: ExportInput): Promise<ExportResult> {
         : `no snapshot found for project ${input.projectId}`,
     );
   }
-  const plugin = getInstalledPlugin(input.db, snapshot.pluginId);
+  const plugin = await getInstalledPlugin(input.db, snapshot.pluginId);
   // It's legal to export a snapshot whose plugin has since been
   // uninstalled — we fall back to the snapshot's frozen manifest
   // metadata. The .fs_path / SKILL.md copy is best-effort in that
@@ -131,16 +131,16 @@ export async function exportPlugin(input: ExportInput): Promise<ExportResult> {
   return { folder, files: written, snapshotId: snapshot.snapshotId };
 }
 
-function pickSnapshot(input: ExportInput): AppliedPluginSnapshot | null {
+async function pickSnapshot(input: ExportInput): Promise<AppliedPluginSnapshot | null> {
   if (input.snapshotId) {
-    return getSnapshot(input.db, input.snapshotId);
+    return await getSnapshot(input.db, input.snapshotId);
   }
   if (input.projectId) {
-    const row = input.db
+    const row = await input.db
       .prepare(`SELECT id FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC LIMIT 1`)
       .get(input.projectId) as { id?: string } | undefined;
     if (!row?.id) return null;
-    return getSnapshot(input.db, row.id);
+    return await getSnapshot(input.db, row.id);
   }
   return null;
 }
