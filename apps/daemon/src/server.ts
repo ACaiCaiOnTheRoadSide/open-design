@@ -5116,7 +5116,7 @@ export async function startServer({
       const manifestText = await marketplaceSeedManifestText(id, bundledMarketplaceEntries);
       if (!manifestText) continue;
       const configured = defaultMarketplaceSeedConfig(id);
-      const result = ensureMarketplaceManifest(db, {
+      const result = await ensureMarketplaceManifest(db, {
         id,
         url: configured.url,
         trust: configured.trust,
@@ -15393,7 +15393,7 @@ export async function startServer({
       discardUnstarted,
     };
   });
-  routineService.start();
+  await routineService.start();
 
   assertServerContextSatisfiesRoutes({
     db,

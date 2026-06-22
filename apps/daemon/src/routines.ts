@@ -112,10 +112,10 @@ export type RoutineRunHandler = (input: {
 }) => Promise<RoutineRunHandlerStart>;
 
 export interface RoutinePersistence {
-  list(): Routine[];
-  insertRun(run: RoutineRun, options?: { scheduledSlotAt?: number }): boolean | void;
-  updateRun(id: string, patch: Partial<RoutineRun>): void;
-  getLatestRun(routineId: string): RoutineRun | null;
+  list(): Promise<Routine[]>;
+  insertRun(run: RoutineRun, options?: { scheduledSlotAt?: number }): Promise<boolean | void>;
+  updateRun(id: string, patch: Partial<RoutineRun>): Promise<void>;
+  getLatestRun(routineId: string): Promise<RoutineRun | null>;
 }
 
 interface ScheduledTimer {
@@ -451,10 +451,10 @@ export class RoutineService {
     this.runHandler = handler;
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    this.rescheduleAll();
+    await this.rescheduleAll();
   }
 
   stop(): void {
@@ -463,23 +463,23 @@ export class RoutineService {
     this.started = false;
   }
 
-  rescheduleAll(): void {
+  async rescheduleAll(): Promise<void> {
     for (const entry of this.timers.values()) clearTimeout(entry.timer);
     this.timers.clear();
     if (!this.started) return;
-    for (const routine of this.persistence.list()) {
+    for (const routine of await this.persistence.list()) {
       this.scheduleRoutine(routine);
     }
   }
 
-  rescheduleOne(routineId: string): void {
+  async rescheduleOne(routineId: string): Promise<void> {
     const existing = this.timers.get(routineId);
     if (existing) {
       clearTimeout(existing.timer);
       this.timers.delete(routineId);
     }
     if (!this.started) return;
-    const routine = this.persistence.list().find((r) => r.id === routineId);
+    const routine = (await this.persistence.list()).find((r) => r.id === routineId);
     if (routine) this.scheduleRoutine(routine);
   }
 
@@ -498,9 +498,9 @@ export class RoutineService {
     this.scheduleRoutineAt(routine, fireAt);
   }
 
-  private retryScheduledSlot(routineId: string, fireAt: Date): void {
+  private async retryScheduledSlot(routineId: string, fireAt: Date): Promise<void> {
     if (!this.started) return;
-    const routine = this.persistence.list().find((candidate) => candidate.id === routineId);
+    const routine = (await this.persistence.list()).find((candidate) => candidate.id === routineId);
     if (!routine?.enabled) return;
     this.scheduleRoutineAt(routine, fireAt);
   }
@@ -516,7 +516,7 @@ export class RoutineService {
       this.start_(routine.id, 'scheduled', { scheduledSlotAt: slotAt })
         .then(() => {
           // Always reschedule so a single fire keeps the cadence alive.
-          this.rescheduleOne(routine.id);
+          void this.rescheduleOne(routine.id).catch(() => {});
         })
         .catch((error) => {
           console.error(
@@ -528,9 +528,9 @@ export class RoutineService {
               : error instanceof Error ? error.message : error,
           );
           if (isScheduledRunPersistenceError(error)) {
-            this.retryScheduledSlot(routine.id, fireAt);
+            void this.retryScheduledSlot(routine.id, fireAt).catch(() => {});
           } else {
-            this.rescheduleOne(routine.id);
+            void this.rescheduleOne(routine.id).catch(() => {});
           }
         });
     }, delay);
@@ -555,7 +555,7 @@ export class RoutineService {
     const inflight = this.inflight.get(routineId);
     if (inflight) return inflight;
 
-    const routine = this.persistence.list().find((r) => r.id === routineId);
+    const routine = (await this.persistence.list()).find((r) => r.id === routineId);
     if (!routine) throw new Error(`Routine ${routineId} not found`);
 
     const startedAt = Date.now();
@@ -598,7 +598,7 @@ export class RoutineService {
       const discardUnstarted = handlerStart.discardUnstarted ?? handlerStart.discard;
       let inserted = true;
       try {
-        inserted = this.persistence.insertRun(run, options) !== false;
+        inserted = (await this.persistence.insertRun(run, options)) !== false;
       } catch (error) {
         try {
           discardUnstarted?.();
@@ -634,7 +634,7 @@ export class RoutineService {
         handlerStart.conversationId = run.conversationId;
         handlerStart.agentRunId = run.agentRunId;
         if (wasScheduled || preparedIdsChanged) {
-          this.persistence.updateRun(runId, {
+          await this.persistence.updateRun(runId, {
             projectId: run.projectId,
             conversationId: run.conversationId,
             agentRunId: run.agentRunId,
@@ -665,7 +665,7 @@ export class RoutineService {
         // same slot is not appropriate — let the error propagate so the
         // scheduler advances to the next cadence.
         scrubRoutinePlaceholders();
-        this.persistence.updateRun(runId, {
+        await this.persistence.updateRun(runId, {
           status: 'failed',
           completedAt: Date.now(),
           summary: null,
@@ -679,27 +679,27 @@ export class RoutineService {
       }
       handlerStart.completion
         .then((completion) => {
-          this.persistence.updateRun(runId, {
+          void this.persistence.updateRun(runId, {
             status: completion.status,
             completedAt: Date.now(),
             summary: completion.summary ?? null,
             error: completion.error ?? null,
             errorCode: completion.errorCode ?? null,
-          });
+          }).catch(() => {});
         })
         .catch((error) => {
-          this.persistence.updateRun(runId, {
+          void this.persistence.updateRun(runId, {
             status: 'failed',
             completedAt: Date.now(),
             summary: null,
             error: error instanceof Error ? error.message : String(error),
             errorCode: null,
-          });
+          }).catch(() => {});
         });
       try {
         handlerStart.start?.();
       } catch (error) {
-        this.persistence.updateRun(runId, {
+        await this.persistence.updateRun(runId, {
           status: 'failed',
           completedAt: Date.now(),
           summary: null,
