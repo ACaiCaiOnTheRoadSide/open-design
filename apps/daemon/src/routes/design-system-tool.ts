@@ -28,7 +28,7 @@ export type RegisterDesignSystemToolRoutesDeps = {
     USER_DESIGN_SYSTEMS_DIR: string;
   };
   projects: {
-    getProject: (id: string) => ProjectRecord | null | undefined;
+    getProject: (id: string) => Promise<ProjectRecord | null | undefined>;
   };
 };
 
@@ -44,7 +44,7 @@ export function registerDesignSystemToolRoutes(
       const grant = authorizeToolRequest(req, res, 'design-systems:read');
       if (!grant) return;
 
-      const project = ctx.projects.getProject(grant.projectId);
+      const project = await ctx.projects.getProject(grant.projectId);
       const activeDesignSystemId = project?.designSystemId;
       if (!activeDesignSystemId) {
         return sendApiError(res, 404, 'DESIGN_SYSTEM_NOT_FOUND', 'project has no active design system');

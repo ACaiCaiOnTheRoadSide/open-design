@@ -1,14 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type Database from 'better-sqlite3';
-
 import {
   clearAgentSession,
   getAgentSessionRecord,
   upsertAgentSession,
 } from './db.js';
-
-type SqliteDb = Database.Database;
+import type { AsyncDb } from './storage/pg-async.js';
 
 export interface AgentResumeContext {
   /** Stored CLI session id to resume, or null when starting fresh. */
@@ -29,11 +26,11 @@ export type CapturedAgentSessionResult = 'stored' | 'cleared' | 'skipped';
  * mint; the caller is responsible for persisting `newSessionId` when it
  * actually spawns a create turn.
  */
-export function resolveAgentResumeContext(
-  db: SqliteDb,
+export async function resolveAgentResumeContext(
+  db: AsyncDb,
   input: { conversationId: string; agentId: string },
-): AgentResumeContext {
-  const record = getAgentSessionRecord(db, input.conversationId, input.agentId);
+): Promise<AgentResumeContext> {
+  const record = await getAgentSessionRecord(db, input.conversationId, input.agentId);
   const resumeSessionId = record?.sessionId ?? null;
   return {
     resumeSessionId,
@@ -51,18 +48,18 @@ export function resolveAgentResumeContext(
  * `.jsonl` writes in a shared cwd). Clear the stored row so the next turn does
  * not resume stale history; it will start fresh and seed from the transcript.
  */
-export function persistCapturedAgentSession(
-  db: SqliteDb,
+export async function persistCapturedAgentSession(
+  db: AsyncDb,
   input: {
     conversationId: string | null | undefined;
     agentId: string;
     sessionId: string | null;
     stablePromptHash?: string | null;
   },
-): CapturedAgentSessionResult {
+): Promise<CapturedAgentSessionResult> {
   if (!input.conversationId) return 'skipped';
   if (input.sessionId) {
-    upsertAgentSession(db, {
+    await upsertAgentSession(db, {
       conversationId: input.conversationId,
       agentId: input.agentId,
       sessionId: input.sessionId,
@@ -70,7 +67,7 @@ export function persistCapturedAgentSession(
     });
     return 'stored';
   }
-  clearAgentSession(db, input.conversationId, input.agentId);
+  await clearAgentSession(db, input.conversationId, input.agentId);
   return 'cleared';
 }
 

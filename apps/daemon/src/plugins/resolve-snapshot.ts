@@ -20,7 +20,7 @@
 // run start; all snapshot wiring goes through here so the behavior stays
 // deterministic across CLI / desktop / web.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import type {
   AppliedPluginSnapshot,
   ApplyResult,
@@ -48,7 +48,7 @@ import {
 } from './connector-gate.js';
 import type { RegistryView } from '@open-design/plugin-runtime';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface ResolveSnapshotInput {
   db: SqliteDb;
@@ -100,9 +100,9 @@ export type ResolveSnapshotResult = ResolveSnapshotOk | ResolveSnapshotError | n
 // Used by resolvePluginSnapshot's fallback so a plain `POST /api/runs
 // { projectId }` reuses the snapshot the user picked at project create
 // time — without forcing every caller to re-thread the snapshot id.
-function readProjectPinnedSnapshotId(db: SqliteDb, projectId: string): string | null {
+async function readProjectPinnedSnapshotId(db: SqliteDb, projectId: string): Promise<string | null> {
   try {
-    const row = db
+    const row = await db
       .prepare(`SELECT applied_plugin_snapshot_id AS id FROM projects WHERE id = ?`)
       .get(projectId) as { id?: string | null } | undefined;
     const id = row?.id;
@@ -136,7 +136,7 @@ function pickPluginFields(body: Record<string, unknown> | null | undefined) {
   return { pluginId, snapshotId, pluginInputs, grantCaps, locale };
 }
 
-export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnapshotResult {
+export async function resolvePluginSnapshot(input: ResolveSnapshotInput): Promise<ResolveSnapshotResult> {
   const fields = pickPluginFields(input.body);
   // If the caller didn't name a plugin / snapshot in the body but a
   // snapshot is already pinned to the project (set by a prior project /
@@ -144,7 +144,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
   // makes ChatComposer's "start a run" path work after the user picked a
   // plugin in NewProjectPanel — the body only carries `projectId`.
   if (!fields.pluginId && !fields.snapshotId && input.projectId) {
-    const pinned = readProjectPinnedSnapshotId(input.db, input.projectId);
+    const pinned = await readProjectPinnedSnapshotId(input.db, input.projectId);
     if (pinned) {
       fields.snapshotId = pinned;
     }
@@ -153,7 +153,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
 
   // Path 1: explicit snapshot id — look it up and verify status.
   if (fields.snapshotId) {
-    const snapshot = getSnapshot(input.db, fields.snapshotId);
+    const snapshot = await getSnapshot(input.db, fields.snapshotId);
     if (!snapshot) {
       return {
         ok: false,
@@ -186,7 +186,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
         },
       };
     }
-    return finalizeOk({
+    return await finalizeOk({
       input,
       snapshot,
       created: false,
@@ -194,7 +194,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
   }
 
   // Path 2: pluginId — run apply, persist a new snapshot.
-  const plugin = getInstalledPlugin(input.db, fields.pluginId!);
+  const plugin = await getInstalledPlugin(input.db, fields.pluginId!);
   if (!plugin) {
     return {
       ok: false,
@@ -254,7 +254,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     });
   }
 
-  const persisted = createSnapshot(input.db, {
+  const persisted = await createSnapshot(input.db, {
     projectId: input.projectId,
     conversationId: input.conversationId ?? null,
     runId: input.runId ?? null,
@@ -287,7 +287,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     query: result.query,
   });
 
-  return finalizeOk({
+  return await finalizeOk({
     input,
     snapshot: persisted,
     applyResult: { ...result, appliedPlugin: persisted },
@@ -295,25 +295,25 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
   });
 }
 
-function finalizeOk(args: {
+async function finalizeOk(args: {
   input: ResolveSnapshotInput;
   snapshot: AppliedPluginSnapshot;
   applyResult?: ApplyResult;
   created: boolean;
-}): ResolveSnapshotOk {
+}): Promise<ResolveSnapshotOk> {
   // Pin the snapshot to whichever surfaces the caller already knows.
   // Order matters: link to project (always) before conversation/run so
   // the foreign key is satisfied and `expires_at` clears in one statement.
   const { db } = args.input;
   const snap = args.snapshot;
   if (args.input.projectId) {
-    linkSnapshotToProject(db, snap.snapshotId, args.input.projectId);
+    await linkSnapshotToProject(db, snap.snapshotId, args.input.projectId);
   }
   if (args.input.conversationId) {
-    linkSnapshotToConversation(db, snap.snapshotId, args.input.conversationId);
+    await linkSnapshotToConversation(db, snap.snapshotId, args.input.conversationId);
   }
   if (args.input.runId) {
-    linkSnapshotToRun(db, snap.snapshotId, args.input.runId);
+    await linkSnapshotToRun(db, snap.snapshotId, args.input.runId);
   }
   return {
     ok: true,

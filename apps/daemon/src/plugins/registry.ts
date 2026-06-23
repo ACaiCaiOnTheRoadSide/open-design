@@ -32,9 +32,9 @@ import type {
   TrustTier,
 } from '@open-design/contracts';
 import { defaultTrustForRecord, resolveCapabilitiesGranted } from './trust.js';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 type DbRow = Record<string, unknown>;
 
 export interface RegistryRoots {
@@ -230,18 +230,18 @@ export function rowToInstalledPlugin(row: DbRow): InstalledPluginRecord {
   };
 }
 
-export function listInstalledPlugins(db: SqliteDb): InstalledPluginRecord[] {
-  const rows = db.prepare(`SELECT * FROM installed_plugins ORDER BY title ASC`).all() as DbRow[];
+export async function listInstalledPlugins(db: SqliteDb): Promise<InstalledPluginRecord[]> {
+  const rows = await db.prepare(`SELECT * FROM installed_plugins ORDER BY title ASC`).all() as DbRow[];
   return rows.map(rowToInstalledPlugin);
 }
 
-export function getInstalledPlugin(db: SqliteDb, id: string): InstalledPluginRecord | null {
-  const row = db.prepare(`SELECT * FROM installed_plugins WHERE id = ?`).get(id) as DbRow | undefined;
+export async function getInstalledPlugin(db: SqliteDb, id: string): Promise<InstalledPluginRecord | null> {
+  const row = await db.prepare(`SELECT * FROM installed_plugins WHERE id = ?`).get(id) as DbRow | undefined;
   return row ? rowToInstalledPlugin(row) : null;
 }
 
-export function upsertInstalledPlugin(db: SqliteDb, record: InstalledPluginRecord): void {
-  db.prepare(`
+export async function upsertInstalledPlugin(db: SqliteDb, record: InstalledPluginRecord): Promise<void> {
+  await db.prepare(`
     INSERT INTO installed_plugins (
       id, title, version, source_kind, source, pinned_ref, source_digest,
       source_marketplace_id, source_marketplace_entry_name,
@@ -296,7 +296,7 @@ export function upsertInstalledPlugin(db: SqliteDb, record: InstalledPluginRecor
   );
 }
 
-export function deleteInstalledPlugin(db: SqliteDb, id: string): boolean {
-  const info = db.prepare(`DELETE FROM installed_plugins WHERE id = ?`).run(id);
+export async function deleteInstalledPlugin(db: SqliteDb, id: string): Promise<boolean> {
+  const info = await db.prepare(`DELETE FROM installed_plugins WHERE id = ?`).run(id);
   return info.changes > 0;
 }

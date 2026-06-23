@@ -204,7 +204,7 @@ export async function addMarketplace(
   const id = randomUUID();
   const now = Date.now();
   const trust = normalizeMarketplaceTrust(input.trust);
-  db.prepare(
+  await db.prepare(
     `INSERT INTO plugin_marketplaces (id, url, spec_version, version, trust, manifest_json, added_at, refreshed_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(id, url, parsed.manifest.specVersion, parsed.manifest.version, trust, text, now, now);
@@ -224,10 +224,10 @@ export async function addMarketplace(
   };
 }
 
-export function ensureMarketplaceManifest(
+export async function ensureMarketplaceManifest(
   db: SqliteDb,
   input: EnsureMarketplaceManifestInput,
-): AddMarketplaceResult | AddMarketplaceFailure {
+): Promise<AddMarketplaceResult | AddMarketplaceFailure> {
   const parsed = parseMarketplace(input.manifestText);
   if (!parsed.ok) {
     return {
@@ -239,8 +239,8 @@ export function ensureMarketplaceManifest(
   }
   const now = input.now ?? Date.now();
   const trust = normalizeMarketplaceTrust(input.trust);
-  const existing = getMarketplace(db, input.id);
-  db.prepare(`
+  const existing = await getMarketplace(db, input.id);
+  await db.prepare(`
     INSERT INTO plugin_marketplaces (id, url, spec_version, version, trust, manifest_json, added_at, refreshed_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET

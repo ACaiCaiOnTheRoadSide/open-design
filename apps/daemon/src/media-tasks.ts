@@ -96,8 +96,8 @@ const COLS = `
   updated_at AS updatedAt
 `;
 
-export function migrateMediaTasks(db: Database.Database): void {
-  db.exec(`
+export async function migrateMediaTasks(db: Database.Database): Promise<void> {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS media_tasks (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -123,16 +123,16 @@ export function migrateMediaTasks(db: Database.Database): void {
   `);
 }
 
-export function insertMediaTask(
+export async function insertMediaTask(
   db: Database.Database,
   input: MediaTaskInsert,
-): MediaTaskRow {
+): Promise<MediaTaskRow> {
   const tenantId = currentTenantId();
   const now = Date.now();
   const status = input.status ?? 'queued';
   assertValidStatus(status);
   const startedAt = input.startedAt ?? now;
-  db.prepare(
+  await db.prepare(
     `INSERT INTO media_tasks
        (id, project_id, status, surface, model, progress_json, file_json,
         error_json, started_at, ended_at, created_at, updated_at, tenant_id)
@@ -152,34 +152,34 @@ export function insertMediaTask(
     input.updatedAt ?? now,
     tenantId,
   );
-  const row = getMediaTask(db, input.id);
+  const row = await getMediaTask(db, input.id);
   if (row === null) throw new Error(`Failed to fetch media task after insert: ${input.id}`);
   return row;
 }
 
-export function getMediaTask(
+export async function getMediaTask(
   db: Database.Database,
   id: string,
-): MediaTaskRow | null {
+): Promise<MediaTaskRow | null> {
   const tenantId = currentTenantId();
-  const raw = db
+  const raw = (await db
     .prepare(`SELECT ${COLS} FROM media_tasks WHERE id = ? AND tenant_id = ?`)
-    .get(id, tenantId) as RawMediaTaskRow | undefined;
+    .get(id, tenantId)) as RawMediaTaskRow | undefined;
   return raw ? normalizeRow(raw) : null;
 }
 
-export function updateMediaTask(
+export async function updateMediaTask(
   db: Database.Database,
   id: string,
   patch: MediaTaskPatch,
-): MediaTaskRow | null {
+): Promise<MediaTaskRow | null> {
   const tenantId = currentTenantId();
-  const existing = getMediaTask(db, id);
+  const existing = await getMediaTask(db, id);
   if (existing === null) return null;
   const status = patch.status ?? existing.status;
   assertValidStatus(status);
   const updatedAt = patch.updatedAt ?? Date.now();
-  db.prepare(
+  await db.prepare(
     `UPDATE media_tasks
         SET status = ?,
             surface = ?,
@@ -204,37 +204,37 @@ export function updateMediaTask(
     id,
     tenantId,
   );
-  return getMediaTask(db, id);
+  return await getMediaTask(db, id);
 }
 
-export function listMediaTasksByProject(
+export async function listMediaTasksByProject(
   db: Database.Database,
   projectId: string,
   options: { includeTerminal?: boolean } = {},
-): MediaTaskRow[] {
+): Promise<MediaTaskRow[]> {
   const tenantId = currentTenantId();
   const includeTerminal = options.includeTerminal === true;
-  const rows = db
+  const rows = (await db
     .prepare(
       `SELECT ${COLS}
          FROM media_tasks
         WHERE project_id = ? AND tenant_id = ?
         ORDER BY started_at DESC`,
     )
-    .all(projectId, tenantId) as RawMediaTaskRow[];
+    .all(projectId, tenantId)) as RawMediaTaskRow[];
   return rows
     .map(normalizeRow)
     .filter((row) => includeTerminal || !TERMINAL_STATUSES.has(row.status));
 }
 
-export function listRecentMediaTasks(
+export async function listRecentMediaTasks(
   db: Database.Database,
   options: { terminalTtlMs: number; now?: number },
-): MediaTaskRow[] {
+): Promise<MediaTaskRow[]> {
   const tenantId = currentTenantId();
   const now = options.now ?? Date.now();
   const cutoff = now - options.terminalTtlMs;
-  const rows = db
+  const rows = (await db
     .prepare(
       `SELECT ${COLS}
          FROM media_tasks
@@ -243,19 +243,19 @@ export function listRecentMediaTasks(
             OR COALESCE(ended_at, updated_at) >= ?)
         ORDER BY started_at DESC`,
     )
-    .all(tenantId, cutoff) as RawMediaTaskRow[];
+    .all(tenantId, cutoff)) as RawMediaTaskRow[];
   return rows.map(normalizeRow);
 }
 
-export function deleteMediaTask(db: Database.Database, id: string): void {
+export async function deleteMediaTask(db: Database.Database, id: string): Promise<void> {
   const tenantId = currentTenantId();
-  db.prepare(`DELETE FROM media_tasks WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+  await db.prepare(`DELETE FROM media_tasks WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
-export function reconcileMediaTasksOnBoot(
+export async function reconcileMediaTasksOnBoot(
   db: Database.Database,
   options: { terminalTtlMs: number; now?: number },
-): { interrupted: number; deleted: number } {
+): Promise<{ interrupted: number; deleted: number }> {
   const now = options.now ?? Date.now();
   const cutoff = now - options.terminalTtlMs;
   const interruptedError: MediaTaskError = {
@@ -263,8 +263,8 @@ export function reconcileMediaTasksOnBoot(
     status: 5,
     code: 'DAEMON_RESTART',
   };
-  const tx = db.transaction(() => {
-    const interrupted = db
+  const tx = db.transaction(async () => {
+    const interrupted = (await db
       .prepare(
         `UPDATE media_tasks
             SET status = 'interrupted',
@@ -273,19 +273,19 @@ export function reconcileMediaTasksOnBoot(
                 updated_at = ?
           WHERE status IN ('queued', 'running')`,
       )
-      .run(JSON.stringify(interruptedError), now, now).changes;
+      .run(JSON.stringify(interruptedError), now, now)).changes;
 
-    const deleted = db
+    const deleted = (await db
       .prepare(
         `DELETE FROM media_tasks
           WHERE status IN ('done', 'failed', 'interrupted')
             AND COALESCE(ended_at, updated_at) < ?`,
       )
-      .run(cutoff).changes;
+      .run(cutoff)).changes;
 
     return { interrupted, deleted };
   });
-  return tx() as { interrupted: number; deleted: number };
+  return (await tx()) as { interrupted: number; deleted: number };
 }
 
 function normalizeRow(raw: RawMediaTaskRow): MediaTaskRow {

@@ -24,7 +24,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import * as path from 'node:path';
-import Database from 'better-sqlite3';
+import type { AsyncDb } from './storage/pg-async.js';
 import type {
   FinalizeAnthropicRequest,
   FinalizeAnthropicResponse,
@@ -122,7 +122,7 @@ export class FinalizeUpstreamError extends Error {
   }
 }
 
-type Db = Database.Database;
+type Db = AsyncDb;
 
 interface ResolvedArtifact {
   name: string;
@@ -163,9 +163,9 @@ export async function resolveCurrentArtifact(
 ): Promise<ResolvedArtifact | null> {
   const dir = resolveProjectDir(projectsRoot, projectId, metadata ?? undefined);
 
-  const activeTabRow = db
+  const activeTabRow = (await db
     .prepare(`SELECT name FROM tabs WHERE project_id = ? AND is_active = 1 LIMIT 1`)
-    .get(projectId) as { name?: unknown } | undefined;
+    .get(projectId)) as { name?: unknown } | undefined;
   const activeTabName =
     activeTabRow && typeof activeTabRow.name === 'string' ? activeTabRow.name : null;
 
@@ -267,7 +267,7 @@ export async function finalizeDesignPackage(
   projectId: string,
   options: FinalizeOptions,
 ): Promise<FinalizeAnthropicResponse> {
-  const project = getProject(db, projectId);
+  const project = await getProject(db, projectId);
   if (!project) {
     // Defensive — the route handler validates this and returns 404 before
     // reaching here. Kept for direct (non-HTTP) callers, e.g. CLI scripts.
@@ -312,7 +312,7 @@ export async function finalizeDesignPackage(
     // Phase 3: export transcript via the PR #493 primitive. Returns the
     // disk path; we read the body and run it through the truncation
     // policy so a 4 MB transcript does not blow Anthropic's context.
-    const transcriptResult = exportProjectTranscript(db, projectsRoot, projectId, { now });
+    const transcriptResult = await exportProjectTranscript(db, projectsRoot, projectId, { now });
     const transcriptJsonl = fs.readFileSync(transcriptResult.path, 'utf8');
     const truncatedJsonl = truncateTranscriptForPrompt(transcriptJsonl);
 

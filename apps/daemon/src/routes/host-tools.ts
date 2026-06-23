@@ -293,7 +293,7 @@ export function registerHostToolsRoutes(app: Express, ctx: RegisterHostToolsRout
       if (!applicableForPlatform(entry, platform)) {
         return sendApiError(res, 400, 'BAD_REQUEST', `${entry.label} is not available on ${platform}`);
       }
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }

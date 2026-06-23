@@ -58,10 +58,10 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
     }
   });
 
-  app.get('/api/projects/:id/deployments', (req, res) => {
+  app.get('/api/projects/:id/deployments', async (req, res) => {
     try {
       /** @type {import('@open-design/contracts').ProjectDeploymentsResponse} */
-      const body = { deployments: publicDeployments(listDeployments(db, req.params.id)) };
+      const body = { deployments: publicDeployments(await listDeployments(db, req.params.id)) };
       res.json(body);
     } catch (err: any) {
       sendApiError(res, 400, 'BAD_REQUEST', String(err?.message || err));
@@ -83,15 +83,15 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
         return sendApiError(res, 400, 'BAD_REQUEST', 'fileName required');
       }
 
-      const prior = getDeployment(db, req.params.id, fileName, providerId);
-      const deployProject = getProject(db, req.params.id);
+      const prior = await getDeployment(db, req.params.id, fileName, providerId);
+      const deployProject = await getProject(db, req.params.id);
       const files = await buildDeployFileSet(
         PROJECTS_DIR,
         req.params.id,
         fileName,
         { metadata: deployProject?.metadata, includeProjectFiles: true },
       );
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const cloudflarePagesProjectName =
         providerId === CLOUDFLARE_PAGES_PROVIDER_ID
           ? cloudflarePagesProjectNameForDeploy(db, req.params.id, project?.name, prior)
@@ -114,7 +114,7 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
           });
       const now = Date.now();
       /** @type {import('@open-design/contracts').DeployProjectFileResponse} */
-      const body = upsertDeployment(db, {
+      const body = await upsertDeployment(db, {
         id: prior?.id ?? randomUUID(),
         projectId: req.params.id,
         fileName,
@@ -165,7 +165,7 @@ export function registerDeployRoutes(app: Express, ctx: RegisterDeployRoutesDeps
       if (typeof fileName !== 'string' || !fileName.trim()) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'fileName required');
       }
-      const preflightProject = getProject(db, req.params.id);
+      const preflightProject = await getProject(db, req.params.id);
       /** @type {import('@open-design/contracts').DeployPreflightResponse} */
       const body = await prepareDeployPreflight(
         PROJECTS_DIR,
@@ -205,7 +205,7 @@ export function registerDeploymentCheckRoutes(app: Express, ctx: RegisterDeploym
     '/api/projects/:id/deployments/:deploymentId/check-link',
     async (req, res) => {
       try {
-        const existing = getDeploymentById(
+        const existing = await getDeploymentById(
           db,
           req.params.id,
           req.params.deploymentId,
@@ -226,7 +226,7 @@ export function registerDeploymentCheckRoutes(app: Express, ctx: RegisterDeploym
           const checked = await checkCloudflarePagesDeploymentLinks(existing);
           const now = Date.now();
           /** @type {import('@open-design/contracts').CheckDeploymentLinkResponse} */
-          const body = upsertDeployment(db, {
+          const body = await upsertDeployment(db, {
             ...existing,
             ...checked,
             reachableAt: checked.status === 'ready' ? now : existing.reachableAt,
@@ -240,7 +240,7 @@ export function registerDeploymentCheckRoutes(app: Express, ctx: RegisterDeploym
         const result = await checkDeploymentUrl(checkUrl);
         const now = Date.now();
         /** @type {import('@open-design/contracts').CheckDeploymentLinkResponse} */
-        const body = upsertDeployment(db, {
+        const body = await upsertDeployment(db, {
           ...existing,
           url: checkUrl || existing.url,
           status: result.reachable ? 'ready' : result.status || 'link-delayed',

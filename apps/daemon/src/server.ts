@@ -449,6 +449,7 @@ import {
   upsertMessage,
   upsertPreviewComment,
 } from './db.js';
+import type { AsyncDb } from './storage/pg-async.js';
 import {
   computeIncludeStable,
   hashStableInstructions,
@@ -2575,8 +2576,8 @@ function reconcileAssistantMessageOnRunEnd(db, runs, run) {
   if (!run.assistantMessageId) return;
   void runs
     .wait(run)
-    .then((finalStatus) => {
-      db.prepare(
+    .then(async (finalStatus) => {
+      await db.prepare(
         `UPDATE messages
             SET run_status = ?, ended_at = COALESCE(ended_at, ?)
           WHERE id = ? AND run_status IN ('queued', 'running')`,
@@ -2619,9 +2620,9 @@ async function hasGeneratedPluginArtifacts(projectRoot) {
 // status, and run analytics all share ONE renderable-form check. See
 // `emittedRenderableQuestionForm` imported above.
 
-function assistantMessageEmittedQuestionForm(db, assistantMessageId) {
+async function assistantMessageEmittedQuestionForm(db, assistantMessageId) {
   if (!assistantMessageId) return false;
-  const row = db.prepare(`SELECT content FROM messages WHERE id = ?`).get(assistantMessageId);
+  const row = await db.prepare(`SELECT content FROM messages WHERE id = ?`).get(assistantMessageId);
   return emittedRenderableQuestionForm(row?.content);
 }
 
@@ -2641,7 +2642,7 @@ export function detectSkillPluginCandidateOnRunSuccess(db, runs, run, input, pro
     .wait(run)
     .then(async (finalStatus) => {
       if (finalStatus.status !== 'succeeded') return;
-      const pausedForQuestion = assistantMessageEmittedQuestionForm(db, run.assistantMessageId);
+      const pausedForQuestion = await assistantMessageEmittedQuestionForm(db, run.assistantMessageId);
       const detected = await detectSkillPluginCandidate({
         projectId: run.projectId,
         runId: run.id,
@@ -2655,19 +2656,19 @@ export function detectSkillPluginCandidateOnRunSuccess(db, runs, run, input, pro
       if (pausedForQuestion) return;
       const candidateToShow = candidate ?? deferredSkillPluginCandidateForRun(db, run);
       if (!candidateToShow || candidateToShow.status === 'dismissed') return;
-      upsertSkillPluginCandidateAssistantMessage(db, run, candidateToShow);
+      await upsertSkillPluginCandidateAssistantMessage(db, run, candidateToShow);
     })
     .catch((err) => {
       console.warn('[plugins] skill candidate detection failed', err);
     });
 }
 
-export function upsertSkillPluginCandidateAssistantMessage(db, run, candidate) {
+export async function upsertSkillPluginCandidateAssistantMessage(db, run, candidate) {
   const currentMessagePosition = run.assistantMessageId
-    ? (db.prepare(`SELECT position FROM messages WHERE id = ?`).get(run.assistantMessageId)?.position ?? null)
+    ? ((await db.prepare(`SELECT position FROM messages WHERE id = ?`).get(run.assistantMessageId))?.position ?? null)
     : null;
   const existingMessagePosition = candidate.assistantMessageId
-    ? (db.prepare(`SELECT position FROM messages WHERE id = ?`).get(candidate.assistantMessageId)?.position ?? null)
+    ? ((await db.prepare(`SELECT position FROM messages WHERE id = ?`).get(candidate.assistantMessageId))?.position ?? null)
     : null;
   if (
     typeof currentMessagePosition === 'number' &&
@@ -2691,10 +2692,10 @@ export function upsertSkillPluginCandidateAssistantMessage(db, run, candidate) {
     candidate.assistantMessageId !== messageId &&
     candidate.assistantMessageId !== run.assistantMessageId
   ) {
-    db.prepare(`DELETE FROM messages WHERE id = ?`).run(candidate.assistantMessageId);
+    await db.prepare(`DELETE FROM messages WHERE id = ?`).run(candidate.assistantMessageId);
   }
   const now = Date.now();
-  upsertMessage(db, run.conversationId, {
+  await upsertMessage(db, run.conversationId, {
     id: messageId,
     role: 'assistant',
     content: `Open Design found reusable skill material that can become a plugin: ${candidate.title}`,
@@ -2711,12 +2712,12 @@ export function upsertSkillPluginCandidateAssistantMessage(db, run, candidate) {
     endedAt: now,
   });
   if (shouldMoveReusedMessage) {
-    const max = db
+    const max = (await db
       .prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM messages WHERE conversation_id = ?`)
-      .get(run.conversationId)?.m ?? -1;
-    db.prepare(`UPDATE messages SET position = ? WHERE id = ?`).run(Number(max) + 1, messageId);
+      .get(run.conversationId))?.m ?? -1;
+    await db.prepare(`UPDATE messages SET position = ? WHERE id = ?`).run(Number(max) + 1, messageId);
   }
-  db.prepare(
+  await db.prepare(
     `UPDATE skill_plugin_candidates
         SET assistant_message_id = ?, updated_at = ?
       WHERE id = ?`,
@@ -2724,12 +2725,12 @@ export function upsertSkillPluginCandidateAssistantMessage(db, run, candidate) {
   return messageId;
 }
 
-function persistRunEventToAssistantMessage(db, run, event, data) {
+async function persistRunEventToAssistantMessage(db, run, event, data) {
   if (!run.assistantMessageId) return;
   const persisted = runSseEventToPersistedAgentEvent(event, data);
   if (!persisted) return;
   try {
-    appendMessageAgentEvent(db, run.assistantMessageId, persisted);
+    await appendMessageAgentEvent(db, run.assistantMessageId, persisted);
   } catch (err) {
     console.warn('[runs] message event persistence failed', err);
   }
@@ -2851,13 +2852,13 @@ function normalizePersistedToolInput(input) {
   return input;
 }
 
-function pinAssistantMessageOnRunCreate(db, run) {
+async function pinAssistantMessageOnRunCreate(db, run) {
   if (!run.conversationId || !run.assistantMessageId) return;
-  const existing = db
+  const existing = await db
     .prepare(`SELECT id FROM messages WHERE id = ?`)
     .get(run.assistantMessageId);
   if (existing) {
-    db.prepare(
+    await db.prepare(
       `UPDATE messages
           SET run_id = ?,
               run_status = CASE
@@ -2869,7 +2870,7 @@ function pinAssistantMessageOnRunCreate(db, run) {
     ).run(run.id, run.status, run.createdAt, run.assistantMessageId);
     return;
   }
-  upsertMessage(db, run.conversationId, {
+  await upsertMessage(db, run.conversationId, {
     id: run.assistantMessageId,
     role: 'assistant',
     content: '',
@@ -3016,7 +3017,7 @@ export function createFinalizedMessageTelemetryReporter({
   report = reportRunCompletedFromDaemon,
 }: {
   design: any;
-  db: unknown;
+  db: AsyncDb;
   dataDir: string;
   reportedRuns: Set<string>;
   getAppVersion?: () => any;
@@ -3185,11 +3186,11 @@ function cloudflarePagesProjectNameFromUrl(rawUrl) {
   }
 }
 
-function cloudflarePagesProjectNameForDeploy(db, projectId, projectName, prior) {
+async function cloudflarePagesProjectNameForDeploy(db, projectId, projectName, prior) {
   const priorName = cloudflarePagesProjectNameFromDeployment(prior);
   if (priorName) return priorName;
 
-  for (const deployment of listDeployments(db, projectId)) {
+  for (const deployment of await listDeployments(db, projectId)) {
     if (deployment.providerId !== CLOUDFLARE_PAGES_PROVIDER_ID) continue;
     const stableName = cloudflarePagesProjectNameFromDeployment(deployment);
     if (stableName) return stableName;
@@ -3961,7 +3962,7 @@ const pluginUpload = multer({
 // startServer() sets this so the upload destination can route attachments
 // into the right project root, including folder-imported projects whose
 // files live under metadata.baseDir.
-let projectMetadataLookup: ((id: string) => Record<string, unknown> | null) | null = null;
+let projectMetadataLookup: ((id: string) => Promise<Record<string, unknown> | null>) | null = null;
 
 const projectUpload = multer({
   storage: multer.diskStorage({
@@ -3973,7 +3974,7 @@ const projectUpload = multer({
         // it sees. projectMetadataLookup is populated at startServer() boot
         // and keyed by project id; null fallback gives the standard
         // .od/projects/<id>/ behavior for non-imported projects.
-        const meta = projectMetadataLookup?.(req.params.id) ?? null;
+        const meta = (await projectMetadataLookup?.(req.params.id)) ?? null;
         // Optional `dir` form field (sent BEFORE the file parts by the web
         // client) routes uploads into a subfolder, so files dropped/picked
         // while viewing a folder land there instead of the project root. The
@@ -4080,14 +4081,14 @@ function hydrateMediaTask(row) {
   return task;
 }
 
-function getLiveMediaTask(db, taskId) {
+async function getLiveMediaTask(db, taskId) {
   const cached = mediaTasks.get(taskId);
   if (cached) return cached;
-  const row = getMediaTask(db, taskId);
+  const row = await getMediaTask(db, taskId);
   return row ? hydrateMediaTask(row) : null;
 }
 
-function createMediaTask(db, taskId, projectId, info = {}) {
+async function createMediaTask(db, taskId, projectId, info = {}) {
   const task = {
     id: taskId,
     projectId,
@@ -4102,7 +4103,7 @@ function createMediaTask(db, taskId, projectId, info = {}) {
     waiters: new Set(),
   };
   mediaTasks.set(taskId, task);
-  insertMediaTask(db, {
+  await insertMediaTask(db, {
     id: taskId,
     projectId,
     status: task.status,
@@ -4117,8 +4118,8 @@ function createMediaTask(db, taskId, projectId, info = {}) {
   return task;
 }
 
-function persistMediaTask(db, task) {
-  updateMediaTask(db, task.id, {
+async function persistMediaTask(db, task) {
+  await updateMediaTask(db, task.id, {
     status: task.status,
     surface: task.surface,
     model: task.model,
@@ -4130,9 +4131,9 @@ function persistMediaTask(db, task) {
   });
 }
 
-function appendTaskProgress(db, task, line) {
+async function appendTaskProgress(db, task, line) {
   task.progress.push(line);
-  persistMediaTask(db, task);
+  await persistMediaTask(db, task);
   notifyTaskWaiters(db, task);
 }
 
@@ -4150,10 +4151,10 @@ function notifyTaskWaiters(db, task) {
     !task._gcScheduled
   ) {
     task._gcScheduled = true;
-    setTimeout(() => {
+    setTimeout(async () => {
       if (task.waiters.size === 0) {
         mediaTasks.delete(task.id);
-        deleteMediaTask(db, task.id);
+        await deleteMediaTask(db, task.id);
       }
     }, TASK_TTL_AFTER_DONE_MS).unref?.();
   }
@@ -4832,15 +4833,15 @@ export async function startServer({
       entryFile: 'DESIGN.md',
       sourceFileName: id,
     };
-    const existing = getProject(db, projectId);
+    const existing = await getProject(db, projectId);
     const project = existing
-      ? updateProject(db, projectId, {
+      ? await updateProject(db, projectId, {
           name: summary.title,
           designSystemId: id,
           metadata: { ...existing.metadata, ...metadata },
           updatedAt: now,
         })
-      : insertProject(db, {
+      : await insertProject(db, {
           id: projectId,
           name: summary.title,
           skillId: null,
@@ -4923,7 +4924,7 @@ export async function startServer({
 
   async function readDesignSystemWorkspaceTextFile(db, summary, filePath) {
     if (!summary?.projectId || !isSafeId(summary.projectId)) return null;
-    const project = getProject(db, summary.projectId);
+    const project = await getProject(db, summary.projectId);
     if (!project) return null;
     try {
       const file = await readProjectFile(
@@ -4989,11 +4990,11 @@ export async function startServer({
     }
     next();
   });
-  const db = openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
+  const db = await openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
   // Wire the upload-destination bridge to this db so multer can route
   // file uploads into baseDir-rooted projects' actual folders.
-  projectMetadataLookup = (id) => {
-    try { return getProject(db, id)?.metadata ?? null; } catch { return null; }
+  projectMetadataLookup = async (id) => {
+    try { return (await getProject(db, id))?.metadata ?? null; } catch { return null; }
   };
   configureConnectorCredentialStore(new FileConnectorCredentialStore(RUNTIME_DATA_DIR));
   configureComposioConfigStore(RUNTIME_DATA_DIR);
@@ -5004,8 +5005,8 @@ export async function startServer({
   // Routines are stored as DB rows; the service holds in-memory timers and
   // delegates "list me everything" / "record a run" back to SQLite.
   routineService = new RoutineService({
-    list: () => listRoutines(db).map((row) => routineDbRowToContract(row, null)),
-    insertRun: (run, options) => {
+    list: async () => (await listRoutines(db)).map((row) => routineDbRowToContract(row, null)),
+    insertRun: async (run, options) => {
       const row = {
         id: run.id,
         routineId: run.routineId,
@@ -5021,15 +5022,15 @@ export async function startServer({
         errorCode: run.errorCode,
       };
       if (options?.scheduledSlotAt != null) {
-        return Boolean(insertScheduledRoutineRun(db, row, options.scheduledSlotAt));
+        return Boolean(await insertScheduledRoutineRun(db, row, options.scheduledSlotAt));
       }
-      insertRoutineRun(db, row);
+      await insertRoutineRun(db, row);
       return true;
     },
-    updateRun: (id, patch) => {
-      updateRoutineRun(db, id, patch);
+    updateRun: async (id, patch) => {
+      await updateRoutineRun(db, id, patch);
     },
-    getLatestRun: (routineId) => getLatestRoutineRun(db, routineId),
+    getLatestRun: async (routineId) => await getLatestRoutineRun(db, routineId),
   });
   let daemonUrl = `http://127.0.0.1:${port}`;
 
@@ -5038,11 +5039,11 @@ export async function startServer({
   // = 'daemon_restart' so the spec's daemon-restart-mid-run failure mode is
   // honored on every boot. staleAfterMs comes from CritiqueConfig, not a
   // hardcoded constant.
-  const reconciledStaleRuns = reconcileStaleRuns(db, { staleAfterMs: critiqueCfg.totalTimeoutMs });
+  const reconciledStaleRuns = await reconcileStaleRuns(db, { staleAfterMs: critiqueCfg.totalTimeoutMs });
   if (reconciledStaleRuns > 0) {
     console.warn(`[critique] reconcileStaleRuns flipped ${reconciledStaleRuns} stale running row(s) to interrupted`);
   }
-  const mediaReconcile = reconcileMediaTasksOnBoot(db, {
+  const mediaReconcile = await reconcileMediaTasksOnBoot(db, {
     terminalTtlMs: TASK_TTL_AFTER_DONE_MS,
   });
   if (mediaReconcile.interrupted > 0 || mediaReconcile.deleted > 0) {
@@ -5052,7 +5053,7 @@ export async function startServer({
     );
   }
   mediaTasks.clear();
-  for (const row of listRecentMediaTasks(db, { terminalTtlMs: TASK_TTL_AFTER_DONE_MS })) {
+  for (const row of await listRecentMediaTasks(db, { terminalTtlMs: TASK_TTL_AFTER_DONE_MS })) {
     hydrateMediaTask(row);
   }
 
@@ -5115,7 +5116,7 @@ export async function startServer({
       const manifestText = await marketplaceSeedManifestText(id, bundledMarketplaceEntries);
       if (!manifestText) continue;
       const configured = defaultMarketplaceSeedConfig(id);
-      const result = ensureMarketplaceManifest(db, {
+      const result = await ensureMarketplaceManifest(db, {
         id,
         url: configured.url,
         trust: configured.trust,
@@ -5246,6 +5247,12 @@ export async function startServer({
   // without depending on /api/version's content shape.
   app.get('/api/daemon/status', async (_req, res) => {
     const versionInfo = await readCurrentAppVersionInfo();
+    let installedPluginsCount = 0;
+    try {
+      installedPluginsCount = (await db.prepare('SELECT COUNT(*) AS n FROM installed_plugins').get())?.n ?? 0;
+    } catch {
+      installedPluginsCount = 0;
+    }
     res.json({
       ok: true,
       version: versionInfo.version,
@@ -5259,13 +5266,7 @@ export async function startServer({
         : { enabled: false },
       pid: process.pid,
       shuttingDown: daemonShuttingDown,
-      installedPlugins: (() => {
-        try {
-          return (db.prepare('SELECT COUNT(*) AS n FROM installed_plugins').get())?.n ?? 0;
-        } catch {
-          return 0;
-        }
-      })(),
+      installedPlugins: installedPluginsCount,
     });
   });
 
@@ -5413,7 +5414,7 @@ export async function startServer({
       const startedAt = Date.now();
       // VACUUM cannot run inside an active transaction; better-sqlite3
       // exposes it as a regular pragma exec.
-      db.exec('VACUUM');
+      await db.exec('VACUUM');
       const elapsedMs = Date.now() - startedAt;
       const after = await inspectSqliteDatabase({ db, file });
       res.json({
@@ -5847,10 +5848,10 @@ export async function startServer({
     status: string;
   }) => {
     if (!shouldReportRunCompletionTelemetryFallbackStatus(status)) return;
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       if (reportedRuns.has(run.id)) return;
       if (run.assistantMessageId) {
-        const messageTelemetry = getMessageTelemetryFinalizationState(db, run.assistantMessageId);
+        const messageTelemetry = await getMessageTelemetryFinalizationState(db, run.assistantMessageId);
         if (messageTelemetry.finalizedAt !== null) return;
       }
       reportFinalizedMessage(
@@ -6212,7 +6213,7 @@ export async function startServer({
     auth: authDeps,
     http: httpDeps,
     paths: pathDeps,
-    projects: { getProject: (id: string) => getProject(db, id) },
+    projects: { getProject: async (id: string) => getProject(db, id) },
   });
   app.use('/artifacts', express.static(ARTIFACTS_DIR));
   app.use(
@@ -6287,7 +6288,7 @@ export async function startServer({
 
   app.delete('/api/projects/:id', async (req, res) => {
     try {
-      dbDeleteProject(db, req.params.id);
+      await dbDeleteProject(db, req.params.id);
       await removeProjectDir(PROJECTS_DIR, req.params.id).catch(() => {});
       /** @type {import('@open-design/contracts').OkResponse} */
       const body = { ok: true };
@@ -6304,8 +6305,8 @@ export async function startServer({
   // Subscribers come and go as users open/close project tabs; the underlying
   // chokidar watcher is refcounted in project-watchers.ts so we never hold
   // descriptors for projects no UI is looking at.
-  app.get('/api/projects/:id/events', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.get('/api/projects/:id/events', async (req, res) => {
+    if (!await getProject(db, req.params.id)) {
       return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
     }
     let sub;
@@ -6320,7 +6321,7 @@ export async function startServer({
         activeProjectEventSinks.set(req.params.id, sinks);
       }
       sinks.add(projectEventSink);
-      const watchProject = getProject(db, req.params.id);
+      const watchProject = await getProject(db, req.params.id);
       sub = subscribeFileEvents(PROJECTS_DIR, req.params.id, (evt) => {
         sse.send('file-changed', evt);
       }, { metadata: watchProject?.metadata });
@@ -6345,15 +6346,15 @@ export async function startServer({
 
   // ---- Conversations --------------------------------------------------------
 
-  app.get('/api/projects/:id/conversations', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.get('/api/projects/:id/conversations', async (req, res) => {
+    if (!await getProject(db, req.params.id)) {
       return res.status(404).json({ error: 'project not found' });
     }
-    res.json({ conversations: listConversations(db, req.params.id) });
+    res.json({ conversations: await listConversations(db, req.params.id) });
   });
 
-  app.post('/api/projects/:id/conversations', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.post('/api/projects/:id/conversations', async (req, res) => {
+    if (!await getProject(db, req.params.id)) {
       return res.status(404).json({ error: 'project not found' });
     }
     const { title, seedFromConversationId, forkAfterMessageId } = req.body || {};
@@ -6367,11 +6368,11 @@ export async function startServer({
         : null;
     const sourceConversation =
       typeof seedFromConversationId === 'string' && seedFromConversationId
-        ? getConversation(db, seedFromConversationId)
+        ? await getConversation(db, seedFromConversationId)
         : null;
     let seedMessages = [];
     if (sourceConversation && sourceConversation.projectId === req.params.id) {
-      seedMessages = listMessages(db, seedFromConversationId);
+      seedMessages = await listMessages(db, seedFromConversationId);
       if (requestedForkMessageId) {
         const forkIndex = seedMessages.findIndex((message) => message.id === requestedForkMessageId);
         if (forkIndex < 0) {
@@ -6388,7 +6389,7 @@ export async function startServer({
         : sourceConversation && sourceConversation.projectId === req.params.id
           ? normalizeConversationSessionMode(sourceConversation.sessionMode)
           : 'design';
-    const conv = insertConversation(db, {
+    const conv = await insertConversation(db, {
       id: randomId(),
       projectId: req.params.id,
       title: typeof title === 'string' ? title.trim() || null : null,
@@ -6398,7 +6399,7 @@ export async function startServer({
     });
     if (conv && seedMessages.length > 0) {
       for (const m of seedMessages) {
-        upsertMessage(db, conv.id, {
+        await upsertMessage(db, conv.id, {
           ...m,
           id: randomId(),
           runId: undefined,
@@ -6410,36 +6411,36 @@ export async function startServer({
     res.json({ conversation: conv });
   });
 
-  app.patch('/api/projects/:id/conversations/:cid', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.patch('/api/projects/:id/conversations/:cid', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'not found' });
     }
-    const updated = updateConversation(db, req.params.cid, req.body || {});
+    const updated = await updateConversation(db, req.params.cid, req.body || {});
     res.json({ conversation: updated });
   });
 
-  app.delete('/api/projects/:id/conversations/:cid', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.delete('/api/projects/:id/conversations/:cid', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'not found' });
     }
-    deleteConversation(db, req.params.cid);
+    await deleteConversation(db, req.params.cid);
     res.json({ ok: true });
   });
 
   // ---- Messages -------------------------------------------------------------
 
-  app.get('/api/projects/:id/conversations/:cid/messages', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.get('/api/projects/:id/conversations/:cid/messages', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
-    res.json({ messages: listMessages(db, req.params.cid) });
+    res.json({ messages: await listMessages(db, req.params.cid) });
   });
 
-  app.put('/api/projects/:id/conversations/:cid/messages/:mid', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.put('/api/projects/:id/conversations/:cid/messages/:mid', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
@@ -6447,12 +6448,12 @@ export async function startServer({
     if (m.id && m.id !== req.params.mid) {
       return res.status(400).json({ error: 'id mismatch' });
     }
-    const saved = upsertMessage(db, req.params.cid, {
+    const saved = await upsertMessage(db, req.params.cid, {
       ...m,
       id: req.params.mid,
     });
     // Bump the parent project's updatedAt so the project list re-orders.
-    updateProject(db, req.params.id, {});
+    await updateProject(db, req.params.id, {});
     reportFinalizedMessage(saved, m, {
       analyticsContext: readAnalyticsContext(req),
       projectId: req.params.id,
@@ -6463,29 +6464,29 @@ export async function startServer({
 
   // ---- Preview comments ----------------------------------------------------
 
-  app.get('/api/projects/:id/conversations/:cid/comments', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.get('/api/projects/:id/conversations/:cid/comments', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
     res.json({
-      comments: listPreviewComments(db, req.params.id, req.params.cid),
+      comments: await listPreviewComments(db, req.params.id, req.params.cid),
     });
   });
 
-  app.post('/api/projects/:id/conversations/:cid/comments', (req, res) => {
-    const conv = getConversation(db, req.params.cid);
+  app.post('/api/projects/:id/conversations/:cid/comments', async (req, res) => {
+    const conv = await getConversation(db, req.params.cid);
     if (!conv || conv.projectId !== req.params.id) {
       return res.status(404).json({ error: 'conversation not found' });
     }
     try {
-      const comment = upsertPreviewComment(
+      const comment = await upsertPreviewComment(
         db,
         req.params.id,
         req.params.cid,
         req.body || {},
       );
-      updateProject(db, req.params.id, {});
+      await updateProject(db, req.params.id, {});
       res.json({ comment });
     } catch (err) {
       res.status(400).json({ error: String(err?.message || err) });
@@ -6494,13 +6495,13 @@ export async function startServer({
 
   app.patch(
     '/api/projects/:id/conversations/:cid/comments/:commentId',
-    (req, res) => {
-      const conv = getConversation(db, req.params.cid);
+    async (req, res) => {
+      const conv = await getConversation(db, req.params.cid);
       if (!conv || conv.projectId !== req.params.id) {
         return res.status(404).json({ error: 'conversation not found' });
       }
       try {
-        const comment = updatePreviewCommentStatus(
+        const comment = await updatePreviewCommentStatus(
           db,
           req.params.id,
           req.params.cid,
@@ -6509,7 +6510,7 @@ export async function startServer({
         );
         if (!comment)
           return res.status(404).json({ error: 'comment not found' });
-        updateProject(db, req.params.id, {});
+        await updateProject(db, req.params.id, {});
         res.json({ comment });
       } catch (err) {
         res.status(400).json({ error: String(err?.message || err) });
@@ -6519,34 +6520,34 @@ export async function startServer({
 
   app.delete(
     '/api/projects/:id/conversations/:cid/comments/:commentId',
-    (req, res) => {
-      const conv = getConversation(db, req.params.cid);
+    async (req, res) => {
+      const conv = await getConversation(db, req.params.cid);
       if (!conv || conv.projectId !== req.params.id) {
         return res.status(404).json({ error: 'conversation not found' });
       }
-      const ok = deletePreviewComment(
+      const ok = await deletePreviewComment(
         db,
         req.params.id,
         req.params.cid,
         req.params.commentId,
       );
       if (!ok) return res.status(404).json({ error: 'comment not found' });
-      updateProject(db, req.params.id, {});
+      await updateProject(db, req.params.id, {});
       res.json({ ok: true });
     },
   );
 
   // ---- Tabs -----------------------------------------------------------------
 
-  app.get('/api/projects/:id/tabs', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.get('/api/projects/:id/tabs', async (req, res) => {
+    if (!await getProject(db, req.params.id)) {
       return res.status(404).json({ error: 'project not found' });
     }
-    res.json(listTabs(db, req.params.id));
+    res.json(await listTabs(db, req.params.id));
   });
 
-  app.put('/api/projects/:id/tabs', (req, res) => {
-    if (!getProject(db, req.params.id)) {
+  app.put('/api/projects/:id/tabs', async (req, res) => {
+    if (!await getProject(db, req.params.id)) {
       return res.status(404).json({ error: 'project not found' });
     }
     const { tabs = [], active = null, browserTabs = [] } = req.body || {};
@@ -6556,7 +6557,7 @@ export async function startServer({
     if (!Array.isArray(browserTabs)) {
       return res.status(400).json({ error: 'browserTabs must be an array' });
     }
-    const result = setTabs(
+    const result = await setTabs(
       db,
       req.params.id,
       {
@@ -6575,12 +6576,12 @@ export async function startServer({
   // starting point. Created via the project's Share menu (snapshots
   // every .html file in the project folder at the moment of save).
 
-  app.get('/api/templates', (_req, res) => {
-    res.json({ templates: listTemplates(db) });
+  app.get('/api/templates', async (_req, res) => {
+    res.json({ templates: await listTemplates(db) });
   });
 
-  app.get('/api/templates/:id', (req, res) => {
-    const t = getTemplate(db, req.params.id);
+  app.get('/api/templates/:id', async (req, res) => {
+    const t = await getTemplate(db, req.params.id);
     if (!t) return res.status(404).json({ error: 'not found' });
     res.json({ template: t });
   });
@@ -6594,7 +6595,7 @@ export async function startServer({
       if (typeof sourceProjectId !== 'string') {
         return res.status(400).json({ error: 'sourceProjectId required' });
       }
-      const sourceProject = getProject(db, sourceProjectId);
+      const sourceProject = await getProject(db, sourceProjectId);
       if (!sourceProject) {
         return res.status(404).json({ error: 'source project not found' });
       }
@@ -6621,7 +6622,7 @@ export async function startServer({
           });
         }
       }
-      const t = insertTemplate(db, {
+      const t = await insertTemplate(db, {
         id: randomId(),
         name: name.trim(),
         description: typeof description === 'string' ? description : null,
@@ -6635,8 +6636,8 @@ export async function startServer({
     }
   });
 
-  app.delete('/api/templates/:id', (req, res) => {
-    deleteTemplate(db, req.params.id);
+  app.delete('/api/templates/:id', async (req, res) => {
+    await deleteTemplate(db, req.params.id);
     res.json({ ok: true });
   });
 
@@ -7097,7 +7098,7 @@ export async function startServer({
   // and snapshot fetch by id (used by run replay tooling).
   app.get('/api/plugins', async (_req, res) => {
     try {
-      const plugins = applyBakedPreviews(listInstalledPlugins(db), PLUGIN_PREVIEWS_DIR);
+      const plugins = applyBakedPreviews(await listInstalledPlugins(db), PLUGIN_PREVIEWS_DIR);
       res.json({ plugins });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -7106,7 +7107,7 @@ export async function startServer({
 
   app.get('/api/plugins/:id', async (req, res) => {
     try {
-      const plugin = getInstalledPlugin(db, req.params.id);
+      const plugin = await getInstalledPlugin(db, req.params.id);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       res.json(plugin);
     } catch (err) {
@@ -7377,7 +7378,7 @@ export async function startServer({
     const id = req.params.id;
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const policy = body.policy === 'pinned' ? 'pinned' : 'latest';
-    const plugin = getInstalledPlugin(db, id);
+    const plugin = await getInstalledPlugin(db, id);
     if (!plugin) {
       return res.status(404).json({
         error: { code: 'plugin-not-found', message: `No installed plugin with id "${id}".`, data: { id } },
@@ -7469,7 +7470,7 @@ export async function startServer({
     // can fall back to the matching scenario's pipeline when the
     // consumer plugin omits od.pipeline. Each scenario carries a
     // `taskKind` that picks the match.
-    const scenarios = collectBundledScenarios();
+    const scenarios = await collectBundledScenarios();
     return {
       skills: skills.map((s) => ({ id: s.id, title: s.name, description: s.description })),
       designSystems: designSystems.map((d) => ({ id: d.id, title: d.title })),
@@ -7496,7 +7497,7 @@ export async function startServer({
   // pipeline-fallback winner. Non-canonical scenarios still install
   // and run through their explicit pluginId path; they just don't get
   // to hijack a consumer plugin that omitted `od.pipeline`.
-  function collectBundledScenarios() {
+  async function collectBundledScenarios() {
     type ScenarioEntry = {
       id: string;
       taskKind: 'new-generation' | 'figma-migration' | 'code-migration' | 'tune-collab';
@@ -7504,7 +7505,7 @@ export async function startServer({
     };
     const byTaskKind = new Map<ScenarioEntry['taskKind'], ScenarioEntry>();
     try {
-      const all = listInstalledPlugins(db);
+      const all = await listInstalledPlugins(db);
       for (const row of all) {
         if (row.sourceKind !== 'bundled') continue;
         const od = row.manifest.od;
@@ -7529,7 +7530,7 @@ export async function startServer({
 
   app.post('/api/plugins/:id/apply', async (req, res) => {
     try {
-      const plugin = getInstalledPlugin(db, req.params.id);
+      const plugin = await getInstalledPlugin(db, req.params.id);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const inputs = body.inputs && typeof body.inputs === 'object' ? body.inputs : {};
@@ -7561,7 +7562,7 @@ export async function startServer({
 
   app.post('/api/plugins/:id/share-project', async (req, res) => {
     try {
-      const sourcePlugin = getInstalledPlugin(db, req.params.id);
+      const sourcePlugin = await getInstalledPlugin(db, req.params.id);
       if (!sourcePlugin) {
         sendApiError(res, 404, 'NOT_FOUND', 'plugin not found');
         return;
@@ -7582,7 +7583,7 @@ export async function startServer({
         return;
       }
       const actionPluginId = PLUGIN_SHARE_ACTION_PLUGIN_IDS[action];
-      const actionPlugin = getInstalledPlugin(db, actionPluginId);
+      const actionPlugin = await getInstalledPlugin(db, actionPluginId);
       if (!actionPlugin) {
         res.status(409).json({
           ok: false,
@@ -7605,7 +7606,7 @@ export async function startServer({
         path.join(projectRoot, 'plugin-source', sourceSlug),
       );
 
-      insertProject(db, {
+      await insertProject(db, {
         id,
         name: `${PLUGIN_SHARE_ACTION_LABELS[action]}: ${sourcePlugin.title || sourcePlugin.id}`,
         skillId: null,
@@ -7615,7 +7616,7 @@ export async function startServer({
         createdAt: now,
         updatedAt: now,
       });
-      insertConversation(db, {
+      await insertConversation(db, {
         id: cid,
         projectId: id,
         title: null,
@@ -7625,7 +7626,7 @@ export async function startServer({
 
       const registry = await loadPluginRegistryView();
       const connectorProbe = buildConnectorProbe(connectorService);
-      const resolved = resolvePluginSnapshot({
+      const resolved = await resolvePluginSnapshot({
         db,
         body: {
           pluginId: actionPluginId,
@@ -7648,7 +7649,7 @@ export async function startServer({
         return;
       }
 
-      const project = getProject(db, id);
+      const project = await getProject(db, id);
       if (!project) {
         sendApiError(res, 500, 'INTERNAL_ERROR', 'created project could not be loaded');
         return;
@@ -7671,7 +7672,7 @@ export async function startServer({
 
   app.post('/api/plugins/:id/doctor', async (req, res) => {
     try {
-      const plugin = getInstalledPlugin(db, req.params.id);
+      const plugin = await getInstalledPlugin(db, req.params.id);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       const registry = await loadPluginRegistryView();
       const connectorProbe = buildConnectorProbe(connectorService);
@@ -7691,7 +7692,7 @@ export async function startServer({
   // `installed_plugins.capabilities_granted` outside of install).
   app.post('/api/plugins/:id/trust', async (req, res) => {
     try {
-      const plugin = getInstalledPlugin(db, req.params.id);
+      const plugin = await getInstalledPlugin(db, req.params.id);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const action = body.action === 'revoke' ? 'revoke' : 'grant';
@@ -7716,9 +7717,9 @@ export async function startServer({
         });
       }
       const next = action === 'revoke'
-        ? revokeCapabilities({ db, pluginId: req.params.id, capabilities: accepted })
-        : grantCapabilities({ db, pluginId: req.params.id, capabilities: accepted });
-      const updated = getInstalledPlugin(db, req.params.id);
+        ? await revokeCapabilities({ db, pluginId: req.params.id, capabilities: accepted })
+        : await grantCapabilities({ db, pluginId: req.params.id, capabilities: accepted });
+      const updated = await getInstalledPlugin(db, req.params.id);
       // Plan §3.JJ1 — emit a 'plugin.trust-changed' event so the
       // ops live-tail surfaces capability mutations for security
       // audit. Best-effort.
@@ -7798,7 +7799,7 @@ export async function startServer({
     pickCandidates: (plugin: any) => Promise<string[]> | string[],
   ): Promise<void> {
     try {
-      const plugin = getInstalledPlugin(db, req.params.id);
+      const plugin = await getInstalledPlugin(db, req.params.id);
       if (!plugin) {
         res.status(404).json({ error: 'plugin not found' });
         return;
@@ -8168,7 +8169,7 @@ export async function startServer({
 
   app.get('/api/plugins/:id/asset/*splat', async (req, res) => {
     try {
-      const plugin = getInstalledPlugin(db, req.params.id);
+      const plugin = await getInstalledPlugin(db, req.params.id);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       const splatParam = req.params.splat;
       const relpath = Array.isArray(splatParam) ? splatParam.join('/') : String(splatParam ?? '');
@@ -8351,8 +8352,8 @@ export async function startServer({
   app.get('/api/plugins/stats', async (_req, res) => {
     try {
       const { pluginInventoryStats, snapshotInventoryStats } = await import('./plugins/stats.js');
-      const installed = listInstalledPlugins(db);
-      const inventoryRows = db.prepare(
+      const installed = await listInstalledPlugins(db);
+      const inventoryRows = await db.prepare(
         `SELECT status, project_id, run_id, applied_at FROM applied_plugin_snapshots`,
       ).all() as Array<{ status: 'fresh' | 'stale'; project_id: string | null; run_id: string | null; applied_at: number }>;
       res.json({
@@ -8651,7 +8652,7 @@ export async function startServer({
           WHERE run_id = ? AND surface_id = ? AND status = 'pending'
           ORDER BY requested_at DESC LIMIT 1`,
       );
-      const row = stmt.get(req.params.runId, req.params.surfaceId) as { id?: string } | undefined;
+      const row = await stmt.get(req.params.runId, req.params.surfaceId) as { id?: string } | undefined;
       if (!row?.id) {
         return res.status(404).json({ error: 'no pending surface for runId/surfaceId' });
       }
@@ -8670,7 +8671,7 @@ export async function startServer({
           const run = design.runs.get(req.params.runId);
           const projectId = (run as { projectId?: string | null } | undefined)?.projectId ?? null;
           if (projectId) {
-            const project = getProject(db, projectId);
+            const project = await getProject(db, projectId);
             const metadata = project?.metadata && typeof project.metadata === 'string'
               ? JSON.parse(project.metadata)
               : project?.metadata ?? undefined;
@@ -8740,9 +8741,9 @@ export async function startServer({
     }
   });
 
-  app.get('/api/runs/:runId/genui/:surfaceId', (req, res) => {
+  app.get('/api/runs/:runId/genui/:surfaceId', async (req, res) => {
     try {
-      const row = db.prepare(
+      const row = await db.prepare(
         `SELECT id FROM genui_surfaces
           WHERE run_id = ? AND surface_id = ?
           ORDER BY requested_at DESC LIMIT 1`,
@@ -8770,9 +8771,9 @@ export async function startServer({
     }
   });
 
-  app.get('/api/runs/:runId/devloop-iterations', (req, res) => {
+  app.get('/api/runs/:runId/devloop-iterations', async (req, res) => {
     try {
-      const iterations = listIterationsForRun(db, req.params.runId);
+      const iterations = await listIterationsForRun(db, req.params.runId);
       res.json({ runId: req.params.runId, iterations });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -9366,7 +9367,7 @@ export async function startServer({
         projectId,
         artifactId: req.params.artifactId,
       });
-      updateProject(db, projectId, {});
+      await updateProject(db, projectId, {});
       emitLiveArtifactEvent({ projectId }, 'deleted', existing.artifact);
       res.json({ ok: true });
     } catch (err) {
@@ -9466,10 +9467,10 @@ export async function startServer({
     }
   });
 
-  app.get('/api/projects/:id/deployments', (req, res) => {
+  app.get('/api/projects/:id/deployments', async (req, res) => {
     try {
       /** @type {import('@open-design/contracts').ProjectDeploymentsResponse} */
-      const body = { deployments: publicDeployments(listDeployments(db, req.params.id)) };
+      const body = { deployments: publicDeployments(await listDeployments(db, req.params.id)) };
       res.json(body);
     } catch (err) {
       sendApiError(res, 400, 'BAD_REQUEST', String(err?.message || err));
@@ -9491,18 +9492,18 @@ export async function startServer({
         return sendApiError(res, 400, 'BAD_REQUEST', 'fileName required');
       }
 
-      const prior = getDeployment(db, req.params.id, fileName, providerId);
-      const deployProject = getProject(db, req.params.id);
+      const prior = await getDeployment(db, req.params.id, fileName, providerId);
+      const deployProject = await getProject(db, req.params.id);
       const files = await buildDeployFileSet(
         PROJECTS_DIR,
         req.params.id,
         fileName,
         { metadata: deployProject?.metadata },
       );
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const cloudflarePagesProjectName =
         providerId === CLOUDFLARE_PAGES_PROVIDER_ID
-          ? cloudflarePagesProjectNameForDeploy(db, req.params.id, project?.name, prior)
+          ? await cloudflarePagesProjectNameForDeploy(db, req.params.id, project?.name, prior)
           : '';
       const result = providerId === CLOUDFLARE_PAGES_PROVIDER_ID
         ? await deployToCloudflarePages({
@@ -9522,7 +9523,7 @@ export async function startServer({
           });
       const now = Date.now();
       /** @type {import('@open-design/contracts').DeployProjectFileResponse} */
-      const body = upsertDeployment(db, {
+      const body = await upsertDeployment(db, {
         id: prior?.id ?? randomUUID(),
         projectId: req.params.id,
         fileName,
@@ -9573,7 +9574,7 @@ export async function startServer({
       if (typeof fileName !== 'string' || !fileName.trim()) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'fileName required');
       }
-      const preflightProject = getProject(db, req.params.id);
+      const preflightProject = await getProject(db, req.params.id);
       /** @type {import('@open-design/contracts').DeployPreflightResponse} */
       const body = await prepareDeployPreflight(
         PROJECTS_DIR,
@@ -9637,7 +9638,7 @@ export async function startServer({
         return sendApiError(res, 400, 'BAD_REQUEST', 'maxTokens must be a positive number when provided');
       }
 
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
@@ -9699,7 +9700,7 @@ export async function startServer({
     '/api/projects/:id/deployments/:deploymentId/check-link',
     async (req, res) => {
       try {
-        const existing = getDeploymentById(
+        const existing = await getDeploymentById(
           db,
           req.params.id,
           req.params.deploymentId,
@@ -9720,7 +9721,7 @@ export async function startServer({
           const checked = await checkCloudflarePagesDeploymentLinks(existing);
           const now = Date.now();
           /** @type {import('@open-design/contracts').CheckDeploymentLinkResponse} */
-          const body = upsertDeployment(db, {
+          const body = await upsertDeployment(db, {
             ...existing,
             ...checked,
             reachableAt: checked.status === 'ready' ? now : existing.reachableAt,
@@ -9734,7 +9735,7 @@ export async function startServer({
         const result = await checkDeploymentUrl(checkUrl);
         const now = Date.now();
         /** @type {import('@open-design/contracts').CheckDeploymentLinkResponse} */
-        const body = upsertDeployment(db, {
+        const body = await upsertDeployment(db, {
           ...existing,
           url: checkUrl || existing.url,
           status: result.reachable ? 'ready' : result.status || 'link-delayed',
@@ -9765,7 +9766,7 @@ export async function startServer({
   app.get('/api/projects/:id/files', async (req, res) => {
     try {
       const since = Number(req.query?.since);
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const files = await listFiles(PROJECTS_DIR, req.params.id, {
         since: Number.isFinite(since) ? since : undefined,
         metadata: project?.metadata,
@@ -9780,7 +9781,7 @@ export async function startServer({
 
   app.post('/api/projects/:id/plugins/install-folder', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -9821,7 +9822,7 @@ export async function startServer({
 
   app.post('/api/projects/:id/plugins/publish-github', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -9858,9 +9859,9 @@ export async function startServer({
     }
   });
 
-  app.get('/api/projects/:id/plugin-candidates', (req, res) => {
+  app.get('/api/projects/:id/plugin-candidates', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -9872,7 +9873,7 @@ export async function startServer({
     }
   });
 
-  app.post('/api/projects/:id/plugin-candidates/:candidateId/dismiss', (req, res) => {
+  app.post('/api/projects/:id/plugin-candidates/:candidateId/dismiss', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
@@ -9882,7 +9883,7 @@ export async function startServer({
       return;
     }
     if (candidate.assistantMessageId) {
-      db.prepare(`DELETE FROM messages WHERE id = ?`).run(candidate.assistantMessageId);
+      await db.prepare(`DELETE FROM messages WHERE id = ?`).run(candidate.assistantMessageId);
     }
     res.json({ ok: true, candidate });
   });
@@ -9892,7 +9893,7 @@ export async function startServer({
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -9914,7 +9915,7 @@ export async function startServer({
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -9974,7 +9975,7 @@ export async function startServer({
 
   app.post('/api/projects/:id/plugins/contribute-open-design', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -10016,7 +10017,7 @@ export async function startServer({
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
         return;
@@ -10112,7 +10113,7 @@ export async function startServer({
       }
       const pattern = req.query.pattern ? String(req.query.pattern) : null;
       const max = Math.min(Number(req.query.max) || 200, 1000);
-      const searchProject = getProject(db, req.params.id);
+      const searchProject = await getProject(db, req.params.id);
       const matches = await searchProjectFiles(PROJECTS_DIR, req.params.id, query, {
         pattern,
         max,
@@ -10132,7 +10133,7 @@ export async function startServer({
   app.get('/api/projects/:id/archive', async (req, res) => {
     try {
       const root = typeof req.query?.root === 'string' ? req.query.root : '';
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const { buffer, baseName } = await buildProjectArchive(
         PROJECTS_DIR,
         req.params.id,
@@ -10174,7 +10175,7 @@ export async function startServer({
         sendApiError(res, 400, 'BAD_REQUEST', 'files must be a non-empty array');
         return;
       }
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const { buffer } = await buildBatchArchive(
         PROJECTS_DIR,
         req.params.id,
@@ -10219,7 +10220,7 @@ export async function startServer({
     try {
       const projectId = String(req.params[0] ?? '');
       const relPath = String(req.params[1] ?? '');
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       const file = await readProjectFile(PROJECTS_DIR, projectId, relPath, project?.metadata);
       // PreviewModal loads artifact HTML via srcdoc, giving the iframe Origin: "null".
       // data: URIs, file://, and some sandboxed iframes also send null — all are
@@ -10244,7 +10245,7 @@ export async function startServer({
     try {
       const projectId = String(req.params[0] ?? '');
       const rawSplat = String(req.params[1] ?? '');
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       await deleteProjectFile(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
       /** @type {import('@open-design/contracts').DeleteProjectFileResponse} */
       const body = { ok: true };
@@ -10262,7 +10263,7 @@ export async function startServer({
 
   app.get('/api/projects/:id/files/:name/preview', async (req, res) => {
     try {
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const file = await readProjectFile(
         PROJECTS_DIR,
         req.params.id,
@@ -10291,7 +10292,7 @@ export async function startServer({
     try {
       const projectId = String(req.params[0] ?? '');
       const fileSplat = String(req.params[1] ?? '');
-      const project = getProject(db, projectId);
+      const project = await getProject(db, projectId);
       const file = await readProjectFile(
         PROJECTS_DIR,
         projectId,
@@ -10323,7 +10324,7 @@ export async function startServer({
     },
     async (req, res) => {
       try {
-        const uploadProject = getProject(db, req.params.id);
+        const uploadProject = await getProject(db, req.params.id);
         await ensureProject(PROJECTS_DIR, req.params.id, uploadProject?.metadata);
         if (req.file) {
           const buf = await fs.promises.readFile(req.file.path);
@@ -10394,7 +10395,7 @@ export async function startServer({
 
   app.delete('/api/projects/:id/files/:name', async (req, res) => {
     try {
-      const delProject = getProject(db, req.params.id);
+      const delProject = await getProject(db, req.params.id);
       await deleteProjectFile(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
       /** @type {import('@open-design/contracts').DeleteProjectFileResponse} */
       const body = { ok: true };
@@ -10581,7 +10582,7 @@ export async function startServer({
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const taskId = req.params.id;
-    const task = getLiveMediaTask(db, taskId);
+    const task = await getLiveMediaTask(db, taskId);
     if (!task) return res.status(404).json({ error: 'task not found' });
 
     const since = Number.isFinite(req.body?.since) ? Number(req.body.since) : 0;
@@ -10615,16 +10616,16 @@ export async function startServer({
     res.on('close', wake);
   });
 
-  app.get('/api/projects/:id/media/tasks', (req, res) => {
+  app.get('/api/projects/:id/media/tasks', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const projectId = req.params.id;
     const includeDone =
       req.query.includeDone === '1' || req.query.includeDone === 'true';
-    const tasks = listMediaTasksByProject(db, projectId, {
+    const tasks = (await listMediaTasksByProject(db, projectId, {
       includeTerminal: includeDone,
-    }).map((t) => ({
+    })).map((t) => ({
       taskId: t.id,
       status: t.status,
       startedAt: t.startedAt,
@@ -10706,7 +10707,7 @@ export async function startServer({
   }) => {
     const project =
       typeof projectId === 'string' && projectId
-        ? getProject(db, projectId)
+        ? await getProject(db, projectId)
         : null;
     const effectiveSkillId =
       typeof skillId === 'string' && skillId ? skillId : project?.skillId;
@@ -10852,13 +10853,13 @@ export async function startServer({
       && appliedPluginSnapshotId.length > 0
     ) {
       try {
-        const snap = getSnapshot(db, appliedPluginSnapshotId);
+        const snap = await getSnapshot(db, appliedPluginSnapshotId);
         if (snap?.pluginId) {
           const { getSnapshotContextCraft } = await import('./plugins/context-craft.js');
           for (const craft of getSnapshotContextCraft(snap)) {
             if (!skillCraftRequires.includes(craft)) skillCraftRequires.push(craft);
           }
-          const plugin = getInstalledPlugin(db, snap.pluginId);
+          const plugin = await getInstalledPlugin(db, snap.pluginId);
           if (plugin) {
             const { loadPluginLocalSkill } = await import('./plugins/local-skill.js');
             const local = await loadPluginLocalSkill(plugin);
@@ -10973,7 +10974,7 @@ export async function startServer({
 
     const template =
       metadata?.kind === 'template' && typeof metadata.templateId === 'string'
-        ? (getTemplate(db, metadata.templateId) ?? undefined)
+        ? ((await getTemplate(db, metadata.templateId)) ?? undefined)
         : undefined;
     let audioVoiceOptions = [];
     let audioVoiceOptionsError;
@@ -11309,7 +11310,7 @@ export async function startServer({
       run.designSystemId = designSystemId;
     const conversationSession =
       typeof conversationId === 'string' && conversationId
-        ? getConversation(db, conversationId)
+        ? await getConversation(db, conversationId)
         : null;
     const runSessionMode =
       sessionMode === 'chat' || sessionMode === 'design'
@@ -11365,7 +11366,7 @@ export async function startServer({
     let existingProjectFolders = [];
     if (typeof projectId === 'string' && projectId) {
       try {
-        const chatProject = getProject(db, projectId);
+        const chatProject = await getProject(db, projectId);
         const chatMeta = chatProject?.metadata;
         // ensureProject/resolveProjectDir now resolve external baseDir folders
         // internally (and assertSandboxProjectRootAvailable rejects imported
@@ -11427,7 +11428,7 @@ export async function startServer({
     // doesn't have to guess what the user just dropped in.
     const projectRecord =
       typeof projectId === 'string' && projectId
-        ? getProject(db, projectId)
+        ? await getProject(db, projectId)
         : null;
     const runContextPrompt = renderRunContextPrompt(context, projectRecord?.metadata);
     const linkedDirs = (() => {
@@ -11449,9 +11450,9 @@ export async function startServer({
     // capability gate without re-reading the SQLite snapshot row.
     let pluginGrantContext = null;
     if (cwd && typeof projectId === 'string' && projectId && run?.appliedPluginSnapshotId) {
-      const snap = getSnapshot(db, run.appliedPluginSnapshotId);
+      const snap = await getSnapshot(db, run.appliedPluginSnapshotId);
       if (snap) {
-        const installed = getInstalledPlugin(db, snap.pluginId);
+        const installed = await getInstalledPlugin(db, snap.pluginId);
         pluginGrantContext = {
           pluginSnapshotId: snap.snapshotId,
           pluginTrust: installed?.trust ?? 'restricted',
@@ -11668,7 +11669,7 @@ export async function startServer({
       def.resumesSessionViaCli === true || def.streamFormat === 'pi-rpc';
     const agentResumeCtx =
       agentSupportsSessionResume && run.conversationId
-        ? resolveAgentResumeContext(db, {
+        ? await resolveAgentResumeContext(db, {
             conversationId: run.conversationId,
             agentId: def.id,
           })
@@ -11868,7 +11869,7 @@ export async function startServer({
           CLARIFYING_QUESTION_BUFFER_CAP,
         );
       }
-      persistRunEventToAssistantMessage(db, run, event, data);
+      void persistRunEventToAssistantMessage(db, run, event, data);
       design.runs.emit(run, event, data);
     };
     const retryAnalyticsBase = (decision, failure, errorCode) => {
@@ -11944,7 +11945,7 @@ export async function startServer({
       run.analyticsTelemetry = {
         startRequestedAt: run.analyticsTelemetry?.startRequestedAt ?? run.createdAt,
       };
-      void startChatRun(chatBody, run).catch((err) => {
+      void startChatRun(chatBody, run).catch(async (err) => {
         const message = err instanceof Error ? err.message : String(err);
         design.runs.emit(
           run,
@@ -11958,7 +11959,7 @@ export async function startServer({
         // retry_final_result: 'not_attempted'. retryAttemptCount is already 1
         // here, so decideSafeRunRetry suppresses with attempt_limit_reached and
         // cannot trigger another restart loop.
-        finishWithRetryDecision('failed', 1, null);
+        await finishWithRetryDecision('failed', 1, null);
       });
     };
     const finalizeRetryTelemetry = (status, decision, failure, errorCode) => {
@@ -12008,7 +12009,7 @@ export async function startServer({
       if (typeof code === 'number') return code === 0 ? 'exit_0' : 'exit_nonzero';
       return 'unknown';
     };
-    const finishWithRetryDecision = (status, code = null, signal = null) => {
+    const finishWithRetryDecision = async (status, code = null, signal = null) => {
       run.analyticsTelemetry = {
         ...(run.analyticsTelemetry ?? {}),
         finalizeStartAt: run.analyticsTelemetry?.finalizeStartAt ?? Date.now(),
@@ -12096,7 +12097,7 @@ export async function startServer({
         isResumableFailure(failure);
       run.resumable = resumableFailure;
       if (resumableFailure) {
-        upsertAgentSession(db, {
+        await upsertAgentSession(db, {
           conversationId: run.conversationId,
           agentId: def.id,
           sessionId: liveSessionId,
@@ -12551,14 +12552,14 @@ export async function startServer({
       return design.runs.finish(run, 'failed', 1, null);
     }
 
-    let persistDeliveredAgentSessionState = () => {};
+    let persistDeliveredAgentSessionState = async () => {};
     if (def.resumesSessionViaCli === true && run.conversationId) {
       let persisted = false;
-      persistDeliveredAgentSessionState = () => {
+      persistDeliveredAgentSessionState = async () => {
         if (persisted) return;
         persisted = true;
         if (!agentResumeCtx.isResuming && agentResumeCtx.newSessionId) {
-          upsertAgentSession(db, {
+          await upsertAgentSession(db, {
             conversationId: run.conversationId,
             agentId: def.id,
             sessionId: agentResumeCtx.newSessionId,
@@ -12567,7 +12568,7 @@ export async function startServer({
           return;
         }
         if (agentResumeCtx.isResuming && includeStableInstructions) {
-          updateAgentSessionStableHash(db, run.conversationId, def.id, currentStableHash);
+          await updateAgentSessionStableHash(db, run.conversationId, def.id, currentStableHash);
         }
       };
     }
@@ -12647,7 +12648,7 @@ export async function startServer({
         if (child && !child.killed) child.kill('SIGKILL');
       }, inactivityKillGraceMs * 2).unref?.();
     };
-    const failForInactivity = () => {
+    const failForInactivity = async () => {
       if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
       clearInactivityWatchdog();
       if (artifactRegistered) {
@@ -12709,7 +12710,7 @@ export async function startServer({
       // Route through the shared finalizer (after surfacing stallPayload) so
       // the watchdog path gets the same run_retry_attempted/run_retry_finished
       // telemetry as child close/error — not a bare terminal failure.
-      const retried = finishWithRetryDecision('failed', 1, null);
+      const retried = await finishWithRetryDecision('failed', 1, null);
       if (retried) {
         watchdogRetryRestarted = true;
       }
@@ -13513,7 +13514,7 @@ export async function startServer({
         parentSession: agentResumeCtx.isResuming && agentResumeCtx.resumeSessionId
           ? agentResumeCtx.resumeSessionId
           : undefined,
-        send: (channel, payload) => {
+        send: async (channel, payload) => {
           if (channel === 'agent') {
             sendAgentEvent(payload);
           } else if (channel === 'error') {
@@ -13525,7 +13526,7 @@ export async function startServer({
               run.errorCode = piErrorCode;
             }
             if (piErrorCode === 'PI_PARENT_SESSION_FAILED' && run.conversationId) {
-              clearAgentSession(db, run.conversationId, def.id);
+              await clearAgentSession(db, run.conversationId, def.id);
             }
             clearInactivityWatchdog();
             send('error', createSseErrorPayload(
@@ -13637,14 +13638,14 @@ export async function startServer({
       emitVisibleAgentStderr(chunk);
     });
 
-    child.on('error', (err) => {
+    child.on('error', async (err) => {
       clearInactivityWatchdog();
       cleanupPromptFile();
       flushVisibleAgentStderr();
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
       send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err.message));
-      finishWithRetryDecision('failed', 1, null);
+      await finishWithRetryDecision('failed', 1, null);
     });
     child.on('close', async (code, signal) => {
       try {
@@ -13665,11 +13666,11 @@ export async function startServer({
       unregisterChatAgentEventSink();
       if (acpSession?.hasFatalError()) {
         markRpcCloseReason('fatal_rpc_error');
-        return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
+        return await finishWithRetryDecision('failed', code ?? 1, signal ?? null);
       }
       if (agentStreamError) {
         markRpcCloseReason('stream_error');
-        return finishWithRetryDecision('failed', code === 0 ? 1 : (code ?? 1), signal ?? null);
+        return await finishWithRetryDecision('failed', code === 0 ? 1 : (code ?? 1), signal ?? null);
       }
       if (
         code !== 0 &&
@@ -13681,7 +13682,7 @@ export async function startServer({
           );
           if (amrFailure) {
             sendAmrAccountFailure(amrFailure);
-            return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
+            return await finishWithRetryDecision('failed', code ?? 1, signal ?? null);
           }
         }
         const authFailure = classifyAgentAuthFailure(
@@ -13694,7 +13695,7 @@ export async function startServer({
             authFailure.message ?? cursorAuthGuidance(),
             { retryable: true },
           ));
-          return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
+          return await finishWithRetryDecision('failed', code ?? 1, signal ?? null);
         }
       }
       if (
@@ -13709,7 +13710,7 @@ export async function startServer({
         // / ~/.claude cleared). Drop it so the next turn starts a fresh
         // session seeded with the full transcript, and surface a retryable
         // error rather than a confusing hard failure.
-        clearAgentSession(db, run.conversationId, def.id);
+        await clearAgentSession(db, run.conversationId, def.id);
         send('error', createSseErrorPayload(
           'AGENT_EXECUTION_FAILED',
           'The previous Claude session could not be resumed (it may have expired). Resend your message to continue with a fresh session.',
@@ -13732,7 +13733,7 @@ export async function startServer({
           'Agent completed without producing any output. The model or provider may have returned an empty response — check the agent logs for upstream errors.',
           { retryable: true },
         ));
-        return finishWithRetryDecision('failed', code, signal);
+        return await finishWithRetryDecision('failed', code, signal);
       }
       if (
         code === 0 &&
@@ -13746,7 +13747,7 @@ export async function startServer({
           'Plugin authoring ended before generating the required generated-plugin artifacts.',
           { retryable: true },
         ));
-        return finishWithRetryDecision('failed', code, signal);
+        return await finishWithRetryDecision('failed', code, signal);
       }
       // Plain-stream auth-failure guard: plain adapters (today
       // antigravity, deepseek's TUI variants) may exit cleanly with
@@ -13774,7 +13775,7 @@ export async function startServer({
             authFailure.message ?? `${def.name} authentication required. Please re-authenticate and retry.`,
             { retryable: true },
           ));
-          return finishWithRetryDecision('failed', 0, signal);
+          return await finishWithRetryDecision('failed', 0, signal);
         }
       }
       // Plain-stream empty-output guard: plain agents send raw stdout
@@ -13837,7 +13838,7 @@ export async function startServer({
           msg,
           { retryable: true },
         ));
-        return finishWithRetryDecision('failed', 0, signal);
+        return await finishWithRetryDecision('failed', 0, signal);
       }
       // ACP agents that don't shut down on stdin.end() (e.g. Devin for
       // Terminal) are forced to exit via SIGTERM from attachAcpSession after
@@ -13950,7 +13951,7 @@ export async function startServer({
       if (run.projectId) {
         (async () => {
           try {
-            const project = getProject(db, run.projectId);
+            const project = await getProject(db, run.projectId);
             const files = await listFiles(PROJECTS_DIR, run.projectId, {
               metadata: project?.metadata,
             });
@@ -13993,7 +13994,7 @@ export async function startServer({
       if (acpSession && typeof acpSession.getLastSessionPath === 'function') {
         const sessionPath = acpSession.getLastSessionPath();
         if (status === 'succeeded' && def.streamFormat === 'pi-rpc') {
-          persistCapturedAgentSession(db, {
+          await persistCapturedAgentSession(db, {
             conversationId: run.conversationId,
             agentId: def.id,
             sessionId: sessionPath,
@@ -14002,9 +14003,9 @@ export async function startServer({
         }
       }
       if (status === 'succeeded') {
-        persistDeliveredAgentSessionState();
+        await persistDeliveredAgentSessionState();
       }
-      finishWithRetryDecision(status, code, signal);
+      await finishWithRetryDecision(status, code, signal);
       } finally {
         // Best-effort cleanup of the per-run agy log file on every close
         // path — successful, failed, cancelled, or non-zero exit — so
@@ -14087,7 +14088,7 @@ export async function startServer({
       ? null
       : appConfig.designSystemId ?? null;
 
-    insertProject(db, {
+    await insertProject(db, {
       id: projectId,
       name: projectName,
       skillId: 'live-artifact',
@@ -14097,7 +14098,7 @@ export async function startServer({
       createdAt: now,
       updatedAt: now,
     });
-    insertConversation(db, {
+    await insertConversation(db, {
       id: conversationId,
       projectId,
       title: projectName,
@@ -14113,12 +14114,12 @@ export async function startServer({
       agentId,
       mediaExecution: defaultMediaExecutionPolicy(),
     });
-    upsertMessage(db, conversationId, {
+    await upsertMessage(db, conversationId, {
       id: `orbit-user-${run.id}`,
       role: 'user',
       content: prompt,
     });
-    upsertMessage(db, conversationId, {
+    await upsertMessage(db, conversationId, {
       id: assistantMessageId,
       role: 'assistant',
       content: '',
@@ -14169,7 +14170,7 @@ export async function startServer({
 
     const completion = (async () => {
       const finalStatus = await design.runs.wait(run);
-      db.prepare(
+      await db.prepare(
         `UPDATE messages SET run_status = ?, ended_at = ? WHERE id = ?`,
       ).run(finalStatus.status, Date.now(), assistantMessageId);
       const artifacts = await listLiveArtifacts({ projectsRoot: PROJECTS_DIR, projectId });
@@ -14261,18 +14262,18 @@ export async function startServer({
         requestBody.pluginId || requestBody.appliedPluginSnapshotId;
       let runResolveBody = requestBody;
       if (!explicitPlugin) {
-        const projectRow = getProject(db, requestBody.projectId);
+        const projectRow = await getProject(db, requestBody.projectId);
         const hasPin =
           typeof projectRow?.appliedPluginSnapshotId === 'string'
           && projectRow.appliedPluginSnapshotId.length > 0;
         if (!hasPin) {
           const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(projectRow?.metadata);
-          if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
+          if (fallbackPluginId && (await getInstalledPlugin(db, fallbackPluginId))) {
             runResolveBody = { ...requestBody, pluginId: fallbackPluginId };
           }
         }
       }
-      const resolved = resolvePluginSnapshot({
+      const resolved = await resolvePluginSnapshot({
         db,
         body: runResolveBody,
         projectId: requestBody.projectId,
@@ -14313,7 +14314,7 @@ export async function startServer({
     let runProject = null;
     if (typeof meta.projectId === 'string' && meta.projectId) {
       try {
-        runProject = getProject(db, meta.projectId);
+        runProject = await getProject(db, meta.projectId);
         assertSandboxProjectRootAvailable(runProject?.metadata);
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {
@@ -14383,7 +14384,7 @@ export async function startServer({
       (typeof meta.conversationId !== 'string' || !meta.conversationId)
     ) {
       try {
-        const convs = listConversations(db, meta.projectId);
+        const convs = await listConversations(db, meta.projectId);
         // listConversations is ordered for the UI by recent activity; this
         // fallback must bind to the seeded default conversation instead.
         const defaultConv = Array.isArray(convs) && convs.length > 0
@@ -14406,7 +14407,7 @@ export async function startServer({
               ? meta.message
               : null;
           if (promptForUserMessage) {
-            upsertMessage(db, defaultConv.id, {
+            await upsertMessage(db, defaultConv.id, {
               id: randomUUID(),
               role: 'user',
               content: promptForUserMessage,
@@ -14421,7 +14422,7 @@ export async function startServer({
     }
     const run = design.runs.create(meta);
     try {
-      pinAssistantMessageOnRunCreate(db, run);
+      await pinAssistantMessageOnRunCreate(db, run);
     } catch (err) {
       console.warn('[runs] message create pin failed', err);
     }
@@ -14441,7 +14442,7 @@ export async function startServer({
     if (resolvedSnapshot?.ok) {
       try {
         const { linkSnapshotToRun } = await import('./plugins/snapshots.js');
-        linkSnapshotToRun(db, resolvedSnapshot.snapshotId, run.id);
+        await linkSnapshotToRun(db, resolvedSnapshot.snapshotId, run.id);
       } catch {
         // Linking is best-effort here; in-memory run still carries the id.
       }
@@ -14483,7 +14484,7 @@ export async function startServer({
     reconcileAssistantMessageOnRunEnd(db, design.runs, run);
     if (run.projectId && run.conversationId) {
       try {
-        const project = getProject(db, run.projectId);
+        const project = await getProject(db, run.projectId);
         const projectRoot = resolveProjectDir(PROJECTS_DIR, run.projectId, project?.metadata);
         detectSkillPluginCandidateOnRunSuccess(db, design.runs, run, req.body || {}, projectRoot);
       } catch (err) {
@@ -14594,7 +14595,7 @@ export async function startServer({
         ? analyticsHints.projectKind
         : null;
       const requestProjectId = typeof reqBody.projectId === 'string' ? reqBody.projectId : null;
-      const runProject = requestProjectId ? getProject(db, requestProjectId) : null;
+      const runProject = requestProjectId ? await getProject(db, requestProjectId) : null;
       const runProjectKind = resolveRunProjectKindForAnalytics({
         hintProjectKind,
         projectMetadata: runProject?.metadata,
@@ -15001,7 +15002,7 @@ export async function startServer({
     res.json(body);
   });
 
-  app.post('/api/chat', (req, res) => {
+  app.post('/api/chat', async (req, res) => {
     if (daemonShuttingDown) {
       return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
     }
@@ -15017,7 +15018,7 @@ export async function startServer({
     let chatProject = null;
     if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
       try {
-        chatProject = getProject(db, requestBody.projectId);
+        chatProject = await getProject(db, requestBody.projectId);
         assertSandboxProjectRootAvailable(chatProject?.metadata);
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {
@@ -15067,19 +15068,20 @@ export async function startServer({
     const now = startedAt;
     const routineContext = normalizeRunContextSelection(routine.context);
     const routineSkillId = routine.skillId ?? routineContext.skillIds?.[0] ?? null;
+    const contextPlugins = routineContext.pluginIds?.length
+      ? await Promise.all(
+          routineContext.pluginIds.map(async (id) => {
+            const plugin = await getInstalledPlugin(db, id);
+            return {
+              id,
+              title: plugin?.title ?? id,
+              ...(plugin?.manifest?.description ? { description: plugin.manifest.description } : {}),
+            };
+          }),
+        )
+      : null;
     const contextMetadata = {
-      ...(routineContext.pluginIds?.length
-        ? {
-            contextPlugins: routineContext.pluginIds.map((id) => {
-              const plugin = getInstalledPlugin(db, id);
-              return {
-                id,
-                title: plugin?.title ?? id,
-                ...(plugin?.manifest?.description ? { description: plugin.manifest.description } : {}),
-              };
-            }),
-          }
-        : {}),
+      ...(contextPlugins ? { contextPlugins } : {}),
       ...(routineContext.mcpServerIds?.length
         ? { contextMcpServers: routineContext.mcpServerIds.map((id) => ({ id })) }
         : {}),
@@ -15095,11 +15097,11 @@ export async function startServer({
     let createdProjectId: string | null = null;
     let createdConversationId: string | null = null;
     let previousProjectSnapshotId: string | null = null;
-    const createRoutineProject = () => {
+    const createRoutineProject = async () => {
       if (createdProjectId) return;
       projectId = `routine-${randomUUID()}`;
       projectName = `${routine.name} · ${stamp}`;
-      insertProject(db, {
+      await insertProject(db, {
         id: projectId,
         name: projectName,
         skillId: routineSkillId,
@@ -15119,7 +15121,7 @@ export async function startServer({
       createdProjectId = projectId;
     };
     if (routine.target.mode === 'reuse') {
-      const project = getProject(db, routine.target.projectId);
+      const project = await getProject(db, routine.target.projectId);
       if (!project) throw new Error(`Routine target project ${routine.target.projectId} not found`);
       assertSandboxProjectRootAvailable(project.metadata);
       projectId = project.id;
@@ -15132,12 +15134,12 @@ export async function startServer({
     const routineConversationTitle = () => routine.target.mode === 'reuse'
       ? `${routine.name} · ${stamp}`
       : projectName;
-    const createRoutineConversation = () => {
+    const createRoutineConversation = async () => {
       if (createdConversationId) return;
-      if (!projectId) createRoutineProject();
+      if (!projectId) await createRoutineProject();
       if (!projectId) throw new Error('Routine project could not be prepared');
       conversationId = `routine-conv-${randomUUID()}`;
-      insertConversation(db, {
+      await insertConversation(db, {
         id: conversationId,
         projectId,
         title: routineConversationTitle(),
@@ -15170,11 +15172,11 @@ export async function startServer({
       if (!primaryPluginId || resolvedRoutineSnapshot) return;
       const registry = await loadPluginRegistryView();
       const projectSnapshotBefore = routine.target.mode === 'reuse'
-        ? getProject(db, routine.target.projectId)?.appliedPluginSnapshotId ?? null
+        ? (await getProject(db, routine.target.projectId))?.appliedPluginSnapshotId ?? null
         : null;
       let resolved;
       try {
-        resolved = resolvePluginSnapshot({
+        resolved = await resolvePluginSnapshot({
           db,
           body: {
             pluginId: primaryPluginId,
@@ -15195,7 +15197,7 @@ export async function startServer({
         // whatever pin it left behind so `discard()` can roll it back even
         // though `resolvedRoutineSnapshot` will stay null.
         if (routine.target.mode === 'reuse') {
-          const after = getProject(db, routine.target.projectId)?.appliedPluginSnapshotId ?? null;
+          const after = (await getProject(db, routine.target.projectId))?.appliedPluginSnapshotId ?? null;
           if (after && after !== projectSnapshotBefore) {
             partiallyAppliedSnapshotId = after;
           }
@@ -15226,7 +15228,7 @@ export async function startServer({
     });
     const persistPreparedRun = async (routineRun = null) => {
       if (!projectId) {
-        createRoutineProject();
+        await createRoutineProject();
       }
       if (projectId) {
         run.projectId = projectId;
@@ -15234,7 +15236,7 @@ export async function startServer({
           routineRun.projectId = projectId;
         }
       }
-      createRoutineConversation();
+      await createRoutineConversation();
       run.conversationId = conversationId;
       if (routineRun) {
         routineRun.conversationId = conversationId;
@@ -15245,14 +15247,14 @@ export async function startServer({
         run.appliedPluginSnapshotId = resolvedRoutineSnapshot.snapshotId;
         run.pluginId = resolvedRoutineSnapshot.snapshot.pluginId;
         const { linkSnapshotToRun } = await import('./plugins/snapshots.js');
-        linkSnapshotToRun(db, resolvedRoutineSnapshot.snapshotId, run.id);
+        await linkSnapshotToRun(db, resolvedRoutineSnapshot.snapshotId, run.id);
       }
-      upsertMessage(db, conversationId, {
+      await upsertMessage(db, conversationId, {
         id: `routine-user-${run.id}`,
         role: 'user',
         content: routine.prompt,
       });
-      upsertMessage(db, conversationId, {
+      await upsertMessage(db, conversationId, {
         id: assistantMessageId,
         role: 'assistant',
         content: '',
@@ -15299,7 +15301,7 @@ export async function startServer({
       design.runs.drop(run);
     };
 
-    const discard = () => {
+    const discard = async () => {
       if (typeof run.projectId === 'string' && run.projectId.startsWith('routine-pending-')) {
         run.projectId = null;
       }
@@ -15327,10 +15329,10 @@ export async function startServer({
         }
       }
       if (createdConversationId) {
-        deleteConversation(db, createdConversationId);
+        await deleteConversation(db, createdConversationId);
       }
       if (createdProjectId) {
-        dbDeleteProject(db, createdProjectId);
+        await dbDeleteProject(db, createdProjectId);
       }
     };
 
@@ -15343,12 +15345,12 @@ export async function startServer({
         ? (typeof finalStatus.errorCode === 'string' && finalStatus.errorCode.trim() ? finalStatus.errorCode.trim() : null)
         : null;
       if (failureError) {
-        appendMessageStatusEvent(db, assistantMessageId, {
+        await appendMessageStatusEvent(db, assistantMessageId, {
           label: 'error',
           detail: failureError,
         });
       }
-      db.prepare(`UPDATE messages SET run_status = ?, ended_at = ? WHERE id = ?`)
+      await db.prepare(`UPDATE messages SET run_status = ?, ended_at = ? WHERE id = ?`)
         .run(finalStatus.status, Date.now(), assistantMessageId);
       let evolutionSummary = '';
       if (finalStatus.status === 'succeeded' && routineContext.connectorIds?.length) {
@@ -15363,7 +15365,7 @@ export async function startServer({
             agentRunId: run.id,
             summary: `Routine "${routine.name}" ${finalStatus.status}.`,
             connectorIds: routineContext.connectorIds,
-            messages: listMessages(db, conversationId),
+            messages: await listMessages(db, conversationId),
           });
           if (evolution?.proposals?.length) {
             evolutionSummary = ` Created ${evolution.proposals.length} self-evolution proposal(s) from connector context.`;
@@ -15393,7 +15395,7 @@ export async function startServer({
       discardUnstarted,
     };
   });
-  routineService.start();
+  await routineService.start();
 
   assertServerContextSatisfiesRoutes({
     db,

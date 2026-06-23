@@ -16,13 +16,11 @@
 
 import { manifestSourceDigest, resolveContext, validateSafe, type RegistryView } from '@open-design/plugin-runtime';
 import type { InstalledPluginRecord, PluginManifest } from '@open-design/contracts';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import { findAtom, isImplementedAtom, isKnownAtom } from './atoms.js';
 import { validateConnectorRefs, type ConnectorProbe } from './connector-gate.js';
 import { isParseableUntil } from './until.js';
 import { listSnapshotsForProject, markSnapshotStale } from './snapshots.js';
-
-type SqliteDb = Database.Database;
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 
@@ -172,18 +170,18 @@ export function doctorPlugin(
 // matches the live plugin's freshly computed digest. Called by `od plugin
 // doctor --project <id>` and the apply path when a plugin upgrade is
 // detected. Returns the list of snapshot ids that were re-tagged.
-export function markStaleSnapshotsForProject(
-  db: SqliteDb,
+export async function markStaleSnapshotsForProject(
+  db: AsyncDb,
   projectId: string,
   resolveDigest: (snapshot: { pluginId: string; manifestSourceDigest: string }) => string | null,
-): string[] {
+): Promise<string[]> {
   const updated: string[] = [];
-  const snapshots = listSnapshotsForProject(db, projectId);
+  const snapshots = await listSnapshotsForProject(db, projectId);
   for (const snap of snapshots) {
     if (snap.status !== 'fresh') continue;
     const fresh = resolveDigest({ pluginId: snap.pluginId, manifestSourceDigest: snap.manifestSourceDigest });
     if (fresh && fresh !== snap.manifestSourceDigest) {
-      markSnapshotStale(db, snap.snapshotId);
+      await markSnapshotStale(db, snap.snapshotId);
       updated.push(snap.snapshotId);
     }
   }

@@ -9,13 +9,12 @@
 // run-level snapshot link is carried on the in-memory run object plus
 // the messages.run_id row instead of a SQL ALTER TABLE.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 
-type SqliteDb = Database.Database;
 type DbRow = Record<string, unknown>;
 
-export function migratePlugins(db: SqliteDb): void {
-  db.exec(`
+export async function migratePlugins(db: AsyncDb): Promise<void> {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS installed_plugins (
       id                   TEXT PRIMARY KEY,
       title                TEXT NOT NULL,
@@ -169,16 +168,16 @@ export function migratePlugins(db: SqliteDb): void {
       ON skill_plugin_candidates(project_id, status, created_at DESC);
   `);
 
-  const marketplaceCols = db.prepare(`PRAGMA table_info(plugin_marketplaces)`).all() as DbRow[];
+  const marketplaceCols = await db.prepare(`PRAGMA table_info(plugin_marketplaces)`).all() as DbRow[];
   if (!marketplaceCols.some((c) => c['name'] === 'spec_version')) {
-    db.exec(`ALTER TABLE plugin_marketplaces ADD COLUMN spec_version TEXT NOT NULL DEFAULT '1.0.0'`);
+    await db.exec(`ALTER TABLE plugin_marketplaces ADD COLUMN spec_version TEXT NOT NULL DEFAULT '1.0.0'`);
   }
   if (!marketplaceCols.some((c) => c['name'] === 'version')) {
-    db.exec(`ALTER TABLE plugin_marketplaces ADD COLUMN version TEXT NOT NULL DEFAULT '0.0.0'`);
+    await db.exec(`ALTER TABLE plugin_marketplaces ADD COLUMN version TEXT NOT NULL DEFAULT '0.0.0'`);
   }
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_marketplaces_version ON plugin_marketplaces(version)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_marketplaces_version ON plugin_marketplaces(version)`);
 
-  const installedCols = db.prepare(`PRAGMA table_info(installed_plugins)`).all() as DbRow[];
+  const installedCols = await db.prepare(`PRAGMA table_info(installed_plugins)`).all() as DbRow[];
   for (const [name, ddl] of [
     ['source_marketplace_entry_name', `ALTER TABLE installed_plugins ADD COLUMN source_marketplace_entry_name TEXT`],
     ['source_marketplace_entry_version', `ALTER TABLE installed_plugins ADD COLUMN source_marketplace_entry_version TEXT`],
@@ -188,12 +187,12 @@ export function migratePlugins(db: SqliteDb): void {
     ['manifest_digest', `ALTER TABLE installed_plugins ADD COLUMN manifest_digest TEXT`],
     ['archive_integrity', `ALTER TABLE installed_plugins ADD COLUMN archive_integrity TEXT`],
   ] as const) {
-    if (!installedCols.some((c) => c['name'] === name)) db.exec(ddl);
+    if (!installedCols.some((c) => c['name'] === name)) await db.exec(ddl);
   }
 
-  const snapshotCols = db.prepare(`PRAGMA table_info(applied_plugin_snapshots)`).all() as DbRow[];
+  const snapshotCols = await db.prepare(`PRAGMA table_info(applied_plugin_snapshots)`).all() as DbRow[];
   if (!snapshotCols.some((c) => c['name'] === 'plugin_spec_version')) {
-    db.exec(`ALTER TABLE applied_plugin_snapshots ADD COLUMN plugin_spec_version TEXT NOT NULL DEFAULT '1.0.0'`);
+    await db.exec(`ALTER TABLE applied_plugin_snapshots ADD COLUMN plugin_spec_version TEXT NOT NULL DEFAULT '1.0.0'`);
   }
   for (const [name, ddl] of [
     ['source_marketplace_entry_name', `ALTER TABLE applied_plugin_snapshots ADD COLUMN source_marketplace_entry_name TEXT`],
@@ -204,17 +203,17 @@ export function migratePlugins(db: SqliteDb): void {
     ['archive_integrity', `ALTER TABLE applied_plugin_snapshots ADD COLUMN archive_integrity TEXT`],
     ['craft_requires_json', `ALTER TABLE applied_plugin_snapshots ADD COLUMN craft_requires_json TEXT NOT NULL DEFAULT '[]'`],
   ] as const) {
-    if (!snapshotCols.some((c) => c['name'] === name)) db.exec(ddl);
+    if (!snapshotCols.some((c) => c['name'] === name)) await db.exec(ddl);
   }
 
   // Back-reference columns. SQLite has no IF NOT EXISTS for ALTER; check
   // pragma_table_info first. Mirrors the upstream pattern in db.ts.
-  const projectCols = db.prepare(`PRAGMA table_info(projects)`).all() as DbRow[];
+  const projectCols = await db.prepare(`PRAGMA table_info(projects)`).all() as DbRow[];
   if (!projectCols.some((c) => c['name'] === 'applied_plugin_snapshot_id')) {
-    db.exec(`ALTER TABLE projects ADD COLUMN applied_plugin_snapshot_id TEXT`);
+    await db.exec(`ALTER TABLE projects ADD COLUMN applied_plugin_snapshot_id TEXT`);
   }
-  const conversationCols = db.prepare(`PRAGMA table_info(conversations)`).all() as DbRow[];
+  const conversationCols = await db.prepare(`PRAGMA table_info(conversations)`).all() as DbRow[];
   if (!conversationCols.some((c) => c['name'] === 'applied_plugin_snapshot_id')) {
-    db.exec(`ALTER TABLE conversations ADD COLUMN applied_plugin_snapshot_id TEXT`);
+    await db.exec(`ALTER TABLE conversations ADD COLUMN applied_plugin_snapshot_id TEXT`);
   }
 }

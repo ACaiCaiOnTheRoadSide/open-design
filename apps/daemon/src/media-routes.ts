@@ -101,7 +101,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     options: { projectId: string; grant: ToolTokenGrant | null },
   ) => {
     const projectId = options.projectId;
-    const project = getProject(db, projectId);
+    const project = await getProject(db, projectId);
     if (!project) return res.status(404).json({ error: 'project not found' });
 
     const surface = req.body?.surface;
@@ -122,10 +122,10 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       return sendApiError(res, 403, denial.code, denial.message);
     }
 
-    let task: ReturnType<typeof createMediaTask> | null = null;
+    let task: Awaited<ReturnType<typeof createMediaTask>> | null = null;
     try {
       const taskId = randomUUID();
-      task = createMediaTask(taskId, projectId, {
+      task = await createMediaTask(taskId, projectId, {
         surface: req.body?.surface,
         model: req.body?.model,
       });
@@ -141,7 +141,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         bodyTimeout: LONG_MEDIA_PROXY_TIMEOUT_MS,
       });
       task.status = 'running';
-      persistMediaTask(task);
+      await persistMediaTask(task);
       generateMedia({
         projectRoot: PROJECT_ROOT,
         projectsRoot: PROJECTS_DIR,
@@ -167,14 +167,17 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         compositionDir: req.body?.compositionDir,
         image: req.body?.image,
         images: Array.isArray(req.body?.images) ? req.body.images : undefined,
-        onProgress: (line: any) => appendTaskProgress(task, line),
+        onProgress: (line: any) => {
+          void appendTaskProgress(task!, line).catch((e: any) =>
+            console.error('[media] progress persist failed:', e));
+        },
         requestInit: proxyDispatcher.requestInit,
       })
         .then((meta: any) => {
           task.status = 'done';
           task.file = meta;
           task.endedAt = Date.now();
-          persistMediaTask(task);
+          void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
           notifyTaskWaiters(task);
           console.error(
             `[task ${taskId.slice(0, 8)}] done size=${meta?.size} mime=${meta?.mime} ` +
@@ -189,7 +192,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
             code: err?.code,
           };
           task.endedAt = Date.now();
-          persistMediaTask(task);
+          void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
           notifyTaskWaiters(task);
           console.error(
             `[task ${taskId.slice(0, 8)}] failed status=${task.error.status} ` +
@@ -212,7 +215,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           code: err?.code,
         };
         task.endedAt = Date.now();
-        persistMediaTask(task);
+        void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
         notifyTaskWaiters(task);
       }
       throw err;
@@ -556,7 +559,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const taskId = req.params.id;
-    const task = getLiveMediaTask(taskId);
+    const task = await getLiveMediaTask(taskId);
     if (!task) return res.status(404).json({ error: 'task not found' });
 
     const since = Number.isFinite(req.body?.since) ? Number(req.body.since) : 0;
@@ -592,16 +595,16 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     res.on('close', wake);
   });
 
-  app.get('/api/projects/:id/media/tasks', (req, res) => {
+  app.get('/api/projects/:id/media/tasks', async (req, res) => {
     if (!isLocalSameOrigin(req, getResolvedPort())) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const projectId = req.params.id;
     const includeDone =
       req.query.includeDone === '1' || req.query.includeDone === 'true';
-    const tasks = listMediaTasksByProject(db, projectId, {
+    const tasks = (await listMediaTasksByProject(db, projectId, {
       includeTerminal: includeDone,
-    }).map((t: any) => ({
+    })).map((t: any) => ({
         taskId: t.id,
         status: t.status,
         startedAt: t.startedAt,

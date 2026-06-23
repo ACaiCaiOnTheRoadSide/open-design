@@ -58,7 +58,7 @@ export function registerImportRoutes(app: Express, ctx: RegisterImportRoutesDeps
         );
         fs.promises.unlink(req.file.path).catch(() => {});
 
-        const project = insertProject(db, {
+        const project = await insertProject(db, {
           id,
           name: baseName,
           skillId: null,
@@ -74,14 +74,14 @@ export function registerImportRoutes(app: Express, ctx: RegisterImportRoutesDeps
           updatedAt: now,
         });
         const cid = randomId();
-        insertConversation(db, {
+        await insertConversation(db, {
           id: cid,
           projectId: id,
           title: 'Imported Claude Design project',
           createdAt: now,
           updatedAt: now,
         });
-        setTabs(db, id, [imported.entryFile], imported.entryFile);
+        await setTabs(db, id, [imported.entryFile], imported.entryFile);
         res.json({
           project,
           conversationId: cid,
@@ -106,7 +106,7 @@ export function registerImportRoutes(app: Express, ctx: RegisterImportRoutesDeps
   app.post('/api/projects/:id/working-dir', async (req, res) => {
     try {
       const projectId = req.params.id;
-      const existing = getProject(db, projectId);
+      const existing = await getProject(db, projectId);
       if (!existing) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
@@ -196,14 +196,14 @@ export function registerImportRoutes(app: Express, ctx: RegisterImportRoutesDeps
         entryFile,
         ...(trustedPickerImport ? { fromTrustedPicker: true as const } : {}),
       };
-      const updated = updateProject(db, projectId, { metadata: nextMeta });
+      const updated = await updateProject(db, projectId, { metadata: nextMeta });
       if (!updated) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
       // Folder imports should land on Design Files so users can choose from
       // the imported folder's artifacts. Persist an empty saved tab state so
       // ProjectView does not auto-open the detected primary file on hydration.
-      setTabs(db, projectId, [], null);
+      await setTabs(db, projectId, [], null);
       /** @type {import('@open-design/contracts').ReplaceProjectWorkingDirResponse} */
       const body = { project: updated, baseDir: normalizedPath, entryFile };
       res.json(body);
@@ -319,7 +319,7 @@ export function registerImportRoutes(app: Express, ctx: RegisterImportRoutesDeps
         );
       }
 
-      const project = insertProject(db, {
+      const project = await insertProject(db, {
         id,
         name: projectName,
         skillId: skillId ?? null,
@@ -337,7 +337,7 @@ export function registerImportRoutes(app: Express, ctx: RegisterImportRoutesDeps
       });
 
       const cid = randomId();
-      insertConversation(db, {
+      await insertConversation(db, {
         id: cid,
         projectId: id,
         title: `Imported from ${projectName}`,
@@ -347,7 +347,7 @@ export function registerImportRoutes(app: Express, ctx: RegisterImportRoutesDeps
       // Folder imports should land on Design Files so users can choose from
       // the imported folder's artifacts. Persist an empty saved tab state so
       // ProjectView does not auto-open the detected primary file on hydration.
-      setTabs(db, id, [], null);
+      await setTabs(db, id, [], null);
       /** @type {import('@open-design/contracts').ImportFolderResponse} */
       const body = { project, conversationId: cid, entryFile };
       res.json(body);
@@ -383,7 +383,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
   app.get('/api/projects/:id/archive', async (req, res) => {
     try {
       const root = typeof req.query?.root === 'string' ? req.query.root : '';
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const { buffer, baseName } = await buildProjectArchive(
         PROJECTS_DIR,
         req.params.id,
@@ -425,7 +425,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         sendApiError(res, 400, 'BAD_REQUEST', 'files must be a non-empty array');
         return;
       }
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const { buffer } = await buildBatchArchive(
         PROJECTS_DIR,
         req.params.id,
@@ -459,7 +459,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       if (!isSafeId(req.params.id)) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'invalid project id');
       }
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
@@ -556,7 +556,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         );
       }
 
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       const splatParam = (req.params as { splat?: string | string[] }).splat;
       const relPath = Array.isArray(splatParam) ? splatParam.join('/') : String(splatParam ?? '');
 
@@ -988,7 +988,7 @@ export function registerFinalizeRoutes(app: Express, ctx: RegisterFinalizeRoutes
         return sendApiError(res, 400, 'BAD_REQUEST', 'apiVersion must be a string when provided');
       }
 
-      const project = getProject(db, req.params.id);
+      const project = await getProject(db, req.params.id);
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }

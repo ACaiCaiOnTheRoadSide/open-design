@@ -22,7 +22,7 @@
 
 import path from 'node:path';
 import { promises as fsp } from 'node:fs';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import {
   deleteInstalledPlugin,
   resolvePluginFolder,
@@ -31,7 +31,7 @@ import {
 } from './registry.js';
 import type { InstalledPluginRecord, MarketplaceTrust } from '@open-design/contracts';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface RegisterBundledPluginsInput {
   db: SqliteDb;
@@ -111,7 +111,7 @@ export async function registerBundledPlugins(
     }
   }
 
-  const pruned = pruneRemovedBundledPlugins(input.db, seenFolderIds);
+  const pruned = await pruneRemovedBundledPlugins(input.db, seenFolderIds);
   return { registered: out, pruned, warnings };
 }
 
@@ -122,17 +122,17 @@ export async function registerBundledPlugins(
 // record whose backing files no longer exist. Scoped to
 // source_kind='bundled' so user installs are never touched, and only runs
 // after a successful walk (the ENOENT early-return above never prunes).
-function pruneRemovedBundledPlugins(
+async function pruneRemovedBundledPlugins(
   db: SqliteDb,
   present: ReadonlySet<string>,
-): string[] {
-  const rows = db
+): Promise<string[]> {
+  const rows = (await db
     .prepare(`SELECT id FROM installed_plugins WHERE source_kind = 'bundled'`)
-    .all() as Array<{ id: string }>;
+    .all()) as Array<{ id: string }>;
   const pruned: string[] = [];
   for (const row of rows) {
     if (present.has(row.id)) continue;
-    deleteInstalledPlugin(db, row.id);
+    await deleteInstalledPlugin(db, row.id);
     pruned.push(row.id);
   }
   return pruned;
@@ -168,7 +168,7 @@ async function registerOne(args: {
     return;
   }
   const record = withMarketplaceProvenance(probe.record, args.input.marketplaceProvenance);
-  upsertInstalledPlugin(args.input.db, record);
+  await upsertInstalledPlugin(args.input.db, record);
   args.seenFolderIds.add(record.id);
   args.out.push(record);
 }

@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import {
   CRITIQUE_RUN_STATUSES,
   type CritiquePersistedStatus,
@@ -171,8 +171,8 @@ const COLS = `
  * they don't exist. Safe to call from the existing migrate(db) flow on every
  * daemon boot.
  */
-export function migrateCritique(db: Database.Database): void {
-  db.exec(`
+export async function migrateCritique(db: AsyncDb): Promise<void> {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS critique_runs (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -198,10 +198,10 @@ export function migrateCritique(db: Database.Database): void {
   `);
 }
 
-export function insertCritiqueRun(
-  db: Database.Database,
+export async function insertCritiqueRun(
+  db: AsyncDb,
   input: CritiqueRunInsert,
-): CritiqueRunRow {
+): Promise<CritiqueRunRow> {
   if (!ALL_VALID_STATUSES.has(input.status)) {
     throw new RangeError(
       `Invalid critique run status: "${input.status}". Must be one of: ${[...ALL_VALID_STATUSES].join(', ')}`,
@@ -209,7 +209,7 @@ export function insertCritiqueRun(
   }
   const now = Date.now();
   const rounds = input.rounds ?? [];
-  db.prepare(
+  await db.prepare(
     `INSERT INTO critique_runs
        (id, project_id, conversation_id, artifact_path, status, score,
         rounds_json, transcript_path, protocol_version, created_at, updated_at)
@@ -227,20 +227,20 @@ export function insertCritiqueRun(
     input.createdAt ?? now,
     input.updatedAt ?? now,
   );
-  const row = getCritiqueRun(db, input.id);
+  const row = await getCritiqueRun(db, input.id);
   if (row === null) {
     throw new Error(`Failed to fetch critique run after insert: ${input.id}`);
   }
   return row;
 }
 
-export function getCritiqueRun(
-  db: Database.Database,
+export async function getCritiqueRun(
+  db: AsyncDb,
   id: string,
-): CritiqueRunRow | null {
-  const raw = db
+): Promise<CritiqueRunRow | null> {
+  const raw = (await db
     .prepare(`SELECT ${COLS} FROM critique_runs WHERE id = ?`)
-    .get(id) as RawCritiqueRunRow | undefined;
+    .get(id)) as RawCritiqueRunRow | undefined;
   return raw !== undefined ? normalizeRow(raw) : null;
 }
 
@@ -248,12 +248,12 @@ export function getCritiqueRun(
  * Updates the patch fields on an existing run. Returns the new row, or null
  * when the id does not exist. Always updates updated_at.
  */
-export function updateCritiqueRun(
-  db: Database.Database,
+export async function updateCritiqueRun(
+  db: AsyncDb,
   id: string,
   patch: CritiqueRunPatch,
-): CritiqueRunRow | null {
-  const existing = getCritiqueRun(db, id);
+): Promise<CritiqueRunRow | null> {
+  const existing = await getCritiqueRun(db, id);
   if (existing === null) return null;
 
   const now = Date.now();
@@ -270,7 +270,7 @@ export function updateCritiqueRun(
       ? patch.artifactPath ?? null
       : existing.artifactPath;
 
-  db.prepare(
+  await db.prepare(
     `UPDATE critique_runs
         SET status = ?,
             score = ?,
@@ -292,23 +292,23 @@ export function updateCritiqueRun(
   return getCritiqueRun(db, id);
 }
 
-export function listCritiqueRunsByProject(
-  db: Database.Database,
+export async function listCritiqueRunsByProject(
+  db: AsyncDb,
   projectId: string,
-): CritiqueRunRow[] {
-  const rows = db
+): Promise<CritiqueRunRow[]> {
+  const rows = (await db
     .prepare(
       `SELECT ${COLS}
          FROM critique_runs
         WHERE project_id = ?
         ORDER BY updated_at DESC`,
     )
-    .all(projectId) as RawCritiqueRunRow[];
+    .all(projectId)) as RawCritiqueRunRow[];
   return rows.map(normalizeRow);
 }
 
-export function deleteCritiqueRun(db: Database.Database, id: string): void {
-  db.prepare(`DELETE FROM critique_runs WHERE id = ?`).run(id);
+export async function deleteCritiqueRun(db: AsyncDb, id: string): Promise<void> {
+  await db.prepare(`DELETE FROM critique_runs WHERE id = ?`).run(id);
 }
 
 /**
@@ -324,19 +324,19 @@ export function deleteCritiqueRun(db: Database.Database, id: string): void {
  * Returns true when a row was mutated, false when the id was missing or
  * not in 'running' status.
  */
-export function markRunInterruptedRecovery(
-  db: Database.Database,
+export async function markRunInterruptedRecovery(
+  db: AsyncDb,
   id: string,
   recoveryReason: string,
   now: number = Date.now(),
-): boolean {
-  const existing = db
+): Promise<boolean> {
+  const existing = (await db
     .prepare(`SELECT ${COLS} FROM critique_runs WHERE id = ? AND status = 'running'`)
-    .get(id) as RawCritiqueRunRow | undefined;
+    .get(id)) as RawCritiqueRunRow | undefined;
   if (existing === undefined) return false;
   const { rounds } = parseRoundsPayload(existing.roundsJson);
   const newPayload = serializeRoundsPayload(rounds, recoveryReason);
-  const result = db
+  const result = await db
     .prepare(
       `UPDATE critique_runs
           SET status = 'interrupted',
@@ -353,22 +353,22 @@ export function markRunInterruptedRecovery(
  * older than staleAfterMs is marked 'interrupted' with rounds_json.recoveryReason
  * = 'daemon_restart'. Returns the count of rows mutated.
  */
-export function reconcileStaleRuns(
-  db: Database.Database,
+export async function reconcileStaleRuns(
+  db: AsyncDb,
   options: { staleAfterMs: number; now?: number },
-): number {
+): Promise<number> {
   const now = options.now ?? Date.now();
   const cutoff = now - options.staleAfterMs;
 
-  const reconcile = db.transaction(() => {
-    const staleRows = db
+  const reconcile = db.transaction(async () => {
+    const staleRows = (await db
       .prepare(
         `SELECT ${COLS}
            FROM critique_runs
           WHERE status = 'running'
             AND updated_at < ?`,
       )
-      .all(cutoff) as RawCritiqueRunRow[];
+      .all(cutoff)) as RawCritiqueRunRow[];
 
     if (staleRows.length === 0) return 0;
 
@@ -383,11 +383,11 @@ export function reconcileStaleRuns(
     for (const raw of staleRows) {
       const { rounds } = parseRoundsPayload(raw.roundsJson);
       const newPayload = serializeRoundsPayload(rounds, 'daemon_restart');
-      update.run(newPayload, now, raw.id);
+      await update.run(newPayload, now, raw.id);
     }
 
     return staleRows.length;
   });
 
-  return reconcile() as number;
+  return (await reconcile()) as number;
 }

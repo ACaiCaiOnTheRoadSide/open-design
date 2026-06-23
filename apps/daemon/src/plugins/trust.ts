@@ -11,6 +11,7 @@
 //     snapshot; we never widen the registry-stored cache here.
 
 import type { InstalledPluginRecord, PluginManifest, TrustTier } from '@open-design/contracts';
+import type { AsyncDb } from '../storage/pg-async.js';
 
 export const TRUSTED_DEFAULT_CAPABILITIES: ReadonlyArray<string> = [
   'prompt:inject',
@@ -144,14 +145,14 @@ export function validateCapabilityList(
 // `installed_plugins.capabilities_granted`, merges with the request,
 // and writes the deduped sorted union back. Idempotent — re-granting
 // the same set is a no-op. Returns the resulting list.
-export function grantCapabilities(args: {
-  db: import('better-sqlite3').Database;
+export async function grantCapabilities(args: {
+  db: AsyncDb;
   pluginId: string;
   capabilities: string[];
-}): string[] {
-  const row = args.db
+}): Promise<string[]> {
+  const row = (await args.db
     .prepare(`SELECT capabilities_granted FROM installed_plugins WHERE id = ?`)
-    .get(args.pluginId) as { capabilities_granted?: string } | undefined;
+    .get(args.pluginId)) as { capabilities_granted?: string } | undefined;
   if (!row) {
     throw new Error(`plugin not found: ${args.pluginId}`);
   }
@@ -166,7 +167,7 @@ export function grantCapabilities(args: {
   }
   const merged = Array.from(new Set([...existing, ...args.capabilities])).sort();
   const now = Date.now();
-  args.db
+  await args.db
     .prepare(
       `UPDATE installed_plugins
           SET capabilities_granted = ?, updated_at = ?
@@ -179,14 +180,14 @@ export function grantCapabilities(args: {
 // Revoke previously-granted capabilities. Subset of `grantCapabilities`
 // but subtracts. The implicit `prompt:inject` floor is preserved so a
 // trusted-by-default plugin never falls below the spec §5.3 minimum.
-export function revokeCapabilities(args: {
-  db: import('better-sqlite3').Database;
+export async function revokeCapabilities(args: {
+  db: AsyncDb;
   pluginId: string;
   capabilities: string[];
-}): string[] {
-  const row = args.db
+}): Promise<string[]> {
+  const row = (await args.db
     .prepare(`SELECT capabilities_granted FROM installed_plugins WHERE id = ?`)
-    .get(args.pluginId) as { capabilities_granted?: string } | undefined;
+    .get(args.pluginId)) as { capabilities_granted?: string } | undefined;
   if (!row) {
     throw new Error(`plugin not found: ${args.pluginId}`);
   }
@@ -205,7 +206,7 @@ export function revokeCapabilities(args: {
   if (!next.includes('prompt:inject')) next.push('prompt:inject');
   next.sort();
   const now = Date.now();
-  args.db
+  await args.db
     .prepare(
       `UPDATE installed_plugins
           SET capabilities_granted = ?, updated_at = ?

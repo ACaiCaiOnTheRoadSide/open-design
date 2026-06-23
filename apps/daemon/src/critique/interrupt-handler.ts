@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import {
   getCritiqueRun,
   markRunInterruptedRecovery,
@@ -29,10 +29,10 @@ const HTTP_ACCEPTED = 202;
  * @see specs/current/critique-theater.md § interrupt endpoint (Task 6.1)
  */
 export function handleCritiqueInterrupt(
-  db: Database.Database,
+  db: AsyncDb,
   registry: RunRegistry,
-): (req: Request, res: Response) => void {
-  return function critiqueInterruptHandler(req: Request, res: Response): void {
+): (req: Request, res: Response) => Promise<void> {
+  return async function critiqueInterruptHandler(req: Request, res: Response): Promise<void> {
     const projectId =
       typeof req.params['projectId'] === 'string'
         ? req.params['projectId'].trim()
@@ -49,7 +49,7 @@ export function handleCritiqueInterrupt(
       return;
     }
 
-    const row = getCritiqueRun(db, runId);
+    const row = await getCritiqueRun(db, runId);
 
     // Cross-project leak guard: a request to interrupt project p1's runId
     // must NOT find a row that actually belongs to project p2. Returning 404
@@ -111,7 +111,7 @@ export function handleCritiqueInterrupt(
       // writes 'daemon_restart'), so the row's terminal state matches
       // what the user asked for and the response carries the recovered
       // flag for clients that want to distinguish the two paths.
-      const recovered = markRunInterruptedRecovery(db, runId, 'no_live_handle');
+      const recovered = await markRunInterruptedRecovery(db, runId, 'no_live_handle');
       res.status(HTTP_ACCEPTED).json({
         runId,
         accepted: true,

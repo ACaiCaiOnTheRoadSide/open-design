@@ -160,17 +160,17 @@ export function registerRoutineRoutes(app: Express, ctx: RegisterRoutineRoutesDe
     return { scheduleKind: schedule.kind, scheduleValue: value, scheduleJson: json };
   }
 
-  function routineFromDb(id: string) {
-    const row = getRoutine(db, id);
+  async function routineFromDb(id: string) {
+    const row = await getRoutine(db, id);
     if (!row) return null;
-    const latest = getLatestRoutineRun(db, id);
+    const latest = await getLatestRoutineRun(db, id);
     const contract = routineDbRowToContract(row, latest);
     const nextDate = routineService?.nextRunAt(id) ?? null;
     contract.nextRunAt = nextDate ? nextDate.getTime() : null;
     return contract;
   }
 
-  function validateRoutineInput(body: any, partial: boolean) {
+  async function validateRoutineInput(body: any, partial: boolean) {
     if (!body || typeof body !== 'object') throw new Error('Request body must be an object');
     if (!partial || body.name !== undefined) {
       if (typeof body.name !== 'string' || !body.name.trim()) throw new Error('name is required');
@@ -182,36 +182,37 @@ export function registerRoutineRoutes(app: Express, ctx: RegisterRoutineRoutesDe
     if (!partial || body.target !== undefined) {
       validateRoutineTarget(body.target);
       if (body.target.mode === 'reuse') {
-        const project = getProject(db, body.target.projectId);
+        const project = await getProject(db, body.target.projectId);
         if (!project) throw new Error(`target project ${body.target.projectId} not found`);
       }
     }
     if (!partial || body.context !== undefined) normalizeRoutineContext(body.context);
   }
 
-  app.get('/api/routines', (_req, res) => {
+  app.get('/api/routines', async (_req, res) => {
     try {
-      const routines = listRoutines(db).map((row) => {
-        const latest = getLatestRoutineRun(db, row.id);
+      const rows = await listRoutines(db);
+      const routines = await Promise.all(rows.map(async (row) => {
+        const latest = await getLatestRoutineRun(db, row.id);
         const contract = routineDbRowToContract(row, latest);
         const nextDate = routineService?.nextRunAt(row.id) ?? null;
         contract.nextRunAt = nextDate ? nextDate.getTime() : null;
         return contract;
-      });
+      }));
       res.json({ routines });
     } catch (err: any) {
       res.status(500).json({ error: String(err?.message ?? err) });
     }
   });
 
-  app.post('/api/routines', (req, res) => {
+  app.post('/api/routines', async (req, res) => {
     try {
       const body = req.body || {};
-      validateRoutineInput(body, false);
+      await validateRoutineInput(body, false);
       const id = `routine-${randomUUID()}`;
       const now = Date.now();
       const scheduleCols = scheduleToDbCols(body.schedule);
-      insertRoutine(db, {
+      await insertRoutine(db, {
         id,
         name: body.name.trim(),
         prompt: body.prompt,
@@ -226,25 +227,25 @@ export function registerRoutineRoutes(app: Express, ctx: RegisterRoutineRoutesDe
         updatedAt: now,
       });
       routineService?.rescheduleOne(id);
-      const routine = routineFromDb(id);
+      const routine = await routineFromDb(id);
       res.status(201).json({ routine });
     } catch (err: any) {
       res.status(400).json({ error: String(err?.message ?? err) });
     }
   });
 
-  app.get('/api/routines/:id', (req, res) => {
-    const routine = routineFromDb(req.params.id);
+  app.get('/api/routines/:id', async (req, res) => {
+    const routine = await routineFromDb(req.params.id);
     if (!routine) return res.status(404).json({ error: 'routine not found' });
     res.json({ routine });
   });
 
-  app.patch('/api/routines/:id', (req, res) => {
+  app.patch('/api/routines/:id', async (req, res) => {
     try {
-      const existing = getRoutine(db, req.params.id);
+      const existing = await getRoutine(db, req.params.id);
       if (!existing) return res.status(404).json({ error: 'routine not found' });
       const body = req.body || {};
-      validateRoutineInput(body, true);
+      await validateRoutineInput(body, true);
       const patch: any = {};
       if (body.name !== undefined) patch.name = body.name.trim();
       if (body.prompt !== undefined) patch.prompt = body.prompt;
@@ -257,29 +258,29 @@ export function registerRoutineRoutes(app: Express, ctx: RegisterRoutineRoutesDe
       if (body.agentId !== undefined) patch.agentId = body.agentId ?? null;
       if (body.context !== undefined) patch.contextJson = JSON.stringify(normalizeRoutineContext(body.context));
       if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
-      updateRoutine(db, req.params.id, patch);
+      await updateRoutine(db, req.params.id, patch);
       routineService?.rescheduleOne(req.params.id);
-      res.json({ routine: routineFromDb(req.params.id) });
+      res.json({ routine: await routineFromDb(req.params.id) });
     } catch (err: any) {
       res.status(400).json({ error: String(err?.message ?? err) });
     }
   });
 
-  app.delete('/api/routines/:id', (req, res) => {
+  app.delete('/api/routines/:id', async (req, res) => {
     routineService?.unschedule(req.params.id);
-    const removed = dbDeleteRoutine(db, req.params.id);
+    const removed = await dbDeleteRoutine(db, req.params.id);
     if (!removed) return res.status(404).json({ error: 'routine not found' });
     res.status(204).end();
   });
 
   app.post('/api/routines/:id/run', async (req, res) => {
     try {
-      const existing = getRoutine(db, req.params.id);
+      const existing = await getRoutine(db, req.params.id);
       if (!existing) return res.status(404).json({ error: 'routine not found' });
       const start = await routineService.runNow(req.params.id);
       res.status(202).json({
-        routine: routineFromDb(req.params.id),
-        run: getLatestRoutineRun(db, req.params.id),
+        routine: await routineFromDb(req.params.id),
+        run: await getLatestRoutineRun(db, req.params.id),
         projectId: start.projectId,
         conversationId: start.conversationId,
         agentRunId: start.agentRunId,
@@ -289,18 +290,18 @@ export function registerRoutineRoutes(app: Express, ctx: RegisterRoutineRoutesDe
     }
   });
 
-  app.get('/api/routines/:id/runs', (req, res) => {
-    const existing = getRoutine(db, req.params.id);
+  app.get('/api/routines/:id/runs', async (req, res) => {
+    const existing = await getRoutine(db, req.params.id);
     if (!existing) return res.status(404).json({ error: 'routine not found' });
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-    res.json({ runs: listRoutineRuns(db, req.params.id, limit) });
+    res.json({ runs: await listRoutineRuns(db, req.params.id, limit) });
   });
 
   app.post('/api/routines/:id/runs/:runId/crystallize', async (req, res) => {
     try {
-      const routine = getRoutine(db, req.params.id);
+      const routine = await getRoutine(db, req.params.id);
       if (!routine) return res.status(404).json({ error: 'routine not found' });
-      const run = getRoutineRun(db, req.params.runId);
+      const run = await getRoutineRun(db, req.params.runId);
       if (!run || run.routineId !== req.params.id) {
         return res.status(404).json({ error: 'routine run not found' });
       }

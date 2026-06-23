@@ -21,7 +21,7 @@
 // (matching `finalize-design.ts`'s BYOK posture). The daemon does NOT
 // store provider credentials.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from './storage/pg-async.js';
 import type {
   HandoffRequest,
   HandoffResponse,
@@ -139,7 +139,7 @@ export function buildHandoffPrompt(input: HandoffPromptInput): HandoffPromptOutp
   return { systemPrompt: HANDOFF_SYSTEM_PROMPT, userPrompt };
 }
 
-type Db = Database.Database;
+type Db = AsyncDb;
 
 /**
  * Run the full handoff synthesis pipeline:
@@ -160,7 +160,7 @@ export async function synthesizeHandoffPrompt(
   projectId: string,
   options: HandoffOptions,
 ): Promise<HandoffResponse> {
-  const project = getProject(db, projectId);
+  const project = await getProject(db, projectId);
   if (!project) {
     throw new Error(`project not found: ${projectId}`);
   }
@@ -169,7 +169,7 @@ export async function synthesizeHandoffPrompt(
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  const transcriptResult = exportProjectTranscript(db, projectsRoot, projectId, {
+  const transcriptResult = await exportProjectTranscript(db, projectsRoot, projectId, {
     now,
     conversationId: options.conversationId,
   });

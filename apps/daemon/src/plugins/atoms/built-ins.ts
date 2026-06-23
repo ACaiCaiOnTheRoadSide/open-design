@@ -50,13 +50,13 @@ export function resetBuiltInAtomWorkersForTests(): void {
   installed = false;
 }
 
-function critiqueTheaterWorker(ctx: AtomWorkerContext): AtomOutcome {
+async function critiqueTheaterWorker(ctx: AtomWorkerContext): Promise<AtomOutcome> {
   type Row = { iteration: number; critique_summary: string | null };
-  const rows = ctx.db
+  const rows = (await ctx.db
     .prepare(
       'SELECT iteration, critique_summary FROM run_devloop_iterations WHERE run_id = ? AND stage_id = ? ORDER BY iteration DESC',
     )
-    .all(ctx.runId, ctx.stage.id) as Row[];
+    .all(ctx.runId, ctx.stage.id)) as Row[];
   for (const row of rows) {
     const score = parseCritiqueScore(row.critique_summary);
     if (score === null) continue;
