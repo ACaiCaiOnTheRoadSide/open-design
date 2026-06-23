@@ -33,15 +33,23 @@
 - `currentTenantId(): string`:当前调用栈的租户 id
 - `tenantMiddleware(req, res, next)`:express 中间件,读 `X-Tenant-Id`,套 ALS,跑后续路由
 - `migrateTenantId(db)`:additive ALTER TABLE,给 21 张业务表加 `tenant_id TEXT NOT NULL DEFAULT '__legacy__'` + 复合索引
+- `enterTenant(tenantId)` / `currentProviderConfig()`:tool-token 回调就地还原租户(见 §3.5)、读取 per-request BYOK provider 配置(见 §3.6)
+
+> ⚠️ **「加列」≠「加过滤」**:`migrateTenantId` 把 `tenant_id` 列加到 **21 张表**,但实际带 `WHERE tenant_id = ?` 隔离的只有约 **12 组**(Phase 1 的 6 组见 §2.3 + Phase 2 补的 templates / routines / deployments / tabs / 2 个 dashboard 聚合见 §7)。其余表(plugins / registry / critique / genui / routine_runs 等)**只有列、查询未改**,仍是全租户范围。完整的"已隔离 vs 仅加列"清单见 §7。
 
 ### 2.2 改的现有文件
 
 | 文件 | 改动 |
 |---|---|
-| `apps/daemon/src/db.ts` | import `migrateTenantId/currentTenantId`;`migrate()` 末尾调 `migrateTenantId(db)`;改造 6 块函数(见 §2.3) |
+| `apps/daemon/src/db.ts` | import `migrateTenantId/currentTenantId`;`migrate()` 末尾调 `migrateTenantId(db)`;改造多组 db 函数(见 §2.3);另加 PG 分支(`openDatabase` 的 `OD_DAEMON_DB=postgres`、`runPgMigrations`、`isPgMode()` + 方言修复,见 §4 P2) |
 | `apps/daemon/src/media-tasks.ts` | import `currentTenantId`;改造 7 个 CRUD 函数 |
-| `apps/daemon/src/server.ts` | import `tenantMiddleware`;在 `installRouteRegistrationGuard` 之后、所有路由之前 `app.use(tenantMiddleware)` |
-| `backend/internal/proxy/proxy.go`(在 saas repo) | Director 里注入 `X-Tenant-Id`,优先 `user.TeamID`,空则 `user.ID` |
+| `apps/daemon/src/server.ts` | import `tenantMiddleware/enterTenant/currentProviderConfig`;路由前 `app.use(tenantMiddleware)`;tool-token 校验后 `enterTenant(grant.tenantId)`(§3.5);spawn 前 `mergeOpenCodeProviderConfig(...)`(§3.6) |
+| `apps/daemon/src/tool-tokens.ts` | `ToolTokenGrant`/`MintToolTokenOptions` 加 `tenantId`,`mint()` 默认捕获 `currentTenantId()`(§3.5) |
+| `apps/daemon/src/mcp-config.ts` | 新增 `mergeOpenCodeProviderConfig()`(BYOK provider 块与 daemon 配置浅合并,§3.6) |
+| `apps/daemon/src/storage/daemon-db.ts` | `DaemonDbConfig` 加可选 `schema`,解析 `OD_PG_SCHEMA`(§4 P2) |
+| `apps/daemon/src/media.ts` | 新增 `volcengineImageSizeFor()` 修 Seedream 比例 bug(§2.4) |
+| `apps/daemon/src/media-models.ts` + `apps/web/src/media/models.ts` | 加 `seedream-4.0` 模型(§2.4) |
+| `backend/internal/proxy/proxy.go`(在 saas repo) | Director 里注入 `X-Tenant-Id`,优先 `user.TeamID`,空则 `user.ID`;另注入 `X-OD-Provider-Config`(§3.6) |
 | `.env`(在 saas repo) | 加 `OD_SOURCE_DIR=../open-design-mt` 把镜像构建切到 fork |
 
 ### 2.3 改造覆盖的 db 函数(共约 30 个)
@@ -76,6 +84,17 @@ export function insertX(db, x) {
   db.prepare(`INSERT INTO x (..., tenant_id) VALUES (..., ?)`).run(..., tenantId);
 }
 ```
+
+### 2.4 顺带的产品改动(非多租户,但在本分支 diff 里)
+
+这两处不属于多租户/PG/BYOK 主线,但确实随分支一起进来了,验收生图时会用到:
+
+- **新增图像模型 `seedream-4.0`**(`doubao-seedream-4-0-250828`,volcengine,`t2i + i2i`)——同时加到 daemon `media-models.ts` 和 web `apps/web/src/media/models.ts` 两侧的模型列表。
+- **修复 Seedream 生图比例 bug**(`media.ts`):原来 volcengine 图像走 `openaiSizeFor()`,该函数没有 seedream 分支,所有请求都回落 `1024x1024` → `--aspect 16:9` **静默生成方图**。新增 `volcengineImageSizeFor()` 把 OD 的 aspect 词表映射成 ~2048 长边的显式 `WxH`(16:9→2048x1152 等),比例才被尊重。
+
+### 2.5 测试
+
+- **`apps/daemon/tests/mcp-config.test.ts`**(新,~85 行)——覆盖 `mergeOpenCodeProviderConfig`(BYOK provider 块与 daemon 自建 mcp/permission 配置的合并,见 §3.6)。
 
 ---
 
@@ -128,34 +147,45 @@ SaaS 仓 `backend/internal/session/manager.go` 加了 `SharedDaemon` 开关(`SES
 
 **仍依赖的假设**:`mint()` 在请求作用域内调用(currentTenantId() 此刻=真 tenant)。若未来把 run 启动挪到启动期常驻 worker,需改为在 run 创建时显式捕获 tenant 存到 run、mint 时传 `tenantId: run.tenantId`。
 
+### 3.6 per-request BYOK(provider 配置按请求注入)★ 已实现(commit 891760573)
+
+> ⚠️ 这条把 §3.4 / §7 里"共享 daemon 模式下需改 per-request BYOK"那句**待办**给做掉了——共享单 daemon 已经能按调用方取各自的模型 + key。
+
+**问题**:共享多租户 daemon 下,provider/模型 key 不能再用容器级单一 env(`OD_OPENCODE_PROVIDER_CONFIG`),否则全租户共用一把 key。
+
+**解法**(配置随 ALS 传播,和 tenant id 同一条链路):
+- `multitenant.ts`:`TenantStore` 增加可选 `providerConfig`;`PROVIDER_CONFIG_HEADER = 'x-od-provider-config'`;`tenantMiddleware` 读该头存进 ALS;`currentProviderConfig()` 读取;`enterTenant()` 重置租户时**保留**已绑的 providerConfig 不丢。
+- `mcp-config.ts`:`mergeOpenCodeProviderConfig(base, injectedJson)`——把注入的 `provider`/`model` 块与 daemon 自建的 `mcp` + `permission.external_directory` **浅合并**,而非互相覆盖(否则 OpenCode 只读一个 `OPENCODE_CONFIG_CONTENT`,provider 会被 daemon 的 permission 块冲掉 → `AGENT_EXECUTION_FAILED`)。
+- `server.ts`:spawn 前 `mergeOpenCodeProviderConfig(opencodeConfigContent, currentProviderConfig() ?? process.env.OD_OPENCODE_PROVIDER_CONFIG)`——**优先 per-request 头**,回落容器级 env(单 key / 本地 dev)。
+
+**边界**:目前只接了 **OpenCode** 这条 provider 注入路径;其它 runtime(Claude / ACP 家族)的 per-request key 注入未做。Go 网关侧注入 `X-OD-Provider-Config` 头的实现不在本仓(在 saas repo `proxy.go`)。
+
 ---
 
 ## 4. 后续 TODO(按优先级)
 
-### P2 — PG 迁移 ✅ 核心路径功能性完成(2026-06,同步适配器路线)
+### P2 — PG 迁移 ✅ 已切到**全量异步 pg**(2026-06,async-pg 已并入 multitenant @ `b5564ec4e`)
 
-**最终选了同步适配器,不是 5 天异步重写**——daemon 本就是同步 DB(better-sqlite3 同步阻塞),做个接口兼容的同步 PG 适配器,`db.ts` + 172 handler **零逻辑改动**:
-- `src/storage/pg-sync-worker.ts` — worker 线程跑异步 `pg`,BIGINT→Number(对齐 SQLite)
-- `src/storage/pg-sync.ts` — 主线程 `Atomics.wait` 阻塞等结果;暴露 `prepare/get/all/run/exec/pragma/transaction/close`;`?`→`$N`;数组参解包;**驼峰标识符自动加引号**(PG 折叠小写坑);30s 超时
-- `db.ts` — `openDatabase()` 加 `OD_DAEMON_DB=postgres` 分支 + 同步迁移 runner;3 处方言修复(`terminalRunDurationSql` 的 json_extract→PG 算术、`rowid`→`id`、`INSERT OR IGNORE`→`ON CONFLICT DO NOTHING`)
-- SaaS `manager.go` — spawn daemon 时按 `DaemonDBMode=postgres` 注入 `OD_DAEMON_DB`/`OD_PG_*`;compose 加 `pg-init`(建 od_daemon 库)+ `DAEMON_DB` 开关(默认 sqlite)
+> ⚠️ **路线已变更**:最初 multitenant 用的是"同步适配器"(`pg-sync.ts` + worker + `Atomics.wait` 阻塞主线程)。后来在 `async-pg` 分支做了**真异步重写**,并已 merge 回 multitenant(合并提交 `b5564ec4e`,父 `891760573` + `afe851182`)。**同步适配器 `pg-sync.ts` / `pg-sync-worker.ts` 已删除**,现在跑的是 `pg-async.ts`。
 
-**已实测**:起 `OD_DAEMON_DB=postgres` 的 daemon 接 od_daemon 库,项目/对话/消息/评论全部持久化到 **Postgres**,驼峰字段(createdAt 等)正确返回,最复杂的 listConversations CTE 查询工作,跨租户隔离生效,零报错。`psql` 直查确认数据落 PG。
+当前 PG 实现:
+- `src/storage/pg-async.ts` — 真 `pg.Pool`(`OD_PG_POOL_MAX`,默认 10),**不阻塞事件循环**,单进程并发查询回来了。暴露 better-sqlite3 的方法形状(`prepare(sql).get/all/run`、`exec`、`transaction`、`close`)但**每个方法返回 Promise**。事务用 `AsyncLocalStorage` 携带 checked-out 的 `PoolClient`,事务内查询走同一连接、并发事务各拿各的连接。
+- 方言处理照搬自旧 worker:`?`→`$N`(`toPgPlaceholders`)、**驼峰标识符自动加引号**(`quoteCamelIdentifiers`,防 PG 折小写)、BIGINT→Number。
+- `db.ts` — **52 个 db 函数全 `async`**,`openDatabase()` 也是 async;`OD_DAEMON_DB=postgres` 走 `openPgAsync`;`runPgMigrations` 读 `migrations/*.sql` 用 `schema_migrations` 记账;3 处方言分支(`terminalRunDurationSql` 算术、`rowid`→`id`、`INSERT OR IGNORE`→`ON CONFLICT DO NOTHING`)。
+- 全量 await 连锁:47 个文件、`server.ts` 加了 ~560 处 `await`(routes / plugins / critique / registry / routines / media 等)。
+- `OD_PG_SCHEMA`(commit ca18c3048,本次合并时移植进 `pg-async.ts`):Pool 的 `connect` 事件里 `CREATE SCHEMA IF NOT EXISTS` + `SET search_path`,daemon 的表落独立 schema,**与 Go backend 共用同一平台库时不撞 public schema**。`daemon-db.ts` 解析该 env。
+- SaaS `manager.go` — spawn daemon 时按 `DaemonDBMode=postgres` 注入 `OD_DAEMON_DB`/`OD_PG_*`;compose 加 `pg-init` + `DAEMON_DB` 开关(默认 sqlite)。
 
-**代价(诚实)**:适配器**串行化查询**(一次一个、阻塞事件循环等 PG 返回)——单 daemon 进程不吃 PG 进程内并发,靠多副本横向扩。真 async 重写能让单进程并发查询(吞吐更高),但要 5 天;当前规模够用。
+**代价 / 风险(异步路线的)**:`db.ts` 全量 async 化,**任何一处漏 `await` 就是 fire-and-forget**——写不落或 unhandled rejection 崩 daemon。async-pg 已修了 4 个(`createMediaTask` / media `/wait` / 若干 seed)。`server.ts` 是 `// @ts-nocheck`,typecheck 盖不到,漏 await 只能靠运行时/人工抓。
 
-**未尽**:真实 LLM 生成链路(chat/run)未端到端跑(走同一 upsertMessage 适配器,应工作);`db-inspect.ts` 的 rowid introspection 在 PG 会报错(非核心);blocking 性能特性需压测确认上限。
+**未尽**:
+- ⚠️ **`tests/transcript-export.test.ts` 仍是未转换的红**:`transcript-export.ts` 源码已 async,但该 test(~750 行、20+ `it`、`setup()` 把 db 标成 `better-sqlite3 Database`)没跟着加 `await`/换异步 db 类型 → `tsc -p tsconfig.tests.json` 报错。**这是 async-pg 继承的,不是合并新引入的**;`src/` 那遍 tsc 已全绿。需独立 PR 把该 test 异步化。
+- 真实 LLM 生成链路(chat/run)在 PG 下未端到端跑;`db-inspect.ts` 的 rowid introspection 在 PG 会报错(非核心);Pool 并发上限需压测。
 
----
-
-#### (历史)PG 基础阶段,详见 `apps/daemon/migrations/README.md`:
-- ✅ `migrations/0001_init.sql` — 21 表 PG schema(tenant_id + 索引),从运行态 SQLite dump 翻译(INTEGER→BIGINT、REAL→DOUBLE PRECISION、FK 依赖排序)。**已在 Postgres 16 实测应用:21 表 + 67 索引干净 COMMIT;`od_daemon` 库就绪**。
-- ✅ `src/storage/pg.ts` — pg Pool 工厂 + 迁移 runner(读 `daemon-db.ts` 的 `OD_DAEMON_DB`/`OD_PG_*` 契约);新文件,未被运行代码引用,不破坏现有 SQLite daemon。
-
-**剩余 = sync→async 代码改造(~5.5 天,分 6 阶段,见 migrations/README.md)**:
-- `pnpm add pg @types/pg`(daemon 当前无此依赖)
-- 抽 `DataStore` 接口让 sqlite/pg 并存 → 全 call site 加 await(40+ db 函数 + 172 handler)→ 写 pg 实现 + 方言(`?`→`$N`、`json_extract`→`::jsonb->>`、`rowid`→`ctid`)
-- 完成后删 backend 的 `sync*.go`(daemon 直连 PG,不再要 SQLite 中间投影,也消灭 CGO 坑)
+#### (历史)PG 基础:
+- ✅ `migrations/0001_init.sql` — 21 表 PG schema(tenant_id + 索引),从运行态 SQLite dump 翻译(INTEGER→BIGINT、REAL→DOUBLE PRECISION、FK 依赖排序)。已在 Postgres 16 实测应用(21 表 + 67 索引干净 COMMIT)。
+- ⚠️ `src/storage/pg.ts` — 早期 pg Pool 工厂雏形,**仍是死代码:无人 import**。现在真正跑的是 `pg-async.ts`。`pg.ts` 可删。
+- `migrations/README.md` 描述的"~5.5 天 sync→async 重写"**就是 async-pg 实际做完的事**(不再是未来计划);该 README 仍以"未来路线"口吻写,已过时,可校正或删。
 
 ### P3 — 对象存储抽象
 
@@ -251,7 +281,7 @@ docker logs od-saas-backend 2>&1 | grep -i tenant | head -5
 - `routine_runs` / `routine_schedule_claims`:按 routine_id 键(受 routine 归属保护)。⚠️ **cron 调度在后台跑,ALS=LEGACY** → 定时执行写入会落 LEGACY_TENANT。补法:cron 调度器读 `routine.tenantId` 后 `runWithTenant()` 包裹执行。routines 不在 demo 路径。
 - `installed_plugins` / `plugin_marketplaces` / `applied_plugin_snapshots` / `registry_entries`:**有意保持 daemon 全局**——插件/市场在 open-design 里是 daemon 级安装、跨租户共享。若产品要 per-tenant 插件,再单独设计(不是纯机械改)。
 - `critique_runs` / `genui_surfaces` / `run_devloop_iterations` / `skill_plugin_candidates`:run/project 级,受 project gate 保护;agent 回调路径已由 tool-token tenant 还原(§3.5)覆盖。生产前建议补显式过滤。
-- BYOK 配置目前还是按用户隔离(SaaS Go backend 这边),daemon 收到的 OD_BYOK_* env 是网关 per-user 注入,不通过 X-Tenant-Id 走。**共享 daemon 模式下需改 per-request BYOK**(见 §3.4)。
+- BYOK:✅ **per-request 注入已实现**(见 §3.6)——共享 daemon 下网关用 `X-OD-Provider-Config` 头随请求带各租户的 provider+key,优先于容器级 env。**仅覆盖 OpenCode 一条 runtime 路径**;Claude / ACP 家族的 per-request key 注入仍未做(这些 runtime 当前还吃容器级 env)。
 
 **Trust 边界**:
 - daemon **只信任** Go 网关传来的 `X-Tenant-Id`
