@@ -276,8 +276,8 @@ export async function ensureMarketplaceManifest(
   };
 }
 
-export function listMarketplaces(db: SqliteDb): MarketplaceRow[] {
-  const rows = db
+export async function listMarketplaces(db: SqliteDb): Promise<MarketplaceRow[]> {
+  const rows = await db
     .prepare(`SELECT id, url, spec_version, version, trust, manifest_json, added_at, refreshed_at FROM plugin_marketplaces ORDER BY added_at ASC`)
     .all() as Array<{
       id: string;
@@ -304,8 +304,8 @@ export function listMarketplaces(db: SqliteDb): MarketplaceRow[] {
   });
 }
 
-export function getMarketplace(db: SqliteDb, id: string): MarketplaceRow | null {
-  const row = db
+export async function getMarketplace(db: SqliteDb, id: string): Promise<MarketplaceRow | null> {
+  const row = await db
     .prepare(`SELECT id, url, spec_version, version, trust, manifest_json, added_at, refreshed_at FROM plugin_marketplaces WHERE id = ?`)
     .get(id) as
       | undefined
@@ -333,17 +333,17 @@ export function getMarketplace(db: SqliteDb, id: string): MarketplaceRow | null 
   };
 }
 
-export function removeMarketplace(db: SqliteDb, id: string): boolean {
-  const info = db.prepare(`DELETE FROM plugin_marketplaces WHERE id = ?`).run(id);
+export async function removeMarketplace(db: SqliteDb, id: string): Promise<boolean> {
+  const info = await db.prepare(`DELETE FROM plugin_marketplaces WHERE id = ?`).run(id);
   return info.changes > 0;
 }
 
-export function setMarketplaceTrust(
+export async function setMarketplaceTrust(
   db: SqliteDb,
   id: string,
   trust: MarketplaceTrustTier,
-): MarketplaceRow | null {
-  const info = db.prepare(`UPDATE plugin_marketplaces SET trust = ? WHERE id = ?`).run(trust, id);
+): Promise<MarketplaceRow | null> {
+  const info = await db.prepare(`UPDATE plugin_marketplaces SET trust = ? WHERE id = ?`).run(trust, id);
   if (info.changes === 0) return null;
   return getMarketplace(db, id);
 }
@@ -358,7 +358,7 @@ export async function refreshMarketplace(
   id: string,
   fetcher?: AddMarketplaceInput['fetcher'],
 ): Promise<RefreshMarketplaceResult | AddMarketplaceFailure> {
-  const existing = getMarketplace(db, id);
+  const existing = await getMarketplace(db, id);
   if (!existing) {
     return { ok: false, status: 404, message: `marketplace ${id} not found` };
   }
@@ -486,11 +486,11 @@ export interface ResolvedPluginEntry {
   description?: string;
 }
 
-export function resolvePluginInMarketplaces(
+export async function resolvePluginInMarketplaces(
   db: SqliteDb,
   pluginName: string,
-): ResolvedPluginEntry | null {
-  const rows = listMarketplaces(db);
+): Promise<ResolvedPluginEntry | null> {
+  const rows = await listMarketplaces(db);
   const specifier = parsePluginSpecifier(pluginName);
   const target = specifier.name.trim().toLowerCase();
   if (!target) return null;

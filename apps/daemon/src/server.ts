@@ -7305,7 +7305,7 @@ export async function startServer({
       if (locked?.version && !source.includes('@')) {
         lookupName = `${source}@${locked.version}`;
       }
-      const resolved = resolvePluginInMarketplaces(db, lookupName);
+      const resolved = await resolvePluginInMarketplaces(db, lookupName);
       if (!resolved) {
         return res.status(404).json({
           error: {
@@ -7406,7 +7406,7 @@ export async function startServer({
     } | null = null;
     if (policy === 'latest' && plugin.sourceMarketplaceEntryName) {
       const { resolvePluginInMarketplaces } = await import('./plugins/marketplaces.js');
-      marketplaceResolution = resolvePluginInMarketplaces(db, plugin.sourceMarketplaceEntryName);
+      marketplaceResolution = await resolvePluginInMarketplaces(db, plugin.sourceMarketplaceEntryName);
       if (marketplaceResolution) {
         source = marketplaceResolution.source;
       }
@@ -8398,7 +8398,7 @@ export async function startServer({
   app.get('/api/marketplaces', async (_req, res) => {
     try {
       const { listMarketplaces } = await import('./plugins/marketplaces.js');
-      res.json({ marketplaces: listMarketplaces(db) });
+      res.json({ marketplaces: await listMarketplaces(db) });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
@@ -8433,7 +8433,7 @@ export async function startServer({
   app.get('/api/marketplaces/:id', async (req, res) => {
     try {
       const { getMarketplace } = await import('./plugins/marketplaces.js');
-      const row = getMarketplace(db, req.params.id);
+      const row = await getMarketplace(db, req.params.id);
       if (!row) return res.status(404).json({ error: 'marketplace not found' });
       res.json(row);
     } catch (err) {
@@ -8444,7 +8444,7 @@ export async function startServer({
   app.delete('/api/marketplaces/:id', async (req, res) => {
     try {
       const { removeMarketplace } = await import('./plugins/marketplaces.js');
-      const ok = removeMarketplace(db, req.params.id);
+      const ok = await removeMarketplace(db, req.params.id);
       if (!ok) return res.status(404).json({ error: 'marketplace not found' });
       res.json({ ok: true });
     } catch (err) {
@@ -8455,7 +8455,7 @@ export async function startServer({
   app.post('/api/marketplaces/:id/refresh', async (req, res) => {
     try {
       const { getMarketplace, refreshMarketplace } = await import('./plugins/marketplaces.js');
-      const row = getMarketplace(db, req.params.id);
+      const row = await getMarketplace(db, req.params.id);
       const seedId = row ? marketplaceRegistryIdFromUrl(row.url) ?? req.params.id : req.params.id;
       const result = await refreshMarketplace(
         db,
@@ -8497,7 +8497,7 @@ export async function startServer({
         return res.status(400).json({ error: 'trust must be one of: trusted, restricted, official' });
       }
       const { setMarketplaceTrust } = await import('./plugins/marketplaces.js');
-      const row = setMarketplaceTrust(db, req.params.id, trust);
+      const row = await setMarketplaceTrust(db, req.params.id, trust);
       if (!row) return res.status(404).json({ error: 'marketplace not found' });
       res.json(row);
     } catch (err) {
@@ -8508,7 +8508,7 @@ export async function startServer({
   app.get('/api/marketplaces/:id/plugins', async (req, res) => {
     try {
       const { getMarketplace } = await import('./plugins/marketplaces.js');
-      const row = getMarketplace(db, req.params.id);
+      const row = await getMarketplace(db, req.params.id);
       if (!row) return res.status(404).json({ error: 'marketplace not found' });
       res.json({ plugins: row.manifest.plugins ?? [] });
     } catch (err) {
@@ -8518,9 +8518,9 @@ export async function startServer({
 
   // Plan §3.A5: list all applied snapshots; useful for `od plugin
   // snapshots list` and the audit dashboard.
-  app.get('/api/applied-plugins', (_req, res) => {
+  app.get('/api/applied-plugins', async (_req, res) => {
     try {
-      const rows = db
+      const rows = await db
         .prepare(`SELECT id FROM applied_plugin_snapshots ORDER BY applied_at DESC LIMIT 500`)
         .all();
       res.json({
@@ -8532,7 +8532,7 @@ export async function startServer({
   });
   app.get('/api/projects/:projectId/applied-plugins', async (req, res) => {
     try {
-      const rows = db
+      const rows = await db
         .prepare(`SELECT id FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC`)
         .all(req.params.projectId);
       res.json({
