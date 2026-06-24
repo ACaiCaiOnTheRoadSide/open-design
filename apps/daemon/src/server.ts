@@ -2589,13 +2589,13 @@ function reconcileAssistantMessageOnRunEnd(db, runs, run) {
 }
 
 
-function isPluginAuthoringRun(db, run) {
+async function isPluginAuthoringRun(db, run) {
   if (run?.pluginId === 'od-plugin-authoring') return true;
   if (
     typeof run?.appliedPluginSnapshotId === 'string'
     && run.appliedPluginSnapshotId.length > 0
   ) {
-    const snapshot = getSnapshot(db, run.appliedPluginSnapshotId);
+    const snapshot = await getSnapshot(db, run.appliedPluginSnapshotId);
     return snapshot?.pluginId === 'od-plugin-authoring';
   }
   return false;
@@ -2626,9 +2626,9 @@ async function assistantMessageEmittedQuestionForm(db, assistantMessageId) {
   return emittedRenderableQuestionForm(row?.content);
 }
 
-function deferredSkillPluginCandidateForRun(db, run) {
+async function deferredSkillPluginCandidateForRun(db, run) {
   if (!run.projectId || !run.conversationId) return null;
-  return listSkillPluginCandidates(db, run.projectId)
+  return (await listSkillPluginCandidates(db, run.projectId))
     .find((candidate) =>
       candidate.status !== 'dismissed' &&
       !candidate.assistantMessageId &&
@@ -2652,9 +2652,9 @@ export function detectSkillPluginCandidateOnRunSuccess(db, runs, run, input, pro
         attachments: input?.attachments,
         projectRoot,
       });
-      const candidate = detected ? insertSkillPluginCandidate(db, detected) : null;
+      const candidate = detected ? await insertSkillPluginCandidate(db, detected) : null;
       if (pausedForQuestion) return;
-      const candidateToShow = candidate ?? deferredSkillPluginCandidateForRun(db, run);
+      const candidateToShow = candidate ?? await deferredSkillPluginCandidateForRun(db, run);
       if (!candidateToShow || candidateToShow.status === 'dismissed') return;
       await upsertSkillPluginCandidateAssistantMessage(db, run, candidateToShow);
     })
@@ -5140,7 +5140,7 @@ export async function startServer({
   // One immediate sweep so a daemon that just gained the ALTER doesn't
   // wait the full interval before reaping pre-existing expired rows.
   try {
-    const initialSweep = pruneExpiredSnapshots(db);
+    const initialSweep = await pruneExpiredSnapshots(db);
     if (initialSweep.removed > 0) {
       console.log(`[plugins] snapshot GC startup sweep removed ${initialSweep.removed} row(s)`);
     }
@@ -8337,7 +8337,7 @@ export async function startServer({
 
   app.get('/api/applied-plugins/:snapshotId', (req, res) => {
     try {
-      const snap = getSnapshot(db, req.params.snapshotId);
+      const snap = await getSnapshot(db, req.params.snapshotId);
       if (!snap) return res.status(404).json({ error: 'snapshot not found' });
       res.json(snap);
     } catch (err) {
@@ -8377,7 +8377,7 @@ export async function startServer({
   //   - Accept: text/plain : raw block body for shell pipes
   app.get('/api/applied-plugins/:snapshotId/canon', (req, res) => {
     try {
-      const snap = getSnapshot(db, req.params.snapshotId);
+      const snap = await getSnapshot(db, req.params.snapshotId);
       if (!snap) return res.status(404).json({ error: 'snapshot not found' });
       const block = pluginPromptBlock(snap);
       const accepts = String(req.headers['accept'] ?? '').toLowerCase();
@@ -8524,7 +8524,7 @@ export async function startServer({
         .prepare(`SELECT id FROM applied_plugin_snapshots ORDER BY applied_at DESC LIMIT 500`)
         .all();
       res.json({
-        snapshots: rows.map((r) => getSnapshot(db, (r).id)).filter((x) => x !== null),
+        snapshots: (await Promise.all(rows.map((r) => getSnapshot(db, (r).id)))).filter((x) => x !== null),
       });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -8536,7 +8536,7 @@ export async function startServer({
         .prepare(`SELECT id FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC`)
         .all(req.params.projectId);
       res.json({
-        snapshots: rows.map((r) => getSnapshot(db, (r).id)).filter((x) => x !== null),
+        snapshots: (await Promise.all(rows.map((r) => getSnapshot(db, (r).id)))).filter((x) => x !== null),
       });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -8594,7 +8594,7 @@ export async function startServer({
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const before = typeof body.before === 'number' ? body.before : undefined;
-      const result = pruneExpiredSnapshots(db, before ? { before } : {});
+      const result = await pruneExpiredSnapshots(db, before ? { before } : {});
       // Plan §3.JJ1 — emit a 'plugin.snapshot-pruned' event when
       // anything was actually removed, so ops can track GC churn
       // via the live tail.
@@ -8621,7 +8621,7 @@ export async function startServer({
   // intact.
   app.get('/api/runs/:runId/genui', (req, res) => {
     try {
-      const surfaces = listSurfacesForRun(db, req.params.runId);
+      const surfaces = await listSurfacesForRun(db, req.params.runId);
       res.json({ runId: req.params.runId, surfaces });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -8630,7 +8630,7 @@ export async function startServer({
 
   app.get('/api/projects/:projectId/genui', (req, res) => {
     try {
-      const surfaces = listSurfacesForProject(db, req.params.projectId);
+      const surfaces = await listSurfacesForProject(db, req.params.projectId);
       res.json({ projectId: req.params.projectId, surfaces });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -8749,7 +8749,7 @@ export async function startServer({
           ORDER BY requested_at DESC LIMIT 1`,
       ).get(req.params.runId, req.params.surfaceId) as { id?: string } | undefined;
       if (!row?.id) return res.status(404).json({ error: 'surface not found' });
-      const surface = getSurface(db, row.id);
+      const surface = await getSurface(db, row.id);
       if (!surface) return res.status(404).json({ error: 'surface not found' });
       // Plan §6 Phase 2A.5 — enrich the response with the surface
       // spec (incl. schema, prompt, persist tier) pulled out of the
@@ -8760,7 +8760,7 @@ export async function startServer({
       // cache); the canonical schema lives on the snapshot.
       let spec = null;
       if (surface.pluginSnapshotId) {
-        const snap = getSnapshot(db, surface.pluginSnapshotId);
+        const snap = await getSnapshot(db, surface.pluginSnapshotId);
         if (snap && Array.isArray(snap.genuiSurfaces)) {
           spec = snap.genuiSurfaces.find((s) => s?.id === surface.surfaceId) ?? null;
         }
@@ -8800,7 +8800,7 @@ export async function startServer({
           error: 'snapshotId is required (runs are in-memory; pass the snapshotId returned by /api/plugins/:id/apply)',
         });
       }
-      const snapshot = getSnapshot(db, snapshotId);
+      const snapshot = await getSnapshot(db, snapshotId);
       if (!snapshot) return res.status(404).json({ error: 'snapshot not found' });
       res.json({
         ok:        true,
@@ -9867,7 +9867,7 @@ export async function startServer({
         return;
       }
       const includeDismissed = req.query.includeDismissed === 'true';
-      res.json({ candidates: listSkillPluginCandidates(db, req.params.id, includeDismissed) });
+      res.json({ candidates: await listSkillPluginCandidates(db, req.params.id, includeDismissed) });
     } catch (err) {
       res.status(400).json({ error: String(err?.message || err) });
     }
@@ -9877,7 +9877,7 @@ export async function startServer({
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
-    const candidate = dismissSkillPluginCandidate(db, req.params.id, req.params.candidateId);
+    const candidate = await dismissSkillPluginCandidate(db, req.params.id, req.params.candidateId);
     if (!candidate) {
       sendApiError(res, 404, 'NOT_FOUND', 'plugin candidate not found');
       return;
@@ -11075,7 +11075,7 @@ export async function startServer({
       && appliedPluginSnapshotId.length > 0
     ) {
       try {
-        const snap = getSnapshot(db, appliedPluginSnapshotId);
+        const snap = await getSnapshot(db, appliedPluginSnapshotId);
         if (snap) pluginBlock = pluginPromptBlock(snap);
       } catch (err) {
         console.warn(
@@ -11099,7 +11099,7 @@ export async function startServer({
       && appliedPluginSnapshotId.length > 0
     ) {
       try {
-        const snap = getSnapshot(db, appliedPluginSnapshotId);
+        const snap = await getSnapshot(db, appliedPluginSnapshotId);
         const stages = snap?.pipeline?.stages ?? [];
         if (stages.length > 0) {
           const { loadAtomBodies } = await import('./plugins/atom-bodies.js');
@@ -13738,7 +13738,7 @@ export async function startServer({
       if (
         code === 0 &&
         !run.cancelRequested &&
-        isPluginAuthoringRun(db, run) &&
+        (await isPluginAuthoringRun(db, run)) &&
         !(await hasGeneratedPluginArtifacts(cwd)) &&
         !emittedRenderableQuestionForm(clarifyingQuestionText)
       ) {
@@ -15319,7 +15319,7 @@ export async function startServer({
             ? resolvedRoutineSnapshot.snapshotId
             : partiallyAppliedSnapshotId;
         if (snapshotIdToDiscard) {
-          restoreProjectSnapshotLink(
+          await restoreProjectSnapshotLink(
             db,
             projectId,
             snapshotIdToDiscard,
