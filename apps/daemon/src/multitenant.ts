@@ -29,19 +29,43 @@ export const TENANT_HEADER = 'x-tenant-id';
 // instead of a single container-level OD_OPENCODE_PROVIDER_CONFIG. It rides the
 // same ALS store as the tenant id so it reaches the spawn deep inside the run.
 export const PROVIDER_CONFIG_HEADER = 'x-od-provider-config';
+// Global default media model (image/video), injected per-request by the Go
+// gateway (backend proxy.go) from the admin-set value. The shared daemon
+// ignores container env, so this header is how a whitelist admin's default
+// reaches the spawn. Used to fill metadata.imageModel/videoModel when the
+// project did not pin one, so the agent defaults to e.g. volcengine seedream
+// instead of the contract's built-in gpt-image-2. Rides the same ALS store.
+export const MEDIA_DEFAULTS_HEADER = 'x-od-media-defaults';
+
+// Admin-set default media models. Both fields optional; an absent field means
+// "no global default for that surface" and the contract's built-in fallback wins.
+export interface MediaDefaults {
+  imageModel?: string;
+  videoModel?: string;
+}
 
 interface TenantStore {
   tenantId: string;
   // exactOptionalPropertyTypes: keep optional WITHOUT `| undefined`; callers
   // must omit the key (conditional spread) rather than assign undefined.
   providerConfig?: string;
+  mediaDefaults?: MediaDefaults;
 }
 
 const tenantStorage = new AsyncLocalStorage<TenantStore>();
 
-export function runWithTenant<T>(tenantId: string, fn: () => T, providerConfig?: string): T {
+export function runWithTenant<T>(
+  tenantId: string,
+  fn: () => T,
+  providerConfig?: string,
+  mediaDefaults?: MediaDefaults,
+): T {
   return tenantStorage.run(
-    { tenantId, ...(providerConfig !== undefined ? { providerConfig } : {}) },
+    {
+      tenantId,
+      ...(providerConfig !== undefined ? { providerConfig } : {}),
+      ...(mediaDefaults !== undefined ? { mediaDefaults } : {}),
+    },
     fn,
   );
 }
@@ -56,12 +80,16 @@ export function runWithTenant<T>(tenantId: string, fn: () => T, providerConfig?:
  */
 export function enterTenant(tenantId: string): void {
   if (!tenantId) return;
-  // Preserve any provider config already bound for this request so re-scoping
-  // the tenant (tool-token callback path) does not drop the caller's BYOK.
-  const providerConfig = tenantStorage.getStore()?.providerConfig;
+  // Preserve any provider config / media defaults already bound for this
+  // request so re-scoping the tenant (tool-token callback path) does not drop
+  // the caller's BYOK or the admin's default media model.
+  const store = tenantStorage.getStore();
+  const providerConfig = store?.providerConfig;
+  const mediaDefaults = store?.mediaDefaults;
   tenantStorage.enterWith({
     tenantId,
     ...(providerConfig !== undefined ? { providerConfig } : {}),
+    ...(mediaDefaults !== undefined ? { mediaDefaults } : {}),
   });
 }
 
@@ -83,6 +111,42 @@ export function currentProviderConfig(): string | undefined {
 }
 
 /**
+ * The admin-set default media models for the current async scope, or undefined
+ * when the caller supplied none. The prompt composer uses these to fill
+ * metadata.imageModel/videoModel that the project did not pin.
+ */
+export function currentMediaDefaults(): MediaDefaults | undefined {
+  return tenantStorage.getStore()?.mediaDefaults;
+}
+
+/**
+ * Parse the X-OD-Media-Defaults header (JSON `{imageModel?, videoModel?}`)
+ * into a MediaDefaults, keeping only non-empty string fields. Returns
+ * undefined for a missing/blank/malformed header or one with no usable field,
+ * so a bad header degrades to "no default" rather than throwing per-request.
+ */
+function parseMediaDefaultsHeader(raw: string | undefined): MediaDefaults | undefined {
+  if (!raw || raw.trim().length === 0) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const record = parsed as Record<string, unknown>;
+  const pick = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+  const imageModel = pick(record.imageModel);
+  const videoModel = pick(record.videoModel);
+  if (imageModel === undefined && videoModel === undefined) return undefined;
+  return {
+    ...(imageModel !== undefined ? { imageModel } : {}),
+    ...(videoModel !== undefined ? { videoModel } : {}),
+  };
+}
+
+/**
  * Express middleware that reads X-Tenant-Id and runs the rest of the
  * request chain inside an ALS scope. Mount this BEFORE all routes.
  *
@@ -97,7 +161,8 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
   const rawProvider = req.header(PROVIDER_CONFIG_HEADER);
   const providerConfig =
     rawProvider && rawProvider.trim().length > 0 ? rawProvider.trim() : undefined;
-  runWithTenant(tenantId, () => next(), providerConfig);
+  const mediaDefaults = parseMediaDefaultsHeader(req.header(MEDIA_DEFAULTS_HEADER));
+  runWithTenant(tenantId, () => next(), providerConfig, mediaDefaults);
 }
 
 /**

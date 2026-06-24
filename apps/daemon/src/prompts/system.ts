@@ -34,6 +34,7 @@ import { DISCOVERY_AND_PHILOSOPHY } from './discovery.js';
 import { DECK_FRAMEWORK_DIRECTIVE } from './deck-framework.js';
 import { renderMediaGenerationContract } from './media-contract.js';
 import { IMAGE_MODELS } from '../media-models.js';
+import { currentMediaDefaults } from '../multitenant.js';
 import { renderPanelPrompt } from './panel.js';
 import { defaultCritiqueConfig, type CritiqueConfig } from '@open-design/contracts/critique';
 import type { ChatSessionMode, MediaExecutionPolicy, MediaSurface } from '@open-design/contracts';
@@ -492,6 +493,35 @@ export interface ComposeInput {
   mediaExecution?: MediaExecutionPolicy | undefined;
 }
 
+// Fill imageModel/videoModel from the admin-set global default (carried in
+// ALS by the X-OD-Media-Defaults header) when the project did NOT pin one.
+// Returns the metadata untouched when there is no metadata object, no default,
+// or the field is already set — so it never synthesises metadata (which would
+// flip freeform-project detection) and is a no-op when ALS is empty (replay/
+// tests / non-HTTP code paths).
+function applyAdminMediaDefaults(
+  metadata: ProjectMetadata | undefined,
+): ProjectMetadata | undefined {
+  if (!metadata) return metadata;
+  const defaults = currentMediaDefaults();
+  if (!defaults) return metadata;
+  const isUnset = (value: unknown): boolean =>
+    typeof value !== 'string' || value.trim().length === 0;
+  const next: ProjectMetadata = { ...metadata };
+  let changed = false;
+  // The `!== undefined` checks narrow defaults.* to string for the assignment,
+  // so this stays sound under exactOptionalPropertyTypes (a boolean flag would not).
+  if (defaults.imageModel !== undefined && isUnset(metadata.imageModel)) {
+    next.imageModel = defaults.imageModel;
+    changed = true;
+  }
+  if (defaults.videoModel !== undefined && isUnset(metadata.videoModel)) {
+    next.videoModel = defaults.videoModel;
+    changed = true;
+  }
+  return changed ? next : metadata;
+}
+
 export function composeSystemPrompt({
   agentId,
   includeCodexImagegenOverride = true,
@@ -510,7 +540,7 @@ export function composeSystemPrompt({
   craftBody,
   craftSections,
   memoryBody,
-  metadata,
+  metadata: metadataArg,
   template,
   audioVoiceOptions,
   audioVoiceOptionsError,
@@ -527,6 +557,11 @@ export function composeSystemPrompt({
   projectInstructions,
   mediaExecution,
 }: ComposeInput): string {
+  // Fill the media model the project did not pin from the admin-set global
+  // default (X-OD-Media-Defaults header → ALS). Only touches imageModel/
+  // videoModel on an existing metadata object, so the agent defaults to e.g.
+  // volcengine seedream instead of the contract's built-in gpt-image-2.
+  const metadata = applyAdminMediaDefaults(metadataArg);
   // Injection resistance goes FIRST — before everything else — so no later
   // section (skill body, user instructions, project instructions, tool result)
   // can instruct the model to disregard it.
