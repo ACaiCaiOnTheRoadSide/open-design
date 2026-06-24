@@ -8335,7 +8335,7 @@ export async function startServer({
     }
   });
 
-  app.get('/api/applied-plugins/:snapshotId', (req, res) => {
+  app.get('/api/applied-plugins/:snapshotId', async (req, res) => {
     try {
       const snap = await getSnapshot(db, req.params.snapshotId);
       if (!snap) return res.status(404).json({ error: 'snapshot not found' });
@@ -8375,7 +8375,7 @@ export async function startServer({
   // Two response modes:
   //   - default            : { snapshotId, pluginId, block }
   //   - Accept: text/plain : raw block body for shell pipes
-  app.get('/api/applied-plugins/:snapshotId/canon', (req, res) => {
+  app.get('/api/applied-plugins/:snapshotId/canon', async (req, res) => {
     try {
       const snap = await getSnapshot(db, req.params.snapshotId);
       if (!snap) return res.status(404).json({ error: 'snapshot not found' });
@@ -8530,7 +8530,7 @@ export async function startServer({
       res.status(500).json({ error: String(err) });
     }
   });
-  app.get('/api/projects/:projectId/applied-plugins', (req, res) => {
+  app.get('/api/projects/:projectId/applied-plugins', async (req, res) => {
     try {
       const rows = db
         .prepare(`SELECT id FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC`)
@@ -8619,7 +8619,7 @@ export async function startServer({
   // route shapes. The surface writers go through `apps/daemon/src/genui/store.ts`
   // (sole writer of `genui_surfaces`) so the F8 cross-conversation cache stays
   // intact.
-  app.get('/api/runs/:runId/genui', (req, res) => {
+  app.get('/api/runs/:runId/genui', async (req, res) => {
     try {
       const surfaces = await listSurfacesForRun(db, req.params.runId);
       res.json({ runId: req.params.runId, surfaces });
@@ -8628,7 +8628,7 @@ export async function startServer({
     }
   });
 
-  app.get('/api/projects/:projectId/genui', (req, res) => {
+  app.get('/api/projects/:projectId/genui', async (req, res) => {
     try {
       const surfaces = await listSurfacesForProject(db, req.params.projectId);
       res.json({ projectId: req.params.projectId, surfaces });
@@ -8786,7 +8786,7 @@ export async function startServer({
   // auto-restart the agent — it returns the materialized inputs that
   // would re-produce the run if re-applied. Spec §8.2.1 invariants
   // guarantee byte-equality across replays.
-  app.post('/api/runs/:runId/replay', (req, res) => {
+  app.post('/api/runs/:runId/replay', async (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const explicitSnapshotId = typeof body.snapshotId === 'string' ? body.snapshotId : '';
