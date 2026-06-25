@@ -216,10 +216,12 @@ function injectSnapshotBridge(doc: string): string {
       copyComputedStyle(originals[i], clones[i]);
       syncElementState(originals[i], clones[i]);
     }
-    var scripts = cloneRoot.querySelectorAll('script');
-    for (var s = scripts.length - 1; s >= 0; s--) scripts[s].remove();
-    var links = cloneRoot.querySelectorAll('link[rel~="stylesheet"], link[rel~="preload"], link[rel~="preconnect"]');
-    for (var l = links.length - 1; l >= 0; l--) links[l].remove();
+    // NOTE: <script> and external <link> removal is intentionally NOT done here.
+    // pruneHiddenSnapshotNodes() below pairs original<->clone nodes BY INDEX, so the
+    // clone must keep the same node set as the live document until pruning finishes.
+    // Removing nodes here shifts those indices and prunes the wrong elements — it
+    // previously deleted visible content (even <body>), yielding empty frames.
+    // The removal now runs in stripNonRenderingNodes() AFTER pruning.
     var styles = cloneRoot.querySelectorAll('style');
     for (var st = 0; st < styles.length; st++) {
       styles[st].textContent = (styles[st].textContent || '')
@@ -245,13 +247,31 @@ function injectSnapshotBridge(doc: string): string {
       if (removals[r].parentNode) removals[r].parentNode.removeChild(removals[r]);
     }
   }
+  // Remove nodes that must not appear in the snapshot: <script> never paints, and
+  // external stylesheet/preload/preconnect <link>s cannot load inside an
+  // <img>-rendered SVG (they only risk tainting the canvas). MUST run AFTER the
+  // index-paired passes (copyComputedStyle / pruneHiddenSnapshotNodes) so it can
+  // never desync the original<->clone node alignment those passes rely on.
+  function stripNonRenderingNodes(cloneRoot){
+    var scripts = cloneRoot.querySelectorAll('script');
+    for (var s = scripts.length - 1; s >= 0; s--) scripts[s].remove();
+    var links = cloneRoot.querySelectorAll('link[rel~="stylesheet"], link[rel~="preload"], link[rel~="preconnect"]');
+    for (var l = links.length - 1; l >= 0; l--) links[l].remove();
+  }
   function waitForImages(){
     var imgs = Array.prototype.slice.call(document.images || []);
     return Promise.all(imgs.map(function(img){
       if (img.complete) return Promise.resolve();
       return new Promise(function(resolve){
-        img.addEventListener('load', resolve, { once: true });
-        img.addEventListener('error', resolve, { once: true });
+        var settled = false;
+        function finish(){ if (settled) return; settled = true; resolve(); }
+        img.addEventListener('load', finish, { once: true });
+        img.addEventListener('error', finish, { once: true });
+        // Lazy / blocked / never-settling images keep img.complete false and fire
+        // neither load nor error, which would stall the snapshot forever (the host
+        // then times out and reports a capture failure). Cap each image so
+        // waitForImages always resolves.
+        setTimeout(finish, 1500);
       });
     }));
   }
@@ -304,11 +324,25 @@ function injectSnapshotBridge(doc: string): string {
     clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     inlineSnapshotStyles(document.documentElement, clone);
     pruneHiddenSnapshotNodes(document.documentElement, clone);
+    stripNonRenderingNodes(clone);
     var scroll = scrollOffset();
     var cloneBody = clone.querySelector('body');
     var rootStyle = clone.getAttribute('style') || '';
     var bodyStyle = cloneBody ? cloneBody.getAttribute('style') || '' : '';
-    var bodyContent = cloneBody ? cloneBody.innerHTML : clone.innerHTML;
+    // <foreignObject> content must be well-formed XML (XHTML). HTML5 serialization
+    // (.innerHTML) leaves void elements unclosed and entities unescaped, which makes
+    // the SVG image silently fail to rasterize — the <img> fires neither load nor
+    // error, so the snapshot hangs until the host times out. XMLSerializer emits
+    // XML-compliant markup so the foreignObject actually paints.
+    var bodyContent = (function(){
+      var root = cloneBody || clone;
+      var serializer = new XMLSerializer();
+      var out = '';
+      for (var node = root.firstChild; node; node = node.nextSibling){
+        try { out += serializer.serializeToString(node); } catch (_) { /* skip unserializable node */ }
+      }
+      return out;
+    })();
     var wrapperStyle = rootStyle + bodyStyle +
       'margin:0;position:relative;left:' + (-scroll.x) + 'px;top:' + (-scroll.y) + 'px;' +
       'width:' + docW + 'px;height:' + docH + 'px;overflow:visible;';
