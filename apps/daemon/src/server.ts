@@ -4655,6 +4655,15 @@ export async function startServer({
     ]);
     app.use('/api', (req, res, next) => {
       if (openProbePaths.has(req.path)) return next();
+      // Agent tool callbacks (/api/tools/*) authenticate with the per-run
+      // tool token, validated by authorizeToolRequest in the route handler —
+      // NOT with OD_API_TOKEN. In split mode the agent runs in a separate
+      // one-time container and reaches the daemon over a non-loopback address,
+      // so this OD_API_TOKEN/loopback gate would 401 the tool token before the
+      // handler can validate it. Defer auth to the handler for tool paths; an
+      // absent/invalid tool token is still rejected there, so this narrows the
+      // gate, it does not open the endpoints.
+      if (/^\/(api\/)?tools\//.test(req.path)) return next();
       if (req.method === 'GET') {
         const previewAsset = parseProjectPreviewAssetPath(req.path);
         if (
@@ -6288,8 +6297,17 @@ export async function startServer({
 
   app.delete('/api/projects/:id', async (req, res) => {
     try {
+      // Remove the project's files BEFORE the DB row. removeProjectDir uses
+      // rm(..., { force: true }) so a missing dir is a no-op; a genuine failure
+      // (permission / busy) now aborts the whole delete instead of being
+      // silently swallowed. The old order (delete DB first, then a
+      // `.catch(() => {})`-swallowed dir removal) could orphan the artifacts on
+      // disk with no project row left to ever clean them up. Files-first means a
+      // failure keeps both the row and the files, so the project stays listed
+      // and the user can retry. DB deletion cascades to conversations/messages/
+      // media_tasks via PG ON DELETE CASCADE.
+      await removeProjectDir(PROJECTS_DIR, req.params.id);
       await dbDeleteProject(db, req.params.id);
-      await removeProjectDir(PROJECTS_DIR, req.params.id).catch(() => {});
       /** @type {import('@open-design/contracts').OkResponse} */
       const body = { ok: true };
       res.json(body);
