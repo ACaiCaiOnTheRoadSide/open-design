@@ -522,10 +522,12 @@ function applyAdminMediaDefaults(
   return changed ? next : metadata;
 }
 
-// 非媒体项目(网页/原型/deck)走轻量提示 MEDIA_DISPATCH_HINT,它不读 metadata、
-// 只给泛例模型(flux-pro-ultra)。这里把管理员全局默认(currentMediaDefaults)接进去,
-// 让 agent 默认就用注册全名(如 doubao-seedream-4-0-250828),而不是裸名 "seedream"
-// ——后者会被 dispatcher 拒为 unknown model。ALS 无默认时退回原样。
+// 非媒体项目(网页/原型/deck)走轻量提示 MEDIA_DISPATCH_HINT。该提示是给「用户自己配
+// BYOK key」的通用 OD 设计写的,有两处与本 SaaS(key 在 daemon + 自动兜底)冲突、会把
+// 弱 agent 带偏:① 示例与推荐都用 fal 的 flux-pro-ultra;② 遇 auth 错就让用户去
+// Settings 配 key。这里把它们改写成「用管理员配置的默认模型(currentMediaDefaults,
+// 非写死)」+「key 在服务端、自动兜底、绝不让用户配 key、绝不退回占位图」。
+// 推荐/示例的模型 ID 一律来自管理员在 UI 设的全局默认,不硬编码。ALS 无默认时退回原样。
 function renderMediaDispatchHint(): string {
   const defaults = currentMediaDefaults();
   const pick = (value: string | undefined): string =>
@@ -533,19 +535,41 @@ function renderMediaDispatchHint(): string {
   const img = pick(defaults?.imageModel);
   const vid = pick(defaults?.videoModel);
   if (!img && !vid) return MEDIA_DISPATCH_HINT;
+
+  let hint = MEDIA_DISPATCH_HINT;
+
+  // ① 推荐模型:把 fal/flux-pro-ultra 那段换成管理员配置的默认(动态)。
+  const defaultsLine =
+    (img ? '`--model ' + img + '` for images' : '') +
+    (img && vid ? ', ' : '') +
+    (vid ? '`--model ' + vid + '` for video' : '');
+  hint = hint.replace(
+    'For the best fal image model use `--model flux-pro-ultra`. For video use `--model veo-3-fal` or `--model wan-2.1-t2v`. Always pass `--surface` explicitly (`image`, `video`, or `audio`). Any `fal-ai/*` path (e.g. `fal-ai/flux/schnell`, `fal-ai/wan-i2v`) is also a valid `--model` value for image/video — pass it through as-is without substitution.',
+    'Platform default models (configured by the admin): use ' + defaultsLine + ' by default. Only switch if the user explicitly names another registered model. Always pass `--surface` explicitly (`image`, `video`, or `audio`). If you pass an unregistered or unavailable model, the daemon automatically substitutes the configured default — so a generate call always succeeds.',
+  );
+
+  // ② 示例命令的模型也换成配置的默认(上一步已替掉推荐里的 flux-pro-ultra,
+  //    这里命中的就是 bash 示例里那个)。
+  if (img) hint = hint.replace('--model flux-pro-ultra', '--model ' + img);
+
+  // ③ 去掉「让用户去 Settings 配 key」的话——本平台 key 在 daemon、会自动兜底。
+  hint = hint.replace(
+    'If the provider returns an auth error, tell the user to open Settings → AI Providers and confirm the key is configured there.',
+    'Provider keys are configured server-side in the daemon and the dispatcher substitutes the configured default model when one is unavailable, so generation always works — NEVER tell the user to configure a key, and NEVER fall back to placeholder / picsum / Unsplash / SVG / CSS-only images. Always produce a real generated image through this dispatcher.',
+  );
+
+  // 置顶再强调一次默认模型(同样来自管理员配置)。
   const lines: string[] = [
-    '**Preferred models — pass these EXACT `--model` ids by default.** The platform has them configured and keyed; only switch if the user explicitly names another registered id. Never pass a bare brand name like `seedream` / `seedance` — those are NOT registered ids and the dispatcher rejects them.',
+    '**Default media models (set by the platform admin) — pass these EXACT `--model` ids by default; never a bare brand name like `seedream`.**',
     '',
   ];
-  if (img) lines.push(`- image → \`--model ${img}\``);
-  if (vid) lines.push(`- video → \`--model ${vid}\``);
+  if (img) lines.push('- image → `--model ' + img + '`');
+  if (vid) lines.push('- video → `--model ' + vid + '`');
   const block = lines.join('\n');
-  // Place the directive right before the env-var list / bash example so the
-  // agent reads the registered ids ahead of the generic flux-pro-ultra example.
   const anchor = 'The daemon injects these env vars';
-  return MEDIA_DISPATCH_HINT.includes(anchor)
-    ? MEDIA_DISPATCH_HINT.replace(anchor, `${block}\n\n${anchor}`)
-    : `${MEDIA_DISPATCH_HINT}\n\n${block}\n`;
+  return hint.includes(anchor)
+    ? hint.replace(anchor, block + '\n\n' + anchor)
+    : hint + '\n\n' + block + '\n';
 }
 
 export function composeSystemPrompt({
