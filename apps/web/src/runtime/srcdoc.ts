@@ -195,7 +195,30 @@ function injectSnapshotBridge(doc: string): string {
   }
   function syncElementState(source, target){
     var tag = source.tagName ? source.tagName.toLowerCase() : '';
-    if (tag === 'img' && source.currentSrc) target.setAttribute('src', source.currentSrc);
+    if (tag === 'img') {
+      // Inline the already-loaded bitmap as a data URL. The <img>-rendered SVG
+      // used for snapshots cannot fetch external/blob URLs, and blob:/null URLs
+      // from the origin-null srcDoc iframe even log "Not allowed to load local
+      // resource". Rasterizing the live image (same origin as this iframe, so
+      // untainted) silences that error AND makes the image appear in the export.
+      var imgInlined = false;
+      try {
+        if (source.naturalWidth > 0 && source.naturalHeight > 0) {
+          var iCanvas = document.createElement('canvas');
+          iCanvas.width = source.naturalWidth;
+          iCanvas.height = source.naturalHeight;
+          iCanvas.getContext('2d').drawImage(source, 0, 0);
+          target.setAttribute('src', iCanvas.toDataURL('image/png'));
+          imgInlined = true;
+        }
+      } catch (_) { /* cross-origin taint — fall back below */ }
+      if (!imgInlined) {
+        var imgSrc = source.currentSrc || source.getAttribute('src') || '';
+        // Drop unfetchable blob/filesystem refs so they don't error; keep http(s).
+        if (/^(blob:|filesystem:)/i.test(imgSrc)) target.removeAttribute('src');
+        else if (imgSrc) target.setAttribute('src', imgSrc);
+      }
+    }
     if (tag === 'input' || tag === 'textarea') target.setAttribute('value', source.value || '');
     if (tag === 'canvas') {
       try {
@@ -313,7 +336,7 @@ function injectSnapshotBridge(doc: string): string {
       return samples > 8;
     } catch (_) { return false; }
   }
-  function renderSnapshot(id){
+  function renderSnapshot(id, fullPage){
     var w = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
     var h = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
     var dpr = window.devicePixelRatio || 1;
@@ -325,7 +348,11 @@ function injectSnapshotBridge(doc: string): string {
     inlineSnapshotStyles(document.documentElement, clone);
     pruneHiddenSnapshotNodes(document.documentElement, clone);
     stripNonRenderingNodes(clone);
-    var scroll = scrollOffset();
+    // fullPage (导出): capture the whole document (docW×docH), no scroll offset.
+    // viewport (标记/复制可视区): capture only what's on screen at current scroll.
+    var scroll = fullPage ? { x: 0, y: 0 } : scrollOffset();
+    var outW = fullPage ? docW : w;
+    var outH = fullPage ? docH : h;
     var cloneBody = clone.querySelector('body');
     var rootStyle = clone.getAttribute('style') || '';
     var bodyStyle = cloneBody ? cloneBody.getAttribute('style') || '' : '';
@@ -347,7 +374,7 @@ function injectSnapshotBridge(doc: string): string {
       'margin:0;position:relative;left:' + (-scroll.x) + 'px;top:' + (-scroll.y) + 'px;' +
       'width:' + docW + 'px;height:' + docH + 'px;overflow:visible;';
     var html = '<div xmlns="http://www.w3.org/1999/xhtml" style="' + escapeAttribute(wrapperStyle) + '">' + bodyContent + '</div>';
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + outW + '" height="' + outH + '" viewBox="0 0 ' + outW + ' ' + outH + '">' +
       '<foreignObject x="0" y="0" width="' + docW + '" height="' + docH + '">' +
       html +
       '</foreignObject></svg>';
@@ -355,16 +382,16 @@ function injectSnapshotBridge(doc: string): string {
     img.onload = function(){
       try {
         var canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.floor(w * dpr));
-        canvas.height = Math.max(1, Math.floor(h * dpr));
+        canvas.width = Math.max(1, Math.floor(outW * dpr));
+        canvas.height = Math.max(1, Math.floor(outH * dpr));
         var ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('no 2d context');
         ctx.scale(dpr, dpr);
         // Opaque base so a transparent (un-painted) raster never flattens to
         // pure black in clipboards / PNG viewers.
         ctx.fillStyle = bgColor;
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
+        ctx.fillRect(0, 0, outW, outH);
+        ctx.drawImage(img, 0, 0, outW, outH);
         if (canvasLooksBlank(ctx, canvas.width, canvas.height)) {
           window.parent.postMessage({ type: 'od:snapshot:result', id: id, error: 'empty-render' }, '*');
           return;
@@ -386,7 +413,7 @@ function injectSnapshotBridge(doc: string): string {
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
     if (!data || data.type !== 'od:snapshot' || !data.id) return;
-    waitForImages().then(function(){ renderSnapshot(String(data.id)); });
+    waitForImages().then(function(){ renderSnapshot(String(data.id), !!data.fullPage); });
   });
 })();</script>`;
   return injectBeforeBodyEnd(doc, script);
