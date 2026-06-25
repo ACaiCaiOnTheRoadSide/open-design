@@ -196,25 +196,34 @@ function injectSnapshotBridge(doc: string): string {
   function syncElementState(source, target){
     var tag = source.tagName ? source.tagName.toLowerCase() : '';
     if (tag === 'img') {
-      // Inline the already-loaded bitmap as a data URL. The <img>-rendered SVG
-      // used for snapshots cannot fetch external/blob URLs, and blob:/null URLs
-      // from the origin-null srcDoc iframe even log "Not allowed to load local
-      // resource". Rasterizing the live image (same origin as this iframe, so
-      // untainted) silences that error AND makes the image appear in the export.
+      // Inline the image as a data URL so the <img>-rendered snapshot SVG (which
+      // cannot fetch external/blob URLs) actually paints it. Three layers, best first:
       var imgInlined = false;
-      try {
-        if (source.naturalWidth > 0 && source.naturalHeight > 0) {
-          var iCanvas = document.createElement('canvas');
-          iCanvas.width = source.naturalWidth;
-          iCanvas.height = source.naturalHeight;
-          iCanvas.getContext('2d').drawImage(source, 0, 0);
-          target.setAttribute('src', iCanvas.toDataURL('image/png'));
-          imgInlined = true;
-        }
-      } catch (_) { /* cross-origin taint — fall back below */ }
+      // 1. Bytes prefetched via fetch()->blob()->dataURL (see prefetchSnapshotImages).
+      //    This is the ONLY path that survives a CROSS-ORIGIN image: drawImage()
+      //    taints the canvas so toDataURL() throws, and a raw cross-origin/blob URL
+      //    never rasterizes inside <foreignObject> — that is exactly why such images
+      //    came out black. A CORS-enabled (or same-origin / blob) src yields readable
+      //    bytes here.
+      var pre = source.__odSnapSrc;
+      if (pre && /^data:/i.test(pre)) { target.setAttribute('src', pre); imgInlined = true; }
+      // 2. Fast path: rasterize the already-decoded bitmap (same-origin, untainted).
+      if (!imgInlined) {
+        try {
+          if (source.naturalWidth > 0 && source.naturalHeight > 0) {
+            var iCanvas = document.createElement('canvas');
+            iCanvas.width = source.naturalWidth;
+            iCanvas.height = source.naturalHeight;
+            iCanvas.getContext('2d').drawImage(source, 0, 0);
+            target.setAttribute('src', iCanvas.toDataURL('image/png'));
+            imgInlined = true;
+          }
+        } catch (_) { /* cross-origin taint — fall back below */ }
+      }
+      // 3. Last resort: keep http(s) (may stay blank in foreignObject), drop
+      //    unfetchable blob/filesystem refs so they don't error.
       if (!imgInlined) {
         var imgSrc = source.currentSrc || source.getAttribute('src') || '';
-        // Drop unfetchable blob/filesystem refs so they don't error; keep http(s).
         if (/^(blob:|filesystem:)/i.test(imgSrc)) target.removeAttribute('src');
         else if (imgSrc) target.setAttribute('src', imgSrc);
       }
@@ -295,6 +304,40 @@ function injectSnapshotBridge(doc: string): string {
         // then times out and reports a capture failure). Cap each image so
         // waitForImages always resolves.
         setTimeout(finish, 1500);
+      });
+    }));
+  }
+  function prefetchSnapshotImages(){
+    // The snapshot SVG renders through an <img>, which cannot reach the network,
+    // so every external image must already be a data: URL by serialization time.
+    // drawImage()+toDataURL() cannot extract CROSS-ORIGIN bytes (tainted canvas),
+    // so fetch the bytes instead — works for same-origin, blob:, and CORS-enabled
+    // cross-origin sources. The result is stashed on the live <img> as __odSnapSrc
+    // and consumed by syncElementState. Best-effort with a per-image timeout so a
+    // slow or CORS-blocked resource can never stall the capture.
+    var imgs = Array.prototype.slice.call(document.images || []);
+    return Promise.all(imgs.map(function(img){
+      var src = '';
+      try { src = img.currentSrc || img.getAttribute('src') || ''; } catch (_) {}
+      if (!src || /^data:/i.test(src)) return Promise.resolve();
+      return new Promise(function(resolve){
+        var done = false;
+        function finish(){ if (done) return; done = true; resolve(); }
+        var timer = setTimeout(finish, 2500);
+        try {
+          fetch(src).then(function(r){ return r && r.ok ? r.blob() : null; })
+            .then(function(blob){
+              if (!blob) { clearTimeout(timer); finish(); return; }
+              var fr = new FileReader();
+              fr.onload = function(){
+                try { img.__odSnapSrc = String(fr.result || ''); } catch (_) {}
+                clearTimeout(timer); finish();
+              };
+              fr.onerror = function(){ clearTimeout(timer); finish(); };
+              fr.readAsDataURL(blob);
+            })
+            .catch(function(){ clearTimeout(timer); finish(); });
+        } catch (_) { clearTimeout(timer); finish(); }
       });
     }));
   }
@@ -413,7 +456,7 @@ function injectSnapshotBridge(doc: string): string {
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
     if (!data || data.type !== 'od:snapshot' || !data.id) return;
-    waitForImages().then(function(){ renderSnapshot(String(data.id), !!data.fullPage); });
+    waitForImages().then(prefetchSnapshotImages).then(function(){ renderSnapshot(String(data.id), !!data.fullPage); });
   });
 })();</script>`;
   return injectBeforeBodyEnd(doc, script);
