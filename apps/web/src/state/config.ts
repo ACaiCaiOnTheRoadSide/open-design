@@ -74,7 +74,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   agentId: null,
   skillId: null,
   designSystemId: null,
-  onboardingCompleted: false,
+  // White-label SaaS: skip the upstream first-run onboarding survey
+  // (role / "where did you hear about us" / email). Those are Open Design's
+  // own growth instrumentation and irrelevant to the rebranded multi-tenant
+  // product — the platform already knows the user via the gateway identity.
+  // Defaulting to true means a fresh tenant lands straight on the od-web home
+  // (App.tsx only routes to view:'onboarding' when this is false). A user who
+  // explicitly completed onboarding is still respected via the daemon-stored
+  // value, which overrides this default in loadConfig().
+  onboardingCompleted: true,
   theme: 'system',
   accentColor: DEFAULT_ACCENT_COLOR,
   mediaProviders: {},
@@ -86,16 +94,21 @@ export const DEFAULT_CONFIG: AppConfig = {
   orbit: DEFAULT_ORBIT,
   projectLocations: [],
   defaultProjectLocationId: 'default',
-  // Telemetry defaults to ON so fresh-install users emit onboarding /
-  // ui_click events from the first frame. The disclosure modal still
-  // appears after `onboardingCompleted` flips, and Settings → Privacy
-  // remains the one-click opt-out. Without these defaults the gate at
-  // `daemon/src/analytics.ts` (`if (telemetry?.metrics !== true) return`)
-  // dropped every event fired during onboarding because no consent
-  // existed yet — observed live on the nightly.10 QA run, which left
-  // zero `page_view pn=onboarding` rows on PostHog despite the user
-  // completing the flow.
-  telemetry: { metrics: true, content: true },
+  // White-label SaaS: telemetry OFF by default. Upstream ships metrics+content
+  // ON to PostHog (us.i.posthog.com) — inappropriate for the rebranded
+  // multi-tenant product (and especially for sending tenant conversation
+  // content off to a third party). metrics:false also marks the user as
+  // explicitly opted-out, which short-circuits the "force-on + mint id"
+  // re-enable block in loadConfig() so it sticks. Belt to the daemon's
+  // suspenders: createAnalyticsService() is already a network-level no-op
+  // unless POSTHOG_KEY is set, which the SaaS deploy never sets.
+  telemetry: { metrics: false, content: false },
+  // Pre-resolve the first-run privacy/data-sharing consent banner so new
+  // tenants never see it — it offers to "share usage data with the Open Design
+  // team", which is off-brand and moot when telemetry is off. A non-null value
+  // means "decision already recorded"; App.tsx only shows the banner when this
+  // is null. `1` is a sentinel epoch-ms (the exact value is never displayed).
+  privacyDecisionAt: 1,
 };
 
 /** Well-known providers with pre-filled base URLs. */
