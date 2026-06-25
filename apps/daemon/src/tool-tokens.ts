@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { currentTenantId } from './multitenant.js';
+import { currentTenantId, currentMediaDefaults, type MediaDefaults } from './multitenant.js';
 
 export const DEFAULT_TOOL_TOKEN_TTL_MS = 15 * 60 * 1000;
 
@@ -61,6 +61,14 @@ export interface ToolTokenGrant {
   pluginSnapshotId?: string;
   pluginTrust?: 'trusted' | 'restricted' | 'bundled';
   pluginCapabilitiesGranted?: readonly string[];
+  // Admin-set default media models (image/video), captured at mint time from
+  // the chat request's ALS (the X-OD-Media-Defaults header). The agent's
+  // `od media generate` callback (Flow B) presents only this token — it does
+  // NOT carry the header — so the media route reads grant.mediaDefaults to
+  // fall back to the configured default when the agent requests an
+  // unregistered/keyless model. Lets the daemon own the model regardless of
+  // what a weak agent passes.
+  mediaDefaults?: MediaDefaults;
 }
 
 export interface MintToolTokenOptions {
@@ -69,6 +77,8 @@ export interface MintToolTokenOptions {
   // Tenant owning this run. Defaults to currentTenantId() at mint time when
   // omitted (mint happens inside the request handler's ALS scope).
   tenantId?: string;
+  // Defaults to currentMediaDefaults() at mint time when omitted.
+  mediaDefaults?: MediaDefaults;
   allowedEndpoints?: readonly ToolEndpoint[];
   allowedOperations?: readonly ToolOperation[];
   ttlMs?: number;
@@ -149,6 +159,11 @@ export class ToolTokenRegistry {
     }, ttlMs);
     timer.unref?.();
 
+    // Capture once into a const so the truthy check narrows it to MediaDefaults
+    // for the conditional spread (exactOptionalPropertyTypes rejects assigning a
+    // possibly-undefined value to the optional `mediaDefaults` slot).
+    const mediaDefaults = options.mediaDefaults ?? currentMediaDefaults();
+
     const stored: StoredToolTokenGrant = {
       token,
       tokenHash: hash,
@@ -161,6 +176,7 @@ export class ToolTokenRegistry {
       expiresAt: new Date(expiresAtMs).toISOString(),
       expiresAtMs,
       timer,
+      ...(mediaDefaults ? { mediaDefaults } : {}),
       ...(options.pluginSnapshotId ? { pluginSnapshotId: options.pluginSnapshotId } : {}),
       ...(options.pluginTrust ? { pluginTrust: options.pluginTrust } : {}),
       ...(options.pluginCapabilitiesGranted

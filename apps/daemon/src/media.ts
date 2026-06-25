@@ -82,6 +82,32 @@ import {
 
 const execFile = promisify(execFileCb);
 type ProviderConfig = { apiKey?: string; baseUrl?: string; model?: string };
+
+// Whether `model` can actually be served right now: it must resolve to a known
+// model (catalogue, or a `fal-ai/*` / `aihubmix-*` path) AND its provider must
+// have a configured key. The media route uses this to fall back to the
+// admin-set default when the agent requests an unregistered/keyless model —
+// Flow B (`od media generate` via tool token) carries no X-OD-Media-Defaults
+// header, so the default rides the tool-token grant instead.
+export async function isMediaModelServable(projectRoot: string, model: string): Promise<boolean> {
+  const m = typeof model === 'string' ? model.trim() : '';
+  if (!m) return false;
+  const def = findMediaModel(m);
+  const provider = def
+    ? def.provider
+    : /^fal-ai\//.test(m)
+      ? 'fal'
+      : /^aihubmix-/.test(m)
+        ? 'aihubmix'
+        : '';
+  if (!provider) return false; // not a registered model id
+  try {
+    const creds = await resolveProviderConfig(projectRoot, provider);
+    return !!creds.apiKey;
+  } catch {
+    return false;
+  }
+}
 type ProgressFn = (message: string) => void;
 type ImageRef = { path: string; abs: string; mime: string; size: number; dataUrl: string };
 type MediaRequestInit = Pick<RequestInit, 'dispatcher'>;

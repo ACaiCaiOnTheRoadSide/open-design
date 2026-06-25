@@ -522,6 +522,32 @@ function applyAdminMediaDefaults(
   return changed ? next : metadata;
 }
 
+// 非媒体项目(网页/原型/deck)走轻量提示 MEDIA_DISPATCH_HINT,它不读 metadata、
+// 只给泛例模型(flux-pro-ultra)。这里把管理员全局默认(currentMediaDefaults)接进去,
+// 让 agent 默认就用注册全名(如 doubao-seedream-4-0-250828),而不是裸名 "seedream"
+// ——后者会被 dispatcher 拒为 unknown model。ALS 无默认时退回原样。
+function renderMediaDispatchHint(): string {
+  const defaults = currentMediaDefaults();
+  const pick = (value: string | undefined): string =>
+    typeof value === 'string' && value.trim().length > 0 ? value.trim() : '';
+  const img = pick(defaults?.imageModel);
+  const vid = pick(defaults?.videoModel);
+  if (!img && !vid) return MEDIA_DISPATCH_HINT;
+  const lines: string[] = [
+    '**Preferred models — pass these EXACT `--model` ids by default.** The platform has them configured and keyed; only switch if the user explicitly names another registered id. Never pass a bare brand name like `seedream` / `seedance` — those are NOT registered ids and the dispatcher rejects them.',
+    '',
+  ];
+  if (img) lines.push(`- image → \`--model ${img}\``);
+  if (vid) lines.push(`- video → \`--model ${vid}\``);
+  const block = lines.join('\n');
+  // Place the directive right before the env-var list / bash example so the
+  // agent reads the registered ids ahead of the generic flux-pro-ultra example.
+  const anchor = 'The daemon injects these env vars';
+  return MEDIA_DISPATCH_HINT.includes(anchor)
+    ? MEDIA_DISPATCH_HINT.replace(anchor, `${block}\n\n${anchor}`)
+    : `${MEDIA_DISPATCH_HINT}\n\n${block}\n`;
+}
+
 export function composeSystemPrompt({
   agentId,
   includeCodexImagegenOverride = true,
@@ -794,7 +820,7 @@ export function composeSystemPrompt({
     // Non-media projects (prototype, deck, etc.): inject a lightweight hint
     // so the agent uses `od media generate` if the user asks for an image/video
     // mid-session, rather than hunting for provider API keys in the environment.
-    parts.push(MEDIA_DISPATCH_HINT);
+    parts.push(renderMediaDispatchHint());
   }
 
   if (includeCodexImagegenOverride && shouldAllowCodexImagegenOverride(metadata, mediaExecution)) {

@@ -11,6 +11,7 @@ import {
   type AIHubMixCatalogType,
 } from './aihubmix.js';
 import { isSandboxModeEnabled } from './sandbox-mode.js';
+import { isMediaModelServable } from './media.js';
 import type { ToolTokenGrant } from './tool-tokens.js';
 
 const LONG_MEDIA_PROXY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -108,7 +109,27 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     if (surface !== 'image' && surface !== 'video' && surface !== 'audio') {
       return sendApiError(res, 400, 'BAD_REQUEST', 'surface must be image, video, or audio');
     }
-    const model = typeof req.body?.model === 'string' ? req.body.model : '';
+    const requestedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+    // Daemon owns the model. Flow B (this `od media generate` callback) carries
+    // only the tool token — NOT the X-OD-Media-Defaults header — so when the
+    // agent passes an unregistered/keyless model (or none), fall back to the
+    // admin default stashed on the grant at mint time. Makes generation work
+    // regardless of what a weak agent picks (fal, bare "seedream", etc.).
+    let model = requestedModel;
+    const grantDefaultModel = surface === 'image'
+      ? options.grant?.mediaDefaults?.imageModel
+      : surface === 'video'
+        ? options.grant?.mediaDefaults?.videoModel
+        : undefined;
+    if (grantDefaultModel && !(await isMediaModelServable(PROJECT_ROOT, requestedModel))) {
+      if (await isMediaModelServable(PROJECT_ROOT, grantDefaultModel)) {
+        console.error(
+          `[media] requested model "${requestedModel || '(none)'}" not servable; ` +
+            `using admin default "${grantDefaultModel}"`,
+        );
+        model = grantDefaultModel;
+      }
+    }
     if (!model) {
       return sendApiError(res, 400, 'BAD_REQUEST', 'model is required');
     }
@@ -127,10 +148,10 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       const taskId = randomUUID();
       task = await createMediaTask(taskId, projectId, {
         surface: req.body?.surface,
-        model: req.body?.model,
+        model,
       });
       console.error(
-        `[task ${taskId.slice(0, 8)}] queued model=${req.body?.model} ` +
+        `[task ${taskId.slice(0, 8)}] queued model=${model} ` +
           `surface=${req.body?.surface} ` +
           `image=${req.body?.image ? 'yes' : 'no'} ` +
           `compositionDir=${req.body?.compositionDir ? 'yes' : 'no'}`,
@@ -147,7 +168,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         projectsRoot: PROJECTS_DIR,
         projectId,
         surface: req.body?.surface,
-        model: req.body?.model,
+        model,
         prompt: req.body?.prompt,
         output: req.body?.output,
         aspect: req.body?.aspect,
