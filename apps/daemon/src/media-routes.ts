@@ -533,6 +533,60 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     }
   });
 
+  // Tool-token counterpart of POST /api/media/tasks/:id/wait. The split-mode
+  // agent generates over /api/tools/media/generate (tool token, non-loopback),
+  // but the legacy wait route is loopback-only AND sits behind the bound
+  // OD_API_TOKEN guard — so polling 401'd, the agent misread it as "image
+  // generation failed, OD_API_TOKEN missing", and fell back to SVG/placeholder.
+  // This route closes that gap: same wait semantics, authenticated by the tool
+  // token (which also restores the run's tenant), taskId in the body so the
+  // path stays static for the endpoint allowlist, and project-scoped so one run
+  // cannot wait on another's task.
+  app.post('/api/tools/media/wait', async (req, res) => {
+    const grant = authorizeToolRequest(req, res, 'media:wait');
+    if (!grant) return;
+    const taskId = typeof req.body?.taskId === 'string' ? req.body.taskId.trim() : '';
+    if (!taskId) {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'taskId is required');
+    }
+    const task = await getLiveMediaTask(taskId);
+    if (!task || task.projectId !== grant.projectId) {
+      return res.status(404).json({ error: 'task not found' });
+    }
+
+    const since = Number.isFinite(req.body?.since) ? Number(req.body.since) : 0;
+    const requestedTimeout = Number.isFinite(req.body?.timeoutMs)
+      ? Number(req.body.timeoutMs)
+      : 25_000;
+    const timeoutMs = Math.min(Math.max(requestedTimeout, 0), 25_000);
+
+    const respond = () => {
+      if (res.writableEnded) return;
+      res.json(mediaTaskSnapshot(task, since));
+    };
+
+    if (
+      task.status === 'done' ||
+      task.status === 'failed' ||
+      task.status === 'interrupted' ||
+      task.progress.length > since
+    ) {
+      return respond();
+    }
+
+    let resolved = false;
+    const wake = () => {
+      if (resolved) return;
+      resolved = true;
+      task.waiters.delete(wake);
+      clearTimeout(timer);
+      respond();
+    };
+    task.waiters.add(wake);
+    const timer = setTimeout(wake, timeoutMs);
+    res.on('close', wake);
+  });
+
   app.post('/api/research/search', async (req, res) => {
     if (!isLocalSameOrigin(req, getResolvedPort())) {
       return res.status(403).json({

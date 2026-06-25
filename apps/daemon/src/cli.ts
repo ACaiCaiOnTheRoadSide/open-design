@@ -639,7 +639,15 @@ async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}
       ? options.stillRunningExitCode
       : 2;
   const startedAt = Date.now();
-  const url = `${daemonUrl.replace(/\/$/, '')}/api/media/tasks/${encodeURIComponent(taskId)}/wait`;
+  // Mirror runMedia: when a tool token is present (split-mode agent, non-loopback),
+  // poll the tool-token-authenticated wait route. The legacy /api/media/tasks/:id/wait
+  // is loopback-only and behind the OD_API_TOKEN guard, so without this the agent's
+  // generate succeeds but every poll 401s. taskId rides in the body there (the path
+  // must stay static for the tool-endpoint allowlist).
+  const token = process.env.OD_TOOL_TOKEN;
+  const url = token
+    ? `${daemonUrl.replace(/\/$/, '')}/api/tools/media/wait`
+    : `${daemonUrl.replace(/\/$/, '')}/api/media/tasks/${encodeURIComponent(taskId)}/wait`;
 
   let since = Number.isFinite(sinceStart) ? sinceStart : 0;
   let lastSnapshot = null;
@@ -651,8 +659,13 @@ async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}
     try {
       resp = await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ since, timeoutMs: callTimeout }),
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(
+          token ? { taskId, since, timeoutMs: callTimeout } : { since, timeoutMs: callTimeout },
+        ),
       });
     } catch (err) {
       surfaceFetchError(err, daemonUrl);
