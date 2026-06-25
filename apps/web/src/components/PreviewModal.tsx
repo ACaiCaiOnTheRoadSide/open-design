@@ -896,9 +896,11 @@ export function PreviewModal({
                               setTemplateShareOpen(false);
                               const iframe = previewIframeRef.current;
                               if (!iframe) return;
+                              // Export = whole design: prefer the full-page bridge
+                              // snapshot; the host compositor only sees the viewport.
                               const snap =
-                                (await captureHostIframeSnapshot(iframe)) ??
-                                (await requestPreviewSnapshot(iframe));
+                                (await requestPreviewSnapshot(iframe, undefined, { fullPage: true })) ??
+                                (await captureHostIframeSnapshot(iframe));
                               try {
                                 if (snap) {
                                   exportAsImage(snap.dataUrl, exportTitle);

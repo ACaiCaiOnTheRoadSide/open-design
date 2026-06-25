@@ -911,10 +911,10 @@ function temporarilyExposeIframeForSnapshot(iframe: HTMLIFrameElement): () => vo
   };
 }
 
-async function requestPreviewSnapshotWithRetry(iframe: HTMLIFrameElement): Promise<Awaited<ReturnType<typeof requestPreviewSnapshot>>> {
+async function requestPreviewSnapshotWithRetry(iframe: HTMLIFrameElement, opts: { fullPage?: boolean } = {}): Promise<Awaited<ReturnType<typeof requestPreviewSnapshot>>> {
   const timeouts = [1500, 3000, 6000];
   for (const timeout of timeouts) {
-    const snapshot = await requestPreviewSnapshot(iframe, timeout);
+    const snapshot = await requestPreviewSnapshot(iframe, timeout, opts);
     if (snapshot) return snapshot;
     await waitForAnimationFrame();
   }
@@ -7272,7 +7272,7 @@ function HtmlViewer({
     setDownloadMenuOpen(false);
     setDeployMenuOpen((v) => !v);
   };
-  const captureExportImageSnapshot = useCallback(async () => {
+  const captureExportImageSnapshot = useCallback(async (opts: { fullPage?: boolean } = {}) => {
     // The host compositor grabs on-screen pixels, so any transient hover chrome
     // over the preview leaks into the capture. The screenshot control's own
     // tooltip is already dismissed by TooltipLayer's pointerdown/click listener,
@@ -7286,23 +7286,27 @@ function HtmlViewer({
     // images) and is never tainted, so it cannot produce the black/blank frames
     // the in-iframe SVG-foreignObject bridge does. Works for both srcDoc and
     // URL-load previews. Falls through to the bridge on pure web (no host).
-    const visibleIframe = iframeRef.current ?? srcDocPreviewIframeRef.current;
-    const hostSnapshot = await captureHostIframeSnapshot(visibleIframe);
-    if (hostSnapshot) return hostSnapshot;
+    // The desktop compositor only sees on-screen pixels, so it cannot produce a
+    // full-page export — skip it when fullPage is requested and use the bridge.
+    if (!opts.fullPage) {
+      const visibleIframe = iframeRef.current ?? srcDocPreviewIframeRef.current;
+      const hostSnapshot = await captureHostIframeSnapshot(visibleIframe);
+      if (hostSnapshot) return hostSnapshot;
+    }
 
     if (!useUrlLoadPreview) {
       const activeIframe = srcDocPreviewIframeRef.current ?? iframeRef.current;
       if (!activeIframe) return null;
       await waitForIframeLoadOrTimeout(activeIframe, 250);
       await waitForAnimationFrame();
-      return requestPreviewSnapshotWithRetry(activeIframe);
+      return requestPreviewSnapshotWithRetry(activeIframe, opts);
     }
 
     const urlIframe = iframeRef.current ?? urlPreviewIframeRef.current;
     if (urlIframe) {
       await waitForIframeLoadOrTimeout(urlIframe, 250);
       await waitForAnimationFrame();
-      const urlSnapshot = await requestPreviewSnapshotWithRetry(urlIframe);
+      const urlSnapshot = await requestPreviewSnapshotWithRetry(urlIframe, opts);
       if (urlSnapshot) return urlSnapshot;
     }
 
@@ -7310,7 +7314,7 @@ function HtmlViewer({
     if (!srcDocIframe) {
       const activeIframe = iframeRef.current;
       if (!activeIframe) return null;
-      return requestPreviewSnapshotWithRetry(activeIframe);
+      return requestPreviewSnapshotWithRetry(activeIframe, opts);
     }
 
     if (useLazySrcDocTransport && !srcDocShellReady) {
@@ -7322,7 +7326,7 @@ function HtmlViewer({
     const restoreVisibility = temporarilyExposeIframeForSnapshot(srcDocIframe);
     try {
       await waitForAnimationFrame();
-      return requestPreviewSnapshotWithRetry(srcDocIframe);
+      return requestPreviewSnapshotWithRetry(srcDocIframe, opts);
     } finally {
       restoreVisibility();
     }
@@ -7338,7 +7342,7 @@ function HtmlViewer({
     screenshotInFlightRef.current = true;
     setExportToast({ message: t('fileViewer.screenshotCopying'), tone: 'loading' });
     try {
-      const snap = await captureExportImageSnapshot();
+      const snap = await captureExportImageSnapshot({ fullPage: true });
       if (!snap) {
         setExportToast({ message: t('fileViewer.screenshotPreviewLoading'), tone: 'error' });
         return;
@@ -7373,7 +7377,7 @@ function HtmlViewer({
     try {
       let dataUrl = imageExportSnapshotDataUrlRef.current;
       if (!dataUrl) {
-        const snap = await captureExportImageSnapshot();
+        const snap = await captureExportImageSnapshot({ fullPage: true });
         if (!snap) throw new Error('Snapshot capture returned null');
         dataUrl = snap.dataUrl;
         imageExportSnapshotDataUrlRef.current = dataUrl;

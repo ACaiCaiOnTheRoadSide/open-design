@@ -499,6 +499,7 @@ import { configureConnectorCredentialStore, connectorService, ConnectorServiceEr
 import { composioConnectorProvider } from './connectors/composio.js';
 import { configureComposioConfigStore } from './connectors/composio-config.js';
 import { CHAT_TOOL_ENDPOINTS, CHAT_TOOL_OPERATIONS, toolTokenRegistry } from './tool-tokens.js';
+import { decideBoundApiTokenGuard } from './api-token-guard.js';
 import {
   aggregateCloudflarePagesStatus,
   buildDeployFileSet,
@@ -4654,35 +4655,44 @@ export async function startServer({
       '/api/version',
     ]);
     app.use('/api', (req, res, next) => {
-      if (openProbePaths.has(req.path)) return next();
-      // Agent tool callbacks (/api/tools/*) authenticate with the per-run
-      // tool token, validated by authorizeToolRequest in the route handler —
-      // NOT with OD_API_TOKEN. In split mode the agent runs in a separate
-      // one-time container and reaches the daemon over a non-loopback address,
-      // so this OD_API_TOKEN/loopback gate would 401 the tool token before the
-      // handler can validate it. Defer auth to the handler for tool paths; an
-      // absent/invalid tool token is still rejected there, so this narrows the
-      // gate, it does not open the endpoints.
-      if (/^\/(api\/)?tools\//.test(req.path)) return next();
+      let previewAssetAllowed = false;
       if (req.method === 'GET') {
         const previewAsset = parseProjectPreviewAssetPath(req.path);
-        if (
+        previewAssetAllowed = !!(
           previewAsset &&
           projectPreviewScopes.validate(previewAsset.projectId, previewAsset.scope)
-        ) {
-          return next();
-        }
+        );
       }
-      // Loopback short-circuit. We ignore the proxied X-Forwarded-For
-      // header here because a reverse proxy MUST always forward the
-      // bearer; the loopback bypass exists for the localhost desktop
-      // UI which has no proxy in the path.
-      if (isLoopbackPeerAddress(req.socket?.remoteAddress)) return next();
-      const auth = req.get('authorization') ?? '';
-      const match = /^Bearer\s+(\S+)\s*$/i.exec(auth);
-      if (!match || match[1] !== apiToken) {
-        return res.status(401).json({
-          error: { code: 'API_TOKEN_REQUIRED', message: 'Authorization: Bearer <OD_API_TOKEN> required' },
+      // The loopback short-circuit ignores the proxied X-Forwarded-For header
+      // because a reverse proxy MUST always forward the bearer; the loopback
+      // bypass exists for the localhost desktop UI which has no proxy in the
+      // path. Per-run agents reach the daemon over a non-loopback hop carrying
+      // only an `odtt_` tool token, so the guard also accepts a valid tool
+      // token for the tool-endpoint allowlist (the endpoint's own
+      // authorizeToolRequest still enforces endpoint+operation+tenant scope).
+      // This guard is mounted with `app.use('/api', …)`, so Express strips the
+      // `/api` mount prefix from req.path here (e.g. `/tools/media/generate`),
+      // while the tool-endpoint allowlist and tool-token grants store the full
+      // `/api/...` form. Canonicalize before matching so a per-run agent's
+      // `odtt_` tool token (split mode, non-loopback hop) is recognised by both
+      // the bypass allowlist and the grant's endpoint scope — otherwise it is
+      // silently rejected and split media generation 401s. The startsWith guard
+      // keeps this correct even if a future mount change delivers the full path.
+      const toolEndpointPath = req.path.startsWith('/api/') ? req.path : `/api${req.path}`;
+      const decision = decideBoundApiTokenGuard({
+        path: toolEndpointPath,
+        method: req.method,
+        authorization: req.get('authorization') ?? '',
+        apiToken,
+        isLoopbackPeer: isLoopbackPeerAddress(req.socket?.remoteAddress),
+        isOpenProbePath: openProbePaths.has(req.path),
+        previewAssetAllowed,
+        isToolTokenValid: (bearer) =>
+          toolTokenRegistry.validate(bearer, { endpoint: toolEndpointPath }).ok,
+      });
+      if (!decision.allow) {
+        return res.status(decision.status).json({
+          error: { code: decision.code, message: decision.message },
         });
       }
       return next();
