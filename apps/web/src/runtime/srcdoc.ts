@@ -180,7 +180,8 @@ function injectSnapshotBridge(doc: string): string {
     'grid','grid-template-columns','grid-template-rows','grid-column','grid-row',
     'gap','row-gap','column-gap','align-items','align-content','align-self',
     'justify-items','justify-content','justify-self','inset','top','right','bottom','left',
-    'z-index','box-shadow','text-shadow'
+    'z-index','box-shadow','text-shadow',
+    'background-image','background-size','background-position','background-repeat'
   ];
   function copyComputedStyle(source, target){
     if (!source || !target || source.nodeType !== 1 || target.nodeType !== 1) return;
@@ -189,7 +190,11 @@ function injectSnapshotBridge(doc: string): string {
     for (var i = 0; i < SNAPSHOT_STYLE_PROPS.length; i++){
       var prop = SNAPSHOT_STYLE_PROPS[i];
       var value = computed.getPropertyValue(prop);
-      if (value) style += prop + ':' + value + ';';
+      if (!value) continue;
+      // background-image url() never rasterizes inside the foreignObject <img>; swap
+      // each ref for its prefetched data: URL (see prefetchSnapshotBackgrounds).
+      if (prop === 'background-image' && value.indexOf('url(') !== -1) value = inlineSnapshotBgUrls(value);
+      style += prop + ':' + value + ';';
     }
     target.setAttribute('style', style);
   }
@@ -341,6 +346,59 @@ function injectSnapshotBridge(doc: string): string {
       });
     }));
   }
+  // CSS background-image counterpart of prefetchSnapshotImages: <img> go through
+  // document.images, but background-image: url(...) refs also never rasterize inside
+  // the foreignObject <img> — and were dropped entirely (background-image wasn't even
+  // in SNAPSHOT_STYLE_PROPS). Prefetch each background url() to a data: URL, cached by
+  // its absolute URL (the form getComputedStyle returns), for inlineSnapshotBgUrls.
+  function collectBgUrls(value, into){
+    if (!value || value === 'none' || value.indexOf('url(') === -1) return;
+    var re = /url\\(([^)]+)\\)/g, m;
+    while ((m = re.exec(value))){
+      var u = m[1].trim().replace(/^['"]|['"]$/g, '');
+      if (u && !/^data:/i.test(u)) into[u] = true;
+    }
+  }
+  function prefetchSnapshotBackgrounds(){
+    var cache = (window.__odSnapBgCache = window.__odSnapBgCache || {});
+    var all = Array.prototype.slice.call(document.querySelectorAll('*'));
+    var wanted = {};
+    for (var i = 0; i < all.length && i < 4000; i++){
+      try { collectBgUrls(window.getComputedStyle(all[i]).backgroundImage, wanted); } catch (_) {}
+    }
+    var urls = Object.keys(wanted);
+    return Promise.all(urls.map(function(src){
+      if (cache[src]) return Promise.resolve();
+      return new Promise(function(resolve){
+        var done = false;
+        function finish(){ if (done) return; done = true; resolve(); }
+        var timer = setTimeout(finish, 2500);
+        try {
+          fetch(src).then(function(r){ return r && r.ok ? r.blob() : null; })
+            .then(function(blob){
+              if (!blob) { clearTimeout(timer); finish(); return; }
+              var fr = new FileReader();
+              fr.onload = function(){ try { cache[src] = String(fr.result || ''); } catch (_) {} clearTimeout(timer); finish(); };
+              fr.onerror = function(){ clearTimeout(timer); finish(); };
+              fr.readAsDataURL(blob);
+            })
+            .catch(function(){ clearTimeout(timer); finish(); });
+        } catch (_) { clearTimeout(timer); finish(); }
+      });
+    }));
+  }
+  // Swap each background url() for its prefetched data: URL. Best-effort: an
+  // uncached/failed fetch leaves the original ref (stays unpainted, same as before —
+  // never taints the canvas since the foreignObject <img> does not load external refs).
+  function inlineSnapshotBgUrls(value){
+    var cache = window.__odSnapBgCache || {};
+    return value.replace(/url\\(([^)]+)\\)/g, function(whole, inner){
+      var u = inner.trim().replace(/^['"]|['"]$/g, '');
+      if (!u || /^data:/i.test(u)) return whole;
+      var data = cache[u];
+      return data ? 'url("' + data + '")' : whole;
+    });
+  }
   function scrollOffset(){
     var doc = document.documentElement;
     var body = document.body;
@@ -456,7 +514,7 @@ function injectSnapshotBridge(doc: string): string {
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
     if (!data || data.type !== 'od:snapshot' || !data.id) return;
-    waitForImages().then(prefetchSnapshotImages).then(function(){ renderSnapshot(String(data.id), !!data.fullPage); });
+    waitForImages().then(prefetchSnapshotImages).then(prefetchSnapshotBackgrounds).then(function(){ renderSnapshot(String(data.id), !!data.fullPage); });
   });
 })();</script>`;
   return injectBeforeBodyEnd(doc, script);
