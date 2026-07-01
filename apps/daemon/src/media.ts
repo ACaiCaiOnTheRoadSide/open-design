@@ -215,30 +215,7 @@ function stubsAllowed() {
  * Without this guard, an agent (or a hallucinated arg) could ask the
  * daemon to upload `/etc/passwd` to a paid model.
  */
-function resolveImageFromDataUrl(dataUrl: string, hint?: string): ImageRef | null {
-  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
-  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,/);
-  if (!match) {
-    throw new Error('imageData must be a data URL with mime image/png, image/jpeg, image/webp, or image/gif');
-  }
-  const mime = match[1]!;
-  const b64Start = dataUrl.indexOf(',') + 1;
-  const b64 = dataUrl.slice(b64Start);
-  const size = Math.floor(b64.length * 3 / 4);
-  const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
-  if (size > MAX_IMAGE_BYTES) {
-    throw new Error(`imageData too large (~${size} bytes; max ${MAX_IMAGE_BYTES}).`);
-  }
-  return {
-    path: hint || '(inline)',
-    abs: '(inline)',
-    mime,
-    size,
-    dataUrl,
-  };
-}
-
-async function resolveProjectImage(rel: unknown, projectDir: string): Promise<ImageRef | null> {
+async function resolveProjectImage(rel: unknown, projectDir: string, projectId?: string): Promise<ImageRef | null> {
   if (typeof rel !== 'string' || !rel.trim()) return null;
   const projectRootResolved = path.resolve(projectDir);
   const abs = path.resolve(projectRootResolved, rel.trim());
@@ -250,29 +227,8 @@ async function resolveProjectImage(rel: unknown, projectDir: string): Promise<Im
       `--image path "${rel}" resolves outside the project directory.`,
     );
   }
-  let info;
-  try {
-    info = await stat(abs);
-  } catch {
-    throw new Error(`--image not found: ${rel}`);
-  }
-  if (!info.isFile()) {
-    throw new Error(`--image is not a regular file: ${rel}`);
-  }
-  // Cap at 16 MB. Beyond this, base64 inflation alone (≈4/3) starts
-  // hitting body-size limits at the upstream APIs and our own express
-  // 4mb body cap on inbound requests; bigger payloads should travel
-  // via the dedicated upload endpoint, not the dispatcher.
-  const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
-  if (info.size > MAX_IMAGE_BYTES) {
-    throw new Error(
-      `--image too large (${info.size} bytes; max ${MAX_IMAGE_BYTES}).`,
-    );
-  }
-  const bytes = await readFile(abs);
+
   const ext = path.extname(abs).toLowerCase();
-  // Tight allowlist: only what i2v / image-edit endpoints actually
-  // consume. Avoids smuggling arbitrary content through as data URLs.
   const mime = ({
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
@@ -285,6 +241,53 @@ async function resolveProjectImage(rel: unknown, projectDir: string): Promise<Im
       `--image has unsupported extension "${ext}". Use png, jpg, jpeg, webp, or gif.`,
     );
   }
+
+  const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+  let bytes: Buffer | null = null;
+
+  try {
+    const info = await stat(abs);
+    if (!info.isFile()) {
+      throw new Error(`--image is not a regular file: ${rel}`);
+    }
+    if (info.size > MAX_IMAGE_BYTES) {
+      throw new Error(
+        `--image too large (${info.size} bytes; max ${MAX_IMAGE_BYTES}).`,
+      );
+    }
+    bytes = await readFile(abs);
+  } catch (localErr: any) {
+    if (localErr?.code !== 'ENOENT') throw localErr;
+    // Local file not found — try fetching from backend (MinIO) when configured.
+    const backendUrl = process.env.OD_BACKEND_URL;
+    const daemonToken = process.env.OD_API_TOKEN;
+    if (backendUrl && daemonToken && projectId) {
+      const filename = path.basename(rel.trim());
+      const key = `projects/${projectId}/files/${filename}`;
+      const fetchUrl = `${backendUrl.replace(/\/$/, '')}/api/internal/media/fetch?key=${encodeURIComponent(key)}`;
+      try {
+        const resp = await fetch(fetchUrl, {
+          headers: { authorization: `Bearer ${daemonToken}` },
+        });
+        if (resp.ok) {
+          bytes = Buffer.from(await resp.arrayBuffer());
+          console.error(`[media] fetched --image "${rel}" from MinIO (${bytes.length} bytes)`);
+        }
+      } catch (fetchErr: any) {
+        console.error(`[media] fetch --image from backend failed: ${fetchErr?.message || fetchErr}`);
+      }
+    }
+    if (!bytes) {
+      throw new Error(`--image not found: ${rel} (not on local disk, not in object storage)`);
+    }
+  }
+
+  if (bytes.length > MAX_IMAGE_BYTES) {
+    throw new Error(
+      `--image too large (${bytes.length} bytes; max ${MAX_IMAGE_BYTES}).`,
+    );
+  }
+
   return {
     path: rel.trim(),
     abs,
@@ -352,7 +355,7 @@ export async function generateMedia(args: {
   projectRoot: string; projectsRoot: string; projectId: string; surface: MediaSurface; model: string;
   prompt?: string; output?: string; aspect?: string; length?: number; duration?: number; voice?: string;
   audioKind?: AudioKind; language?: string; loop?: boolean; promptInfluence?: number;
-  compositionDir?: string; image?: string; imageData?: string; images?: string[]; onProgress?: ProgressFn; requestInit?: MediaRequestInit;
+  compositionDir?: string; image?: string; images?: string[]; onProgress?: ProgressFn; requestInit?: MediaRequestInit;
 }) {
   const {
     projectRoot,
@@ -484,9 +487,7 @@ export async function generateMedia(args: {
   // stays inside the project, and turn it into a base64 data URL the
   // upstream APIs accept directly. Renderers consume `ctx.imageRef`
   // and decide how to splice the data URL into their request.
-  const imageRef = args.imageData
-    ? resolveImageFromDataUrl(args.imageData, typeof image === 'string' ? image : undefined)
-    : await resolveProjectImage(image, dir);
+  const imageRef = await resolveProjectImage(image, dir, projectId);
 
   // Multi-image support: resolve additional images from the `images`
   // array param. The first resolved image (imageRef) is the primary
@@ -495,7 +496,7 @@ export async function generateMedia(args: {
   const imageRefs: ImageRef[] = [];
   if (imageRef) imageRefs.push(imageRef);
   for (const imgPath of extraImages) {
-    const ref = await resolveProjectImage(imgPath, dir);
+    const ref = await resolveProjectImage(imgPath, dir, projectId);
     if (ref && !imageRefs.some((r) => r.abs === ref.abs)) {
       imageRefs.push(ref);
     }

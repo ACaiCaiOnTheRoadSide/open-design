@@ -572,23 +572,6 @@ async function runMediaGenerate(rawArgs) {
   if (flags['prompt-influence'] != null) body.promptInfluence = Number(flags['prompt-influence']);
   if (flags.loop === true) body.loop = true;
 
-  if (flags.image && token) {
-    const { readFile } = await import('node:fs/promises');
-    const pathMod = await import('node:path');
-    const abs = pathMod.resolve(process.cwd(), flags.image);
-    try {
-      const bytes = await readFile(abs);
-      const ext = pathMod.extname(abs).toLowerCase();
-      const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
-      const mime = mimeMap[ext];
-      if (mime) {
-        body.imageData = `data:${mime};base64,${bytes.toString('base64')}`;
-      }
-    } catch (e) {
-      console.error(`warning: could not read --image locally: ${e.message}`);
-    }
-  }
-
   const url = token
     ? `${daemonUrl.replace(/\/$/, '')}/api/tools/media/generate`
     : `${daemonUrl.replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/media/generate`;

@@ -188,7 +188,6 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           : undefined,
         compositionDir: req.body?.compositionDir,
         image: req.body?.image,
-        imageData: typeof req.body?.imageData === 'string' ? req.body.imageData : undefined,
         images: Array.isArray(req.body?.images) ? req.body.images : undefined,
         onProgress: (line: any) => {
           void appendTaskProgress(task!, line).catch((e: any) =>
