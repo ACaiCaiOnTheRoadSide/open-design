@@ -215,6 +215,29 @@ function stubsAllowed() {
  * Without this guard, an agent (or a hallucinated arg) could ask the
  * daemon to upload `/etc/passwd` to a paid model.
  */
+function resolveImageFromDataUrl(dataUrl: string, hint?: string): ImageRef | null {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
+  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,/);
+  if (!match) {
+    throw new Error('imageData must be a data URL with mime image/png, image/jpeg, image/webp, or image/gif');
+  }
+  const mime = match[1]!;
+  const b64Start = dataUrl.indexOf(',') + 1;
+  const b64 = dataUrl.slice(b64Start);
+  const size = Math.floor(b64.length * 3 / 4);
+  const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+  if (size > MAX_IMAGE_BYTES) {
+    throw new Error(`imageData too large (~${size} bytes; max ${MAX_IMAGE_BYTES}).`);
+  }
+  return {
+    path: hint || '(inline)',
+    abs: '(inline)',
+    mime,
+    size,
+    dataUrl,
+  };
+}
+
 async function resolveProjectImage(rel: unknown, projectDir: string): Promise<ImageRef | null> {
   if (typeof rel !== 'string' || !rel.trim()) return null;
   const projectRootResolved = path.resolve(projectDir);
@@ -329,7 +352,7 @@ export async function generateMedia(args: {
   projectRoot: string; projectsRoot: string; projectId: string; surface: MediaSurface; model: string;
   prompt?: string; output?: string; aspect?: string; length?: number; duration?: number; voice?: string;
   audioKind?: AudioKind; language?: string; loop?: boolean; promptInfluence?: number;
-  compositionDir?: string; image?: string; images?: string[]; onProgress?: ProgressFn; requestInit?: MediaRequestInit;
+  compositionDir?: string; image?: string; imageData?: string; images?: string[]; onProgress?: ProgressFn; requestInit?: MediaRequestInit;
 }) {
   const {
     projectRoot,
@@ -461,7 +484,9 @@ export async function generateMedia(args: {
   // stays inside the project, and turn it into a base64 data URL the
   // upstream APIs accept directly. Renderers consume `ctx.imageRef`
   // and decide how to splice the data URL into their request.
-  const imageRef = await resolveProjectImage(image, dir);
+  const imageRef = args.imageData
+    ? resolveImageFromDataUrl(args.imageData, typeof image === 'string' ? image : undefined)
+    : await resolveProjectImage(image, dir);
 
   // Multi-image support: resolve additional images from the `images`
   // array param. The first resolved image (imageRef) is the primary
@@ -3916,4 +3941,43 @@ function truncate(s: unknown, n: number): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function storeMediaToBackend(
+  backendUrl: string,
+  daemonToken: string,
+  projectId: string,
+  filename: string,
+  filePath: string,
+): Promise<{ key: string; url: string }> {
+  const fileBytes = await readFile(filePath);
+  const boundary = `----OD${Date.now().toString(36)}`;
+  const parts: Buffer[] = [];
+  const addField = (name: string, value: string) => {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+    ));
+  };
+  addField('projectId', projectId);
+  addField('filename', filename);
+  parts.push(Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+  ));
+  parts.push(fileBytes);
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  const body = Buffer.concat(parts);
+
+  const resp = await fetch(`${backendUrl.replace(/\/$/, '')}/api/internal/media/store`, {
+    method: 'POST',
+    headers: {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      'authorization': `Bearer ${daemonToken}`,
+    },
+    body,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`backend media store ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  return (await resp.json()) as { key: string; url: string };
 }

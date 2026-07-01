@@ -4170,7 +4170,10 @@ function mediaTaskSnapshot(task, since = 0) {
     progress: task.progress.slice(since),
     nextSince: task.progress.length,
   };
-  if (task.status === 'done') snapshot.file = task.file;
+  if (task.status === 'done') {
+    snapshot.file = task.file;
+    if (task.downloadUrl) snapshot.downloadUrl = task.downloadUrl;
+  }
   if (task.status === 'failed' || task.status === 'interrupted') {
     snapshot.error = task.error;
   }

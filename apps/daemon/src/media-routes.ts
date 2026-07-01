@@ -11,8 +11,9 @@ import {
   type AIHubMixCatalogType,
 } from './aihubmix.js';
 import { isSandboxModeEnabled } from './sandbox-mode.js';
-import { isMediaModelServable } from './media.js';
+import { isMediaModelServable, storeMediaToBackend } from './media.js';
 import type { ToolTokenGrant } from './tool-tokens.js';
+import path from 'node:path';
 
 const LONG_MEDIA_PROXY_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -187,6 +188,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           : undefined,
         compositionDir: req.body?.compositionDir,
         image: req.body?.image,
+        imageData: typeof req.body?.imageData === 'string' ? req.body.imageData : undefined,
         images: Array.isArray(req.body?.images) ? req.body.images : undefined,
         onProgress: (line: any) => {
           void appendTaskProgress(task!, line).catch((e: any) =>
@@ -194,11 +196,25 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         },
         requestInit: proxyDispatcher.requestInit,
       })
-        .then((meta: any) => {
+        .then(async (meta: any) => {
           task.status = 'done';
           task.file = meta;
           task.endedAt = Date.now();
           void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
+
+          const backendUrl = process.env.OD_BACKEND_URL;
+          const daemonToken = process.env.OD_API_TOKEN;
+          if (backendUrl && daemonToken && meta?.name) {
+            try {
+              const filePath = path.join(PROJECTS_DIR, projectId, meta.name);
+              const result = await storeMediaToBackend(backendUrl, daemonToken, projectId, meta.name, filePath);
+              task.downloadUrl = result.url;
+              void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
+            } catch (e: any) {
+              console.error(`[media] store to backend failed: ${e?.message || e}`);
+            }
+          }
+
           notifyTaskWaiters(task);
           console.error(
             `[task ${taskId.slice(0, 8)}] done size=${meta?.size} mime=${meta?.mime} ` +
