@@ -590,7 +590,7 @@ async function runMediaGenerate(rawArgs) {
   }
 
   const url = token
-    ? `${toolCallbackBase(daemonUrl)}/api/tools/media/generate`
+    ? `${daemonUrl.replace(/\/$/, '')}/api/tools/media/generate`
     : `${daemonUrl.replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/media/generate`;
   let resp;
   try {
