@@ -1394,7 +1394,7 @@ function finiteNumber(value: unknown): number {
 }
 
 function randomCommentId(): string {
-  return `cmt_${randomUUID().slice(0, 8)}`;
+  return `cmt_${randomUUID()}`;
 }
 
 function normalizeMessage(row: DbRow) {
