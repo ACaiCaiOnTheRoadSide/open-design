@@ -11,6 +11,8 @@ import { parseDesignSystemRenameArgs } from './design-system-rename-args.js';
 import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { requestJsonIpc } from '@open-design/sidecar';
 import { SIDECAR_ENV, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
 import {
@@ -555,6 +557,42 @@ async function runMediaGenerate(rawArgs) {
     process.exit(2);
   }
 
+  // When the agent has the image locally but the daemon may not (different
+  // container), upload it to the daemon first. The daemon persists it to the
+  // project directory + MinIO so `resolveProjectImage` can find it later.
+  if (flags.image) {
+    const imagePath = path.resolve(flags.image);
+    try {
+      const info = await stat(imagePath);
+      if (info.isFile()) {
+        const imageBytes = await readFile(imagePath);
+        const filename = path.basename(flags.image);
+        const uploadUrl = token
+          ? `${daemonUrl.replace(/\/$/, '')}/api/tools/media/upload`
+          : `${daemonUrl.replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/media/upload`;
+        try {
+          const uploadResp = await fetch(uploadUrl, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ filename, data: imageBytes.toString('base64') }),
+          });
+          if (uploadResp.ok) {
+            console.error(`[media] uploaded --image "${filename}" to daemon/MinIO`);
+          } else {
+            console.error(`[media] image upload failed (${uploadResp.status}); generate will likely fail if daemon cannot access the file`);
+          }
+        } catch (uploadErr) {
+          console.error(`[media] image upload failed: ${uploadErr?.message || uploadErr}; generate will likely fail if daemon cannot access the file`);
+        }
+      }
+    } catch (localErr) {
+      if (localErr?.code !== 'ENOENT') throw localErr;
+    }
+  }
+
   const body = {
     surface,
     model: flags.model,
@@ -564,7 +602,7 @@ async function runMediaGenerate(rawArgs) {
     voice: flags.voice,
     audioKind: flags['audio-kind'],
     compositionDir: flags['composition-dir'],
-    image: flags.image,
+    image: flags.image ? path.basename(flags.image) : undefined,
     language: flags.language,
   };
   if (flags.length != null) body.length = Number(flags.length);
