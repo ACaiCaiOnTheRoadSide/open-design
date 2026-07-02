@@ -839,7 +839,7 @@ export function composeSystemPrompt({
     || resolvedExclusiveSurface === 'video'
     || resolvedExclusiveSurface === 'audio';
   if (isMediaSurface) {
-    parts.push(renderMediaGenerationContract(mediaExecution));
+    parts.push(renderMediaGenerationContract(mediaExecution, currentMediaDefaults()));
   } else {
     // Non-media projects (prototype, deck, etc.): inject a lightweight hint
     // so the agent uses `od media generate` if the user asks for an image/video

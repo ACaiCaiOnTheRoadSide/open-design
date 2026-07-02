@@ -24,6 +24,7 @@ import {
   VIDEO_MODELS,
 } from '../media-models.js';
 import type { MediaExecutionPolicy, MediaSurface } from '@open-design/contracts';
+import type { MediaDefaults } from '../multitenant.js';
 
 function fmtList(ids: string[]): string {
   return ids.map((id) => `\`${id}\``).join(', ');
@@ -47,10 +48,11 @@ const AUDIO_SFX_IDS = fmtList(AUDIO_MODELS_BY_KIND.sfx.map((m) => m.id));
 
 export function renderMediaGenerationContract(
   mediaExecution?: MediaExecutionPolicy | undefined,
+  mediaDefaults?: MediaDefaults | undefined,
 ): string {
   const mode = mediaExecution?.mode ?? 'enabled';
   if (mode === 'enabled') {
-    return renderEnabledMediaGenerationContract(mediaExecution);
+    return renderEnabledMediaGenerationContract(mediaExecution, mediaDefaults);
   }
   const scope = renderMediaPolicyScope(mediaExecution);
   if (mode === 'disabled') {
@@ -71,15 +73,50 @@ preference, references, and output filename in chat, then stop. Do not claim a
 file was generated and do not emit an \`<artifact>\` block for media.
 ${scope}`;
   }
-  return renderEnabledMediaGenerationContract(mediaExecution);
+  return renderEnabledMediaGenerationContract(mediaExecution, mediaDefaults);
+}
+
+function renderVideoDefaultsSection(mediaDefaults?: MediaDefaults): string {
+  const t2v = mediaDefaults?.videoModel;
+  const i2v = mediaDefaults?.videoI2vModel;
+  if (!t2v && !i2v) return '';
+  const lines: string[] = [
+    '',
+    '### Admin-configured video model defaults',
+    '',
+  ];
+  if (t2v && i2v) {
+    lines.push(
+      `- **Text-to-video (t2v)** default: \`${t2v}\` — use when the user has NO reference image.`,
+      `- **Image-to-video (i2v)** default: \`${i2v}\` — use when the user provides/attaches an image. Pass \`--image <path>\`.`,
+    );
+  } else if (t2v) {
+    lines.push(`- **Text-to-video (t2v)** default: \`${t2v}\` — use for all video generation.`);
+  } else if (i2v) {
+    lines.push(`- **Image-to-video (i2v)** default: \`${i2v}\` — use when the user provides an image. Pass \`--image <path>\`.`);
+  }
+  lines.push(
+    '',
+    'Always prefer the admin-configured default over picking from the full model list.',
+  );
+  return lines.join('\n');
 }
 
 function renderEnabledMediaGenerationContract(
   mediaExecution?: MediaExecutionPolicy | undefined,
+  mediaDefaults?: MediaDefaults | undefined,
 ): string {
   const scope = renderMediaPolicyScope(mediaExecution);
-  if (!scope) return MEDIA_GENERATION_CONTRACT;
-  return MEDIA_GENERATION_CONTRACT.replace(
+  const videoDefaults = renderVideoDefaultsSection(mediaDefaults);
+  let contract = MEDIA_GENERATION_CONTRACT;
+  if (videoDefaults) {
+    contract = contract.replace(
+      '\n### Workflow rules',
+      `${videoDefaults}\n\n### Workflow rules`,
+    );
+  }
+  if (!scope) return contract;
+  return contract.replace(
     '\n### Allowed model IDs (per surface)',
     `
 ### Active media policy scope
