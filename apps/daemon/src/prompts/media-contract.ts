@@ -29,8 +29,18 @@ function fmtList(ids: string[]): string {
   return ids.map((id) => `\`${id}\``).join(', ');
 }
 
+function fmtVideoList(models: typeof VIDEO_MODELS): string {
+  return models.map((m) => {
+    const caps = m.caps || [];
+    const hasT2v = caps.includes('t2v');
+    const hasI2v = caps.includes('i2v');
+    const tag = hasT2v && hasI2v ? 't2v+i2v' : hasI2v ? 'i2v only' : hasT2v ? 't2v only' : '';
+    return tag ? `\`${m.id}\` (${tag})` : `\`${m.id}\``;
+  }).join(', ');
+}
+
 const IMAGE_IDS = fmtList(IMAGE_MODELS.map((m) => m.id));
-const VIDEO_IDS = fmtList(VIDEO_MODELS.map((m) => m.id));
+const VIDEO_IDS = fmtVideoList(VIDEO_MODELS);
 const AUDIO_MUSIC_IDS = fmtList(AUDIO_MODELS_BY_KIND.music.map((m) => m.id));
 const AUDIO_SPEECH_IDS = fmtList(AUDIO_MODELS_BY_KIND.speech.map((m) => m.id));
 const AUDIO_SFX_IDS = fmtList(AUDIO_MODELS_BY_KIND.sfx.map((m) => m.id));
@@ -318,14 +328,22 @@ showed it crashed).
 
 - **image**:   ${IMAGE_IDS}
 - **video**:   ${VIDEO_IDS}
-  Image-to-video (i2v): the Volcengine Seedance family
-  (\`doubao-seedance-2-0-260128\`, \`doubao-seedance-2-0-fast-260128\`,
-  \`doubao-seedance-1-0-pro-250528\`, \`doubao-seedance-1-0-lite-i2v-250428\`)
-  accepts a reference image as the first frame. Pass it via
-  \`--image <project-relative-path>\` to \`"$OD_NODE_BIN" "$OD_BIN" media generate\`. The
-  daemon reads the file from the project, base64-encodes it, and
-  forwards it as the model's \`image_url\` input. Path traversal
-  outside the project is rejected.
+
+  **Choosing t2v vs i2v — read this before picking a video model.**
+  Each video model is tagged \`t2v only\`, \`i2v only\`, or \`t2v+i2v\`:
+  - **t2v (text-to-video)**: generate from a text prompt alone, no reference image.
+  - **i2v (image-to-video)**: generate from a reference image (first frame) + text prompt.
+  - **t2v+i2v**: supports both modes.
+
+  Selection rule:
+  - User provided / attached an image AND wants a video from it → pick an \`i2v\` or \`t2v+i2v\` model, pass \`--image <path>\`.
+  - User has no image, pure text prompt → pick a \`t2v\` or \`t2v+i2v\` model, do NOT pass \`--image\`.
+  - Never pass \`--image\` to a \`t2v only\` model (it will be ignored or error).
+  - Never omit \`--image\` with an \`i2v only\` model (it requires a reference image).
+
+  When passing \`--image\`, use the project-relative path. The daemon reads
+  the file, base64-encodes it, and forwards it as the model's \`image_url\` input.
+  Path traversal outside the project is rejected.
 - **audio · music**:  ${AUDIO_MUSIC_IDS}
 - **audio · speech**: ${AUDIO_SPEECH_IDS}
 - **audio · sfx**:    ${AUDIO_SFX_IDS}
