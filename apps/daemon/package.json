@@ -26,7 +26,8 @@
     "package.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && pnpm run build:od-cli",
+    "build:od-cli": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node20 --external:./server.js --external:./browser-open.js --outfile=dist/od-cli.mjs",
     "daemon": "pnpm run build && node dist/cli.js --no-open",
     "dev": "pnpm run build && node dist/cli.js --no-open",
     "start": "pnpm run build && node dist/cli.js",
@@ -64,6 +65,7 @@
     "@types/multer": "2.1.0",
     "@types/node": "20.19.39",
     "@types/pg": "^8.20.0",
+    "esbuild": "0.24.2",
     "typescript": "5.9.3",
     "vitest": "4.1.6"
   },

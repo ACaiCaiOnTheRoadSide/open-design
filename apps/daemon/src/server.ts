@@ -12,6 +12,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { x as tarExtract } from 'tar';
 import {
   defaultScenarioPluginIdForProjectMetadata,
   type OpenDesignDiscordPresenceResponse,
@@ -5207,6 +5210,61 @@ export async function startServer({
   app.get('/api/version', async (_req, res) => {
     const version = await readCurrentAppVersionInfo();
     res.json({ version });
+  });
+
+  // od-cli 单文件 bundle 下载:供外部沙箱(huskbox 等,无本仓代码)里的启动脚本
+  // 在开跑时拉取,agent 侧 CLI 版本因此与 daemon 严格一致。产物由 apps/daemon 的
+  // `build:od-cli` 生成在 dist 同级;挂 /api 下受 OD_API_TOKEN bearer 守卫保护。
+  app.get('/api/od-cli.mjs', (_req, res) => {
+    const bundlePath = fileURLToPath(new URL('./od-cli.mjs', import.meta.url));
+    if (!fs.existsSync(bundlePath)) {
+      res.status(404).json({
+        error: 'od-cli bundle not built; run `pnpm --filter @open-design/daemon build`',
+      });
+      return;
+    }
+    res.type('text/javascript');
+    res.sendFile(bundlePath);
+  });
+
+  // 项目文件还原:从预签名 URL 拉整项目 tar.gz(根为 <projectId>/,与 backend
+  // state_oss.go 的打包约定一致)解到 PROJECTS_DIR。split/huskbox 模式下 agent 在
+  // 集群外沙箱跑活、产物只存对象存储;每轮结束 backend 调此端点把最新文件铺回
+  // daemon 本地盘,前端预览 / raw 服务才有内容。挂 /api 下受 OD_API_TOKEN bearer
+  // 守卫;url 由可信的 backend 铸造(短时预签名),不是终端用户输入。
+  app.post('/api/projects/:id/restore-archive', async (req, res) => {
+    const projectId = req.params.id;
+    const url = typeof req.body?.url === 'string' ? req.body.url : '';
+    if (!/^https?:\/\//.test(url)) {
+      return res.status(400).json({ error: 'url (http/https) is required' });
+    }
+    try {
+      const response = await fetch(url);
+      if (response.status === 404) {
+        // 对象存储里还没有该项目的存档(全新项目),不算错误。
+        return res.json({ restored: false, reason: 'archive not found' });
+      }
+      if (!response.ok || !response.body) {
+        return res.status(502).json({ error: `archive fetch failed: HTTP ${response.status}` });
+      }
+      const prefix = `${projectId}/`;
+      await pipeline(
+        Readable.fromWeb(response.body),
+        tarExtract({
+          cwd: PROJECTS_DIR,
+          // 只接受本项目前缀的条目(防止一份存档覆写其他项目);
+          // 绝对路径与 `..` 逃逸由 tar 库默认拒绝。
+          filter: (p) => {
+            const entry = p.replace(/^\.\//, '');
+            return entry === projectId || entry.startsWith(prefix);
+          },
+        }),
+      );
+      return res.json({ restored: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: `restore failed: ${message}` });
+    }
   });
 
   app.get('/api/github/open-design', async (_req, res) => {
