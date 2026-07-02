@@ -42,6 +42,7 @@ export const MEDIA_DEFAULTS_HEADER = 'x-od-media-defaults';
 export interface MediaDefaults {
   imageModel?: string;
   videoModel?: string;
+  videoI2vModel?: string;
 }
 
 interface TenantStore {
@@ -139,10 +140,12 @@ function parseMediaDefaultsHeader(raw: string | undefined): MediaDefaults | unde
     typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
   const imageModel = pick(record.imageModel);
   const videoModel = pick(record.videoModel);
-  if (imageModel === undefined && videoModel === undefined) return undefined;
+  const videoI2vModel = pick(record.videoI2vModel);
+  if (imageModel === undefined && videoModel === undefined && videoI2vModel === undefined) return undefined;
   return {
     ...(imageModel !== undefined ? { imageModel } : {}),
     ...(videoModel !== undefined ? { videoModel } : {}),
+    ...(videoI2vModel !== undefined ? { videoI2vModel } : {}),
   };
 }
 

@@ -117,10 +117,13 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     // admin default stashed on the grant at mint time. Makes generation work
     // regardless of what a weak agent picks (fal, bare "seedream", etc.).
     let model = requestedModel;
+    const hasImage = typeof req.body?.image === 'string' && req.body.image.trim() !== '';
     const grantDefaultModel = surface === 'image'
       ? options.grant?.mediaDefaults?.imageModel
       : surface === 'video'
-        ? options.grant?.mediaDefaults?.videoModel
+        ? (hasImage
+            ? (options.grant?.mediaDefaults?.videoI2vModel || options.grant?.mediaDefaults?.videoModel)
+            : options.grant?.mediaDefaults?.videoModel)
         : undefined;
     if (grantDefaultModel && !(await isMediaModelServable(PROJECT_ROOT, requestedModel))) {
       if (await isMediaModelServable(PROJECT_ROOT, grantDefaultModel)) {
@@ -499,6 +502,44 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     }
   });
 
+  // Loopback image upload (local mode — same filesystem, but kept for
+  // CLI code symmetry so it doesn't need to know whether to skip).
+  app.post('/api/projects/:id/media/upload', async (req, res) => {
+    if (!isLocalSameOrigin(req, getResolvedPort())) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const projectId = req.params.id;
+    const filename = typeof req.body?.filename === 'string' ? req.body.filename.trim() : '';
+    const data = typeof req.body?.data === 'string' ? req.body.data : '';
+    if (!filename || !data) {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'filename and data (base64) are required');
+    }
+    if (filename.includes('/') || filename.includes('..')) {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'invalid filename');
+    }
+
+    const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+    const bytes = Buffer.from(data, 'base64');
+    if (bytes.length > MAX_IMAGE_BYTES) {
+      return sendApiError(res, 400, 'BAD_REQUEST', `file too large (${bytes.length} bytes; max ${MAX_IMAGE_BYTES})`);
+    }
+
+    const projectDir = path.join(PROJECTS_DIR, projectId);
+    await fs.promises.mkdir(projectDir, { recursive: true });
+    const filePath = path.join(projectDir, filename);
+    await fs.promises.writeFile(filePath, bytes);
+
+    const backendUrl = process.env.OD_BACKEND_URL;
+    const daemonToken = process.env.OD_API_TOKEN;
+    if (backendUrl && daemonToken) {
+      try {
+        await storeMediaToBackend(backendUrl, daemonToken, projectId, filename, filePath);
+      } catch (_err) { /* non-fatal */ }
+    }
+
+    res.json({ ok: true, filename });
+  });
+
   app.post('/api/projects/:id/media/generate', async (req, res) => {
     if (!isLocalSameOrigin(req, getResolvedPort())) {
       return res.status(403).json({
@@ -600,6 +641,49 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     task.waiters.add(wake);
     const timer = setTimeout(wake, timeoutMs);
     res.on('close', wake);
+  });
+
+  // Agent-side image upload: the CLI reads the file locally (agent container)
+  // and pushes it here so the daemon can persist it to the project directory +
+  // MinIO. After this, `resolveProjectImage` inside `generateMedia` finds the
+  // file on disk (or via the MinIO fallback if the local write was lost).
+  app.post('/api/tools/media/upload', async (req, res) => {
+    const grant = authorizeToolRequest(req, res, 'media:upload');
+    if (!grant) return;
+
+    const filename = typeof req.body?.filename === 'string' ? req.body.filename.trim() : '';
+    const data = typeof req.body?.data === 'string' ? req.body.data : '';
+    if (!filename || !data) {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'filename and data (base64) are required');
+    }
+    if (filename.includes('/') || filename.includes('..')) {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'invalid filename');
+    }
+
+    const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+    const bytes = Buffer.from(data, 'base64');
+    if (bytes.length > MAX_IMAGE_BYTES) {
+      return sendApiError(res, 400, 'BAD_REQUEST', `file too large (${bytes.length} bytes; max ${MAX_IMAGE_BYTES})`);
+    }
+
+    const projectDir = path.join(PROJECTS_DIR, grant.projectId);
+    await fs.promises.mkdir(projectDir, { recursive: true });
+    const filePath = path.join(projectDir, filename);
+    await fs.promises.writeFile(filePath, bytes);
+    console.error(`[media upload] wrote ${filename} (${bytes.length} bytes) to ${projectDir}`);
+
+    const backendUrl = process.env.OD_BACKEND_URL;
+    const daemonToken = process.env.OD_API_TOKEN;
+    if (backendUrl && daemonToken) {
+      try {
+        await storeMediaToBackend(backendUrl, daemonToken, grant.projectId, filename, filePath);
+        console.error(`[media upload] pushed ${filename} to MinIO`);
+      } catch (err: any) {
+        console.error(`[media upload] MinIO push failed (non-fatal): ${err?.message || err}`);
+      }
+    }
+
+    res.json({ ok: true, filename });
   });
 
   app.post('/api/research/search', async (req, res) => {
