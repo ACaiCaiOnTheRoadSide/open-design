@@ -5281,36 +5281,72 @@ export async function startServer({
   // 集群外沙箱跑活、产物只存对象存储;每轮结束 backend 调此端点把最新文件铺回
   // daemon 本地盘,前端预览 / raw 服务才有内容。挂 /api 下受 OD_API_TOKEN bearer
   // 守卫;url 由可信的 backend 铸造(短时预签名),不是终端用户输入。
+  //
+  // body.ifMissing=true:仅当本地盘上没有该项目文件时才真的拉存档——打开项目
+  // 的懒恢复用(k8s 上数据盘是 emptyDir,pod 重建即空,而铺回文件原本只挂在
+  // 「跑完一轮 agent」的钩子上);盘上已有文件时只是一次目录探测,可高频调用。
+  //
+  // 同一项目的恢复按到达顺序串行:前端打开项目时详情与文件树两路并发触发,
+  // 不串行会有两个 tar 同时往同一目录解压。
+  const restoreArchiveChains = new Map();
+  const withProjectRestoreLock = (projectId, fn) => {
+    const prev = restoreArchiveChains.get(projectId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    const tail = next.catch(() => {});
+    restoreArchiveChains.set(projectId, tail);
+    void tail.then(() => {
+      if (restoreArchiveChains.get(projectId) === tail) restoreArchiveChains.delete(projectId);
+    });
+    return next;
+  };
   app.post('/api/projects/:id/restore-archive', async (req, res) => {
     const projectId = req.params.id;
     const url = typeof req.body?.url === 'string' ? req.body.url : '';
+    const ifMissing = req.body?.ifMissing === true;
     if (!/^https?:\/\//.test(url)) {
       return res.status(400).json({ error: 'url (http/https) is required' });
     }
     try {
-      const response = await fetch(url);
-      if (response.status === 404) {
-        // 对象存储里还没有该项目的存档(全新项目),不算错误。
-        return res.json({ restored: false, reason: 'archive not found' });
-      }
-      if (!response.ok || !response.body) {
-        return res.status(502).json({ error: `archive fetch failed: HTTP ${response.status}` });
-      }
-      const prefix = `${projectId}/`;
-      await pipeline(
-        Readable.fromWeb(response.body),
-        tarExtract({
-          cwd: PROJECTS_DIR,
-          // 只接受本项目前缀的条目(防止一份存档覆写其他项目);
-          // 绝对路径与 `..` 逃逸由 tar 库默认拒绝。
-          filter: (p) => {
-            const entry = p.replace(/^\.\//, '');
-            return entry === projectId || entry.startsWith(prefix);
-          },
-        }),
-      );
-      return res.json({ restored: true });
+      const result = await withProjectRestoreLock(projectId, async () => {
+        if (ifMissing) {
+          let entries = [];
+          try {
+            entries = await fs.promises.readdir(path.join(PROJECTS_DIR, projectId));
+          } catch {
+            // ENOENT → 目录不存在,视为缺失
+          }
+          if (entries.length > 0) return { restored: false, reason: 'already present' };
+        }
+        const response = await fetch(url);
+        if (response.status === 404) {
+          // 对象存储里还没有该项目的存档(全新项目),不算错误。
+          return { restored: false, reason: 'archive not found' };
+        }
+        if (!response.ok || !response.body) {
+          const fetchError = new Error(`archive fetch failed: HTTP ${response.status}`);
+          fetchError.upstreamFetchFailed = true;
+          throw fetchError;
+        }
+        const prefix = `${projectId}/`;
+        await pipeline(
+          Readable.fromWeb(response.body),
+          tarExtract({
+            cwd: PROJECTS_DIR,
+            // 只接受本项目前缀的条目(防止一份存档覆写其他项目);
+            // 绝对路径与 `..` 逃逸由 tar 库默认拒绝。
+            filter: (p) => {
+              const entry = p.replace(/^\.\//, '');
+              return entry === projectId || entry.startsWith(prefix);
+            },
+          }),
+        );
+        return { restored: true };
+      });
+      return res.json(result);
     } catch (error) {
+      if (error instanceof Error && error.upstreamFetchFailed === true) {
+        return res.status(502).json({ error: error.message });
+      }
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: `restore failed: ${message}` });
     }
