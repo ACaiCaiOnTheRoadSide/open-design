@@ -2088,6 +2088,170 @@ setInterval(() => {}, 1000);
     }
   });
 
+  // Sandboxed OpenCode (huskbox) can't expose its session log to the daemon;
+  // the sandbox bootstrap pumps provider errors onto stderr as
+  // "[opencode-log] … status code NNN; <message>" lines instead. These three
+  // specs pin the daemon side of that contract: the stall watchdog, the
+  // silent non-zero exit, and the silent empty exit must all surface the
+  // pumped reason (or at least an explanatory error) to the run's SSE stream.
+  it('surfaces a pumped provider error as the stall reason instead of the generic message', async () => {
+    const previous = process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '500';
+    try {
+      await withFakeAgent(
+        'opencode',
+        `
+console.log(JSON.stringify({ type: 'step_start' }));
+console.error('[opencode-log] llm request failed: status code 429; Insufficient Balance: account is out of credit');
+process.on('SIGTERM', () => process.exit(143));
+setInterval(() => {}, 1000);
+`,
+        async () => {
+          const createResponse = await fetch(`${baseUrl}/api/runs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentId: 'opencode',
+              message: 'hello',
+            }),
+          });
+          expect(createResponse.status).toBe(202);
+          const { runId } = await createResponse.json() as { runId: string };
+
+          const eventsController = new AbortController();
+          const eventsResponse = await fetch(`${baseUrl}/api/runs/${runId}/events`, {
+            signal: eventsController.signal,
+          });
+          const eventsBody = await readSseUntil(eventsResponse, 'event: error');
+          eventsController.abort();
+          const statusBody = await waitForRunStatus(baseUrl, runId);
+
+          expect(eventsBody).toContain('RATE_LIMITED');
+          expect(eventsBody).not.toContain('Agent stalled without emitting any new output');
+          expect(statusBody.status).toBe('failed');
+        },
+      );
+    } finally {
+      if (previous == null) {
+        delete process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
+      } else {
+        process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = previous;
+      }
+    }
+  });
+
+  it('keeps the generic stall message when service keywords appear without the pump marker', async () => {
+    const previous = process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '500';
+    try {
+      await withFakeAgent(
+        'opencode',
+        `
+console.log(JSON.stringify({ type: 'step_start' }));
+console.error('debug: usage limit accounting synced; quota cache warm');
+process.on('SIGTERM', () => process.exit(143));
+setInterval(() => {}, 1000);
+`,
+        async () => {
+          const createResponse = await fetch(`${baseUrl}/api/runs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentId: 'opencode',
+              message: 'hello',
+            }),
+          });
+          expect(createResponse.status).toBe(202);
+          const { runId } = await createResponse.json() as { runId: string };
+
+          const eventsController = new AbortController();
+          const eventsResponse = await fetch(`${baseUrl}/api/runs/${runId}/events`, {
+            signal: eventsController.signal,
+          });
+          const eventsBody = await readSseUntil(eventsResponse, 'event: error');
+          eventsController.abort();
+          const statusBody = await waitForRunStatus(baseUrl, runId);
+
+          // Benign stderr keywords without the '[opencode-log]' pump marker
+          // must NOT fabricate a service failure for a plain hang.
+          expect(eventsBody).not.toContain('RATE_LIMITED');
+          expect(eventsBody).toContain('Agent stalled without emitting any new output');
+          expect(statusBody.status).toBe('failed');
+        },
+      );
+    } finally {
+      if (previous == null) {
+        delete process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
+      } else {
+        process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = previous;
+      }
+    }
+  });
+
+  it('emits an explanatory error event for a silent non-zero exit', async () => {
+    await withFakeAgent(
+      'opencode',
+      `process.exit(1);\n`,
+      async () => {
+        const createResponse = await fetch(`${baseUrl}/api/runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'opencode',
+            message: 'hello',
+          }),
+        });
+        expect(createResponse.status).toBe(202);
+        const { runId } = await createResponse.json() as { runId: string };
+
+        const eventsController = new AbortController();
+        const eventsResponse = await fetch(`${baseUrl}/api/runs/${runId}/events`, {
+          signal: eventsController.signal,
+        });
+        const eventsBody = await readSseUntil(eventsResponse, 'event: error');
+        eventsController.abort();
+        const statusBody = await waitForRunStatus(baseUrl, runId);
+
+        expect(eventsBody).toContain('Agent exited unexpectedly (exit code 1) without reporting a reason.');
+        expect(statusBody.status).toBe('failed');
+      },
+    );
+  });
+
+  it('classifies a pumped provider error on a silent empty exit', async () => {
+    await withFakeAgent(
+      'opencode',
+      `
+console.error('[opencode-log] llm request failed: status code 429; Insufficient Balance: account is out of credit');
+process.exit(0);
+`,
+      async () => {
+        const createResponse = await fetch(`${baseUrl}/api/runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'opencode',
+            message: 'hello',
+          }),
+        });
+        expect(createResponse.status).toBe(202);
+        const { runId } = await createResponse.json() as { runId: string };
+
+        const eventsController = new AbortController();
+        const eventsResponse = await fetch(`${baseUrl}/api/runs/${runId}/events`, {
+          signal: eventsController.signal,
+        });
+        const eventsBody = await readSseUntil(eventsResponse, 'event: error');
+        eventsController.abort();
+        const statusBody = await waitForRunStatus(baseUrl, runId);
+
+        expect(eventsBody).toContain('RATE_LIMITED');
+        expect(eventsBody).not.toContain('Agent completed without producing any output');
+        expect(statusBody.status).toBe('failed');
+      },
+    );
+  });
+
   it('keeps Claude stream runs alive while structured output is still flowing', async () => {
     const previous = process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
     process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '3000';

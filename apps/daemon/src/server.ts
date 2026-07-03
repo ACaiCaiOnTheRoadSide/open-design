@@ -12835,6 +12835,29 @@ export async function startServer({
           );
         }
       }
+      // Sandboxed runs (huskbox) never have OpenCode's session log on the
+      // daemon filesystem, so the recovery above finds nothing there. The
+      // sandbox bootstrap instead pumps a "[opencode-log] … status code NNN"
+      // summary of the provider error onto stderr — classify the output
+      // tails so a quota / billing / auth stall surfaces its real reason
+      // instead of the generic stall message. Gated on the pump marker:
+      // classifying arbitrary agents' stderr here would let a benign
+      // keyword ('quota', 'overloaded', …) in debug output fabricate a
+      // service failure for a plain hang.
+      if (!stallPayload) {
+        const stallTails = `${agentStderrTail}\n${agentStdoutTail}`;
+        const serviceCode = stallTails.includes('[opencode-log]')
+          ? classifyAgentServiceFailure(stallTails)
+          : null;
+        if (serviceCode) {
+          const detail = (agentStderrTail || agentStdoutTail || '').trim();
+          stallPayload = createSseErrorPayload(
+            serviceCode,
+            detail || 'The model service returned an error.',
+            { retryable: true },
+          );
+        }
+      }
       if (!stallPayload) {
         const message =
           `Agent stalled without emitting any new output for ${Math.round(inactivityTimeoutMs / 1000)}s. ` +
@@ -13870,9 +13893,22 @@ export async function startServer({
         !agentProducedOutput
       ) {
         markRpcCloseReason('empty_output');
+        // A silent empty exit is often a swallowed provider failure; the
+        // sandbox bootstrap pumps the provider error onto stderr, so prefer
+        // that concrete reason over the generic empty-output message.
+        // Gated on the pump marker — same rationale as the stall path:
+        // a benign keyword in another agent's stderr must not fabricate
+        // a service failure out of a quiet empty exit.
+        const emptyTails = `${agentStderrTail}\n${agentStdoutTail}`;
+        const emptyServiceCode = emptyTails.includes('[opencode-log]')
+          ? classifyAgentServiceFailure(emptyTails)
+          : null;
+        const emptyDetail = (agentStderrTail || agentStdoutTail || '').trim();
         send('error', createSseErrorPayload(
-          'AGENT_EXECUTION_FAILED',
-          'Agent completed without producing any output. The model or provider may have returned an empty response — check the agent logs for upstream errors.',
+          emptyServiceCode ?? 'AGENT_EXECUTION_FAILED',
+          emptyServiceCode && emptyDetail
+            ? emptyDetail
+            : 'Agent completed without producing any output. The model or provider may have returned an empty response — check the agent logs for upstream errors.',
           { retryable: true },
         ));
         return await finishWithRetryDecision('failed', code, signal);
@@ -14067,19 +14103,31 @@ export async function startServer({
               openCodeFailure.message,
               { retryable: true },
             ));
-          } else {
+          } else if (!run.error) {
+            // Surface SOMETHING when nothing has been surfaced yet: a failed
+            // run with no error event renders as a bare failure in the chat
+            // ("it just stopped"), undiagnosable from the UI (typical of
+            // sandboxed OpenCode dying with a silent non-zero exit). Gated on
+            // !run.error — runs.emit records every error event there, so an
+            // earlier specific error (e.g. a role-marker abort that SIGTERMed
+            // the child without finishing the run) is not followed by a
+            // second, blander message that would clobber it in the client.
+            const failDetail = (agentStderrTail || agentStdoutTail || '').trim();
             const rewritten = rewriteKnownAgentStreamError(
               def.id,
-              (agentStderrTail || agentStdoutTail || '').trim(),
+              failDetail,
               `${agentStderrTail}\n${agentStdoutTail}`,
             );
-            if (rewritten !== 'Agent stream error') {
-              send('error', createSseErrorPayload(
-                'AGENT_EXECUTION_FAILED',
-                rewritten,
-                { retryable: true },
-              ));
-            }
+            const message =
+              rewritten !== 'Agent stream error'
+                ? rewritten
+                : `Agent exited unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`}) without reporting a reason.` +
+                  (failDetail ? `\nLast output: ${failDetail.slice(-600)}` : '');
+            send('error', createSseErrorPayload(
+              'AGENT_EXECUTION_FAILED',
+              message,
+              { retryable: true },
+            ));
           }
         }
       }
