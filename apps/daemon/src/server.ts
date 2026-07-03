@@ -15522,7 +15522,8 @@ export async function startServer({
         await deleteConversation(db, createdConversationId);
       }
       if (createdProjectId) {
-        await dbDeleteProject(db, createdProjectId);
+        // 创建失败的回滚删除:项目从未真正交付给用户,不写 deleted_projects 墓碑。
+        await dbDeleteProject(db, createdProjectId, { tombstone: false });
       }
     };
 

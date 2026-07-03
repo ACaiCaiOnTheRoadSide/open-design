@@ -389,8 +389,20 @@ export async function updateProject(db: SqliteDb, id: string, patch: DbRow) {
   return getProject(db, id);
 }
 
-export async function deleteProject(db: SqliteDb, id: string) {
+// tombstone:false 仅供"创建失败回滚"路径使用:那种项目用户从未真正拥有过,
+// 不应计入"创建过的项目"统计。用户主动删除一律走默认路径写墓碑,
+// 后台的项目数统计(现存 projects + deleted_projects)才不随删除缩水。
+export async function deleteProject(db: SqliteDb, id: string, opts?: { tombstone?: boolean }) {
   const tenantId = currentTenantId();
+  if (opts?.tombstone !== false) {
+    await db
+      .prepare(
+        `INSERT INTO deleted_projects (id, tenant_id, name, created_at, deleted_at)
+           SELECT id, tenant_id, name, created_at, ? FROM projects WHERE id = ? AND tenant_id = ?
+           ON CONFLICT (id) DO NOTHING`,
+      )
+      .run(Date.now(), id, tenantId);
+  }
   await db.prepare(`DELETE FROM projects WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
 }
 
