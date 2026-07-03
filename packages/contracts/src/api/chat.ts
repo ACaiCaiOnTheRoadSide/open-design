@@ -355,7 +355,23 @@ export type PersistedAgentEvent =
       confidence?: number;
       draftPath?: string | null;
     }
-  | { kind: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number; durationMs?: number }
+  // `model` is the model id resolved for the run that produced this usage
+  // step (request pin → runtime-reported → request fallback); it also feeds
+  // the daemon's message_token_usage metering table. The reasoning/cache
+  // token breakdown is kept when the runtime reports it (OpenCode
+  // step_finish does) so cost accounting doesn't flatten cache hits into
+  // regular input tokens.
+  | {
+      kind: 'usage';
+      inputTokens?: number;
+      outputTokens?: number;
+      reasoningTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      model?: string;
+      costUsd?: number;
+      durationMs?: number;
+    }
   | { kind: 'raw'; line: string };
 
 export interface ChatMessage {

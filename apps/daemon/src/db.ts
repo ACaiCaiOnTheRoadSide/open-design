@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { migrateCritique } from './critique/persistence.js';
 import { migrateMediaTasks } from './media-tasks.js';
 import { migratePlugins } from './plugins/persistence.js';
-import { migrateTenantId, currentTenantId } from './multitenant.js';
+import { migrateTenantId, currentTenantId, currentUserId } from './multitenant.js';
 import { resolveDaemonDbConfig } from './storage/daemon-db.js';
 import { openPgAsync, type AsyncDb } from './storage/pg-async.js';
 
@@ -1106,6 +1106,62 @@ export async function appendMessageAgentEvent(db: SqliteDb, messageId: string, e
 export async function deleteMessage(db: SqliteDb, id: string) {
   const tenantId = currentTenantId();
   await db.prepare(`DELETE FROM messages WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+}
+
+// ---------- token usage metering ----------
+
+export interface MessageTokenUsageEntry {
+  projectId?: string | null;
+  conversationId?: string | null;
+  messageId: string;
+  runId?: string | null;
+  agentId?: string | null;
+  model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  costUsd?: number | null;
+  durationMs?: number | null;
+}
+
+function meterNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+// One row per persisted `usage` agent event — the flattened, SUM()-able twin
+// of the usage entries inside messages.events_json (admin-side per-user /
+// per-project token accounting reads this table). Insert-only and without a
+// messages FK on purpose: consumption is a fact that must survive message
+// rewrites, run retries, and project deletion.
+export async function insertMessageTokenUsage(db: SqliteDb, entry: MessageTokenUsageEntry) {
+  const tenantId = currentTenantId();
+  const userId = currentUserId() ?? null;
+  await db.prepare(
+    `INSERT INTO message_token_usage (
+        tenant_id, user_id, project_id, conversation_id, message_id, run_id,
+        agent_id, model, input_tokens, output_tokens, reasoning_tokens,
+        cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    tenantId,
+    userId,
+    entry.projectId ?? null,
+    entry.conversationId ?? null,
+    entry.messageId,
+    entry.runId ?? null,
+    entry.agentId ?? null,
+    typeof entry.model === 'string' && entry.model ? entry.model : null,
+    meterNumber(entry.inputTokens),
+    meterNumber(entry.outputTokens),
+    meterNumber(entry.reasoningTokens),
+    meterNumber(entry.cacheReadTokens),
+    meterNumber(entry.cacheWriteTokens),
+    meterNumber(entry.costUsd),
+    meterNumber(entry.durationMs),
+    Date.now(),
+  );
 }
 
 // ---------- preview comments ----------

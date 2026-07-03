@@ -416,6 +416,7 @@ import {
   getProject,
   getTemplate,
   insertConversation,
+  insertMessageTokenUsage,
   insertProject,
   insertRoutine,
   insertRoutineRun,
@@ -2730,13 +2731,58 @@ export async function upsertSkillPluginCandidateAssistantMessage(db, run, candid
 }
 
 async function persistRunEventToAssistantMessage(db, run, event, data) {
+  // Some runtimes only reveal the model they actually loaded through an early
+  // status event ({type:'status', label:'initializing'|'model', model:<id>});
+  // remember it on the run so usage rows below can still be attributed when
+  // the request didn't pin a model.
+  if (
+    event === 'agent' &&
+    data?.type === 'status' &&
+    typeof data.model === 'string' &&
+    data.model
+  ) {
+    run.observedModel = data.model;
+  }
   if (!run.assistantMessageId) return;
   const persisted = runSseEventToPersistedAgentEvent(event, data);
   if (!persisted) return;
+  if (persisted.kind === 'usage') {
+    // resolvedModel is what the spawn actually passed to the CLI; fall back to
+    // the runtime-reported model, then the raw request value.
+    const model = [run.resolvedModel, run.observedModel, run.model].find(
+      (m) => typeof m === 'string' && m,
+    );
+    if (model) persisted.model = model;
+  }
   try {
     await appendMessageAgentEvent(db, run.assistantMessageId, persisted);
   } catch (err) {
     console.warn('[runs] message event persistence failed', err);
+  }
+  if (persisted.kind === 'usage') {
+    // Metering twin of the events_json entry: one flat row per usage event in
+    // message_token_usage (tenant/user attribution comes from the request's
+    // ALS scope inside insertMessageTokenUsage). Failures must not disturb
+    // the run stream — this is accounting, not chat state.
+    try {
+      await insertMessageTokenUsage(db, {
+        projectId: run.projectId ?? null,
+        conversationId: run.conversationId ?? null,
+        messageId: run.assistantMessageId,
+        runId: run.id ?? null,
+        agentId: run.agentId ?? null,
+        model: persisted.model ?? null,
+        inputTokens: persisted.inputTokens,
+        outputTokens: persisted.outputTokens,
+        reasoningTokens: persisted.reasoningTokens,
+        cacheReadTokens: persisted.cacheReadTokens,
+        cacheWriteTokens: persisted.cacheWriteTokens,
+        costUsd: persisted.costUsd,
+        durationMs: persisted.durationMs,
+      });
+    } catch (err) {
+      console.warn('[runs] token usage persistence failed', err);
+    }
   }
 }
 
@@ -2833,6 +2879,9 @@ function daemonAgentPayloadToPersistedAgentEvent(data) {
       kind: 'usage',
       inputTokens: usage.input_tokens,
       outputTokens: usage.output_tokens,
+      ...(typeof usage.thought_tokens === 'number' ? { reasoningTokens: usage.thought_tokens } : {}),
+      ...(typeof usage.cached_read_tokens === 'number' ? { cacheReadTokens: usage.cached_read_tokens } : {}),
+      ...(typeof usage.cached_write_tokens === 'number' ? { cacheWriteTokens: usage.cached_write_tokens } : {}),
       ...(typeof data.costUsd === 'number' ? { costUsd: data.costUsd } : {}),
       ...(typeof data.durationMs === 'number' ? { durationMs: data.durationMs } : {}),
     };
@@ -11930,6 +11979,10 @@ export async function startServer({
         ? (def.reasoningOptions.find((r) => r.id === reasoning)?.id ?? null)
         : null;
     const agentOptions = { model: safeModel, reasoning: safeReasoning };
+    // Keep the model the spawn actually uses on the run object: usage-event
+    // persistence (persistRunEventToAssistantMessage) stamps it onto the
+    // stored usage events and the message_token_usage metering rows.
+    if (typeof safeModel === 'string' && safeModel) run.resolvedModel = safeModel;
     // Accumulates the agent's visible text this run so the close handler can
     // tell whether the turn ended on a clarifying question form. The
     // `od-plugin-authoring` plugin's turn-1 flow is to emit a

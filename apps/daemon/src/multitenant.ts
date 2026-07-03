@@ -29,6 +29,12 @@ export const TENANT_HEADER = 'x-tenant-id';
 // instead of a single container-level OD_OPENCODE_PROVIDER_CONFIG. It rides the
 // same ALS store as the tenant id so it reaches the spawn deep inside the run.
 export const PROVIDER_CONFIG_HEADER = 'x-od-provider-config';
+// The CALLING USER's id, injected per-request by the Go gateway alongside
+// X-Tenant-Id. tenant_id alone cannot attribute usage to a person: for team
+// accounts the gateway sets tenant = TeamID, so every member shares one
+// tenant. Rides the same ALS store; consumed by token-usage metering
+// (db.insertMessageTokenUsage). Optional — absent for legacy/direct access.
+export const USER_HEADER = 'x-od-user-id';
 // Global default media model (image/video), injected per-request by the Go
 // gateway (backend proxy.go) from the admin-set value. The shared daemon
 // ignores container env, so this header is how a whitelist admin's default
@@ -49,6 +55,7 @@ interface TenantStore {
   tenantId: string;
   // exactOptionalPropertyTypes: keep optional WITHOUT `| undefined`; callers
   // must omit the key (conditional spread) rather than assign undefined.
+  userId?: string;
   providerConfig?: string;
   mediaDefaults?: MediaDefaults;
 }
@@ -60,10 +67,12 @@ export function runWithTenant<T>(
   fn: () => T,
   providerConfig?: string,
   mediaDefaults?: MediaDefaults,
+  userId?: string,
 ): T {
   return tenantStorage.run(
     {
       tenantId,
+      ...(userId !== undefined ? { userId } : {}),
       ...(providerConfig !== undefined ? { providerConfig } : {}),
       ...(mediaDefaults !== undefined ? { mediaDefaults } : {}),
     },
@@ -85,10 +94,12 @@ export function enterTenant(tenantId: string): void {
   // request so re-scoping the tenant (tool-token callback path) does not drop
   // the caller's BYOK or the admin's default media model.
   const store = tenantStorage.getStore();
+  const userId = store?.userId;
   const providerConfig = store?.providerConfig;
   const mediaDefaults = store?.mediaDefaults;
   tenantStorage.enterWith({
     tenantId,
+    ...(userId !== undefined ? { userId } : {}),
     ...(providerConfig !== undefined ? { providerConfig } : {}),
     ...(mediaDefaults !== undefined ? { mediaDefaults } : {}),
   });
@@ -100,6 +111,16 @@ export function enterTenant(tenantId: string): void {
  */
 export function currentTenantId(): string {
   return tenantStorage.getStore()?.tenantId ?? LEGACY_TENANT;
+}
+
+/**
+ * The calling user's id for the current async scope (X-OD-User-Id), or
+ * undefined when the gateway didn't supply one (legacy/direct access,
+ * background tasks). Distinct from the tenant: team tenants share one
+ * tenant_id across members.
+ */
+export function currentUserId(): string | undefined {
+  return tenantStorage.getStore()?.userId;
 }
 
 /**
@@ -161,11 +182,13 @@ function parseMediaDefaultsHeader(raw: string | undefined): MediaDefaults | unde
 export function tenantMiddleware(req: Request, res: Response, next: NextFunction): void {
   const raw = req.header(TENANT_HEADER);
   const tenantId = raw && raw.trim().length > 0 ? raw.trim() : LEGACY_TENANT;
+  const rawUser = req.header(USER_HEADER);
+  const userId = rawUser && rawUser.trim().length > 0 ? rawUser.trim() : undefined;
   const rawProvider = req.header(PROVIDER_CONFIG_HEADER);
   const providerConfig =
     rawProvider && rawProvider.trim().length > 0 ? rawProvider.trim() : undefined;
   const mediaDefaults = parseMediaDefaultsHeader(req.header(MEDIA_DEFAULTS_HEADER));
-  runWithTenant(tenantId, () => next(), providerConfig, mediaDefaults);
+  runWithTenant(tenantId, () => next(), providerConfig, mediaDefaults, userId);
 }
 
 /**
