@@ -40,6 +40,12 @@ on:
 permissions:
   contents: write
   actions: write
+  # release-stable's publish_docker_image job (added in #4327) needs these to call
+  # docker-image.yml. A called workflow can only downgrade the caller's token, so without
+  # them this reusable-workflow chain fails at startup (permission escalation) — even though
+  # the docker job is skipped for the nightly channel. See run 27996588773.
+  packages: write
+  id-token: write
 
 concurrency:
   group: feishu-release-${{ github.ref }}

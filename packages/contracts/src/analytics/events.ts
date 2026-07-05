@@ -8,8 +8,10 @@
 // per-event prop types below.
 
 import type {
+  AnalyticsConfigureGlobals,
   TrackingConfigureAvailability,
   TrackingConfigureType,
+  TrackingRuntimeType,
 } from './public-params.js';
 
 // ---- Event names ---------------------------------------------------------
@@ -36,6 +38,7 @@ export type AnalyticsEventName =
   | 'file_upload_result'
   // Artifact
   | 'artifact_export_result'
+  | 'artifact_deploy_result'
   // Feedback
   | 'feedback_submit_result'
   | 'assistant_feedback_click'
@@ -61,7 +64,9 @@ export type AnalyticsEventName =
   | 'design_system_create_result'
   | 'design_system_review_result'
   | 'design_system_status_result'
-  | 'design_system_apply_result';
+  | 'design_system_apply_result'
+  // AI optimize (deep enrichment) of a programmatically-extracted DS.
+  | 'design_system_enrich_result';
 
 // ---- Pages ---------------------------------------------------------------
 
@@ -94,9 +99,25 @@ export type TrackingSettingsPage = 'settings';
 
 export type TrackingProjectKind =
   | 'prototype'
+  // `wireframe` / `mobile` / `live_artifact` are prototype-kind projects the
+  // Home task rail (task_chip) offers as their own cards. They all reuse the
+  // web-prototype seed (so the product `metadata.kind` stays `prototype`), but
+  // the analytics dimension splits them out so a created project's
+  // `project_kind` lines up 1:1 with the card the user picked:
+  //   - `wireframe`     ← metadata.fidelity === 'wireframe'
+  //   - `mobile`        ← metadata.platform/platformTargets is a mobile surface
+  //   - `live_artifact` ← metadata.intent === 'live-artifact'
+  // Derivation precedence (a prototype that matches several): live_artifact >
+  // wireframe > mobile. See `projectKindToTracking`.
+  | 'wireframe'
+  | 'mobile'
   | 'live_artifact'
   | 'slide_deck'
   | 'template'
+  // `document` is an `other`-kind project (resumes / reports / PDFs) the Home
+  // `document` card creates. Tagged via `metadata.intent === 'document'` so it
+  // splits out of generic `other` and matches its task_chip.
+  | 'document'
   | 'image'
   | 'video'
   // `hyperframes` is a `video` project rendered by the local HyperFrames
@@ -108,6 +129,7 @@ export type TrackingProjectKind =
   // `hyperframes-html` as a secondary anchor.
   | 'hyperframes'
   | 'audio'
+  | 'brand'
   // `design_system` covers DS-as-project runs (creation + regeneration).
   // The dashboard reads it on run_created / run_finished to split the
   // DS generation funnel from regular artifact runs.
@@ -129,6 +151,10 @@ export type TrackingAmrEntrySource =
   | 'inline_model_switcher_amr_row'
   | 'settings_amr_agent_card'
   | 'settings_amr_authorize'
+  | 'settings_amr_console'
+  | 'settings_amr_install'
+  | 'avatar_amr_console'
+  | 'handoff_amr_website'
   | 'chat_error_authorize_retry'
   | 'chat_error_recharge'
   | 'chat_error_switch_retry_card'
@@ -141,6 +167,17 @@ export interface AmrEntryAttribution {
   sourceProduct: 'open_design';
   sourceDetail: TrackingAmrEntrySource;
   occurredAt: string;
+  // Open Design install/device id forwarded only on consent-gated AMR handoffs.
+  odDeviceId?: string;
+  // Self-reported onboarding profile, forwarded to AMR (anchored to entryId) so
+  // AMR can segment paid conversion by who the visitor is. Open strings, not a
+  // union: onboarding keeps these open so a new option never forces a contract
+  // bump. Absent when the visitor skipped or never reached onboarding. useCase
+  // is multi-select, hence an array.
+  odRole?: string;
+  odOrgSize?: string;
+  odUseCase?: string[];
+  odSource?: string;
 }
 
 // The six tabs inside the New project modal (CSV row 7 tab_name).
@@ -205,18 +242,19 @@ export type TrackingArtifactKind =
   | 'doc'
   | 'unknown';
 
+// NOTE: vercel / cloudflare_pages are intentionally NOT here. Deploy attempts
+// used to ride artifact_export_result with those formats, but that only ever
+// meant "deploy popover opened", never a real publish. Real deploys are now
+// tracked exclusively by artifact_deploy_result (see TrackingDeployProvider).
 export type TrackingExportFormat =
   | 'pdf'
-  | 'pptx'
   | 'zip'
   | 'html'
   | 'image'
   | 'markdown'
   | 'template'
   | 'share_link'
-  | 'share_page'
-  | 'vercel'
-  | 'cloudflare_pages';
+  | 'share_page';
 
 export type TrackingResult = 'success' | 'failed';
 export type TrackingRunResult = 'success' | 'failed' | 'cancelled';
@@ -240,12 +278,15 @@ export type TrackingRunFailureDetail =
   | 'stale_profile'
   | 'refresh_token_reused'
   | 'missing_api_key'
+  | 'invalid_api_key'
   | 'hard_quota'
+  | 'workspace_credits_exhausted'
   | 'rate_limit_429'
   | 'amr_insufficient_balance'
   | 'model_not_found'
   | 'model_not_supported'
   | 'model_disabled'
+  | 'local_model_not_loaded'
   | 'cli_version_incompatible'
   | 'prompt_too_large'
   | 'upstream_5xx'
@@ -260,6 +301,7 @@ export type TrackingRunFailureDetail =
   | 'tool_error'
   | 'plugin_artifact_missing'
   | 'cli_not_installed'
+  | 'git_bash_missing'
   | 'agent_config_invalid'
   | 'spawn_failed'
   | 'spawn_enoexec'
@@ -267,6 +309,7 @@ export type TrackingRunFailureDetail =
   | 'spawn_eperm'
   | 'stdin_write_eof'
   | 'agent_protocol_error'
+  | 'session_resume_expired'
   | 'fabricated_role_marker'
   | 'permission_request_not_found'
   | 'qoder_stop_sequence'
@@ -275,6 +318,9 @@ export type TrackingRunFailureDetail =
   | 'interrupted'
   | 'exit_code'
   | 'terminated_unknown'
+  | 'stream_error'
+  | 'exit_nonzero'
+  | 'fatal_rpc_error'
   | 'execution_failed'
   | 'user_cancelled'
   | 'unknown';
@@ -437,40 +483,44 @@ export type TrackingChatPanelPageViewSource =
 //
 // CSV row "Onboarding / page_view". Fires once per step exposure inside the
 // welcome flow. The current first-run flow is Connect → About you →
-// Newsletter; the design-system and generation literals remain in the
-// contract for historical rows and a future reintroduction. Each step's `step_index` / `step_name`
-// must match the enum pairs below. `onboarding_session_id` is generated once
-// per session so dashboards can stitch the funnel.
+// Newsletter → Design system CTA. The legacy brand-extraction literal remains
+// in the contract for historical rows only.
+// Each step's `step_index` / `step_name` must match the enum pairs below.
+// `onboarding_session_id` is generated once per session so dashboards can
+// stitch the funnel.
 export type TrackingOnboardingArea =
   | 'runtime'
   | 'about_you'
   | 'newsletter'
   | 'design_system'
+  /** @deprecated legacy onboarding final-step area; use `design_system`. */
+  | 'brand'
   | 'generation_progress';
 
-// Mixed string enum: numeric steps render as the strings `'1' | '2' | '3'`
+// Mixed string enum: numeric steps render as the strings `'1' | '2' | '3' | '4'`
 // and the generation phase as `'progress'`. Mirrors the v2 doc literally.
-export type TrackingOnboardingStepIndex = '1' | '2' | '3' | 'progress';
+export type TrackingOnboardingStepIndex = '1' | '2' | '3' | '4' | 'progress';
 
 export type TrackingOnboardingStepName =
   | 'connect'
   | 'about_you'
   | 'newsletter'
   | 'design_system'
+  /** @deprecated legacy onboarding final-step name; use `design_system`. */
+  | 'brand_extract'
   | 'generation';
 
 // How the user chose to connect to a model provider. `amr_cloud` is the
 // hosted offering the doc references; today the UI ships only
 // `local_cli` (Local Coding Agent) and `byok` (own model key). `none`
 // stamps the click events fired before any runtime was picked.
-export type TrackingOnboardingRuntimeType =
-  | 'amr_cloud'
-  | 'local_cli'
-  | 'byok'
-  | 'none';
+// Onboarding's runtime pick is the same closed set as the global
+// `runtime_type` public param; alias to the single source of truth so the
+// two never drift.
+export type TrackingOnboardingRuntimeType = TrackingRuntimeType;
 
 // What kind of source material the user pinned in the design-system
-// step. `text` covers the brand description textarea; `mixed` is
+// step. `text` covers the freeform design-system description; `mixed` is
 // reserved for batches that combined more than one type.
 export type TrackingOnboardingSourceType =
   | 'text'
@@ -482,11 +532,14 @@ export type TrackingOnboardingSourceType =
   | 'none';
 
 // `completed`: user clicked through every step (with or without a DS).
-// `skipped`: user clicked Skip from any step. `cancelled`: user closed
-// the onboarding tab / navigated away without finishing.
-// `failed`: terminal error before completion.
+// `cancelled`: user closed the onboarding tab / navigated away without
+// finishing. `failed`: terminal error before completion.
+// `skipped`: DEPRECATED — the onboarding "Skip for now" affordance was
+// removed (Connect is now a required gate), so this is no longer emitted.
+// Kept in the union for historical data / dashboard compatibility.
 export type TrackingOnboardingCompletionResult =
   | 'completed'
+  /** @deprecated no longer emitted — Skip was removed from onboarding. */
   | 'skipped'
   | 'cancelled'
   | 'failed';
@@ -494,6 +547,7 @@ export type TrackingOnboardingCompletionResult =
 export type TrackingOnboardingCompletionType =
   | 'completed_with_design_system'
   | 'completed_without_design_system'
+  /** @deprecated no longer emitted — Skip was removed from onboarding. */
   | 'skipped';
 
 // CLI scan terminal state. `success`: at least one CLI was detected;
@@ -545,6 +599,7 @@ export type TrackingOnboardingClickElement =
   // Action buttons
   | 'continue'
   | 'back'
+  /** @deprecated no longer emitted — Skip was removed from onboarding. */
   | 'skip'
   | 'generate'
   // About you fields
@@ -570,6 +625,7 @@ export type TrackingOnboardingClickAction =
   | 'select_runtime'
   | 'continue'
   | 'back'
+  /** @deprecated no longer emitted — Skip was removed from onboarding. */
   | 'skip'
   | 'generate'
   | 'select_option'
@@ -583,8 +639,8 @@ export type TrackingOnboardingClickAction =
 // ride along on About-you clicks AND on the `about_you_submit` snapshot
 // click. `source_type`/`has_brand_description`/`source_count` only on
 // Design-system source clicks. `runtime_type`/`is_recommended` only on
-// Connect clicks. Doc explicitly forbids brand text, GitHub URL, file
-// name, or path values — all enum + bool + count, no free-text.
+// Connect clicks. Doc explicitly forbids freeform design-system description,
+// GitHub URL, file name, or path values — all enum + bool + count, no free-text.
 export interface OnboardingClickProps {
   page_name: 'onboarding';
   area: TrackingOnboardingArea;
@@ -665,6 +721,11 @@ export type TrackingDesignSystemsArea =
   | 'design_system_generation'
   | 'design_system_preview'
   | 'design_system_picker'
+  // Preset-brand picker opened from the create form ("Start from a brand").
+  // A brand here is one *source* for a design system, not a separate object.
+  | 'preset_brand_picker'
+  // AI-optimize (deep enrichment) banner on a DS-as-project.
+  | 'design_system_enrich'
   | 'composer';
 
 export type TrackingDesignSystemsViewType =
@@ -680,6 +741,10 @@ export type TrackingDesignSystemsEntryFrom =
   | 'home_card'
   | 'composer_picker'
   | 'project_settings'
+  // Created from inside a project's canvas / file workspace.
+  | 'project_canvas'
+  // Created from the Library surface.
+  | 'library'
   | 'unknown';
 
 // Origin of the design system itself. NOT the same field as
@@ -689,6 +754,7 @@ export type TrackingDesignSystemsEntryFrom =
 export type TrackingDesignSystemOrigin =
   | 'onboarding'
   | 'manual_create'
+  | 'source_url'
   | 'github_repo'
   | 'local_code'
   | 'fig'
@@ -708,6 +774,22 @@ export type TrackingDesignSystemStatus =
   | 'failed'
   | 'archived'
   | 'unknown';
+
+// Whether a design system is an official/preset one or user-built. Derived
+// from the design_system_id shape: `user:<id>` => custom, everything else
+// (registry-backed presets) => official. `unknown` when no DS is in play.
+export type TrackingDesignSystemKind = 'official' | 'custom' | 'unknown';
+
+// Which surface initiated an edit of an existing design system. All of the
+// non-`direct_module` surfaces ultimately route through the agent (a run);
+// `direct_module` is an in-panel module button (some direct, some agent-routed).
+export type TrackingDesignSystemEditSurface =
+  | 'chat'
+  | 'edit'
+  | 'draw'
+  | 'comment'
+  | 'mark'
+  | 'direct_module';
 
 export interface DesignSystemsPageViewProps {
   page_name: 'design_systems' | 'design_system_project' | 'home' | 'studio';
@@ -798,7 +880,12 @@ export type TrackingDesignSystemCreateEntryFrom =
   | 'onboarding'
   | 'design_systems_page'
   | 'home_card'
+  | 'composer_picker'
   | 'project_settings'
+  // Created from inside a project's canvas / file workspace.
+  | 'project_canvas'
+  // Created from the Library surface.
+  | 'library'
   | 'unknown';
 
 export type TrackingDesignSystemSourceIngestEntryFrom =
@@ -919,6 +1006,11 @@ export interface DesignSystemCreateResultProps {
   project_id?: string;
   design_system_id?: string;
   design_system_source: TrackingDesignSystemOrigin;
+  // Every source actually used, comma-joined (e.g. `source_url,local_code`),
+  // so multi-source creates aren't flattened to the single `mixed` value of
+  // `design_system_source`. Mirrors the multi-value convention of
+  // target_platforms/connectors. See tracking spec dimension dict + comment ②.
+  ds_source_origins?: string;
   source_count: number;
   created_as_project: boolean;
   has_brand_description: boolean;
@@ -982,6 +1074,30 @@ export interface DesignSystemApplyResultProps {
   run_id?: string;
   error_code?: string;
   duration_ms: number;
+}
+
+// AI optimize (deep enrichment) of a programmatically-extracted design system.
+// `design_system_enrich` click = the user pressed "AI Optimize" on the banner;
+// `design_system_enrich_result` = the enrichment run settled. Together they
+// give the AI-conversion rate (clicked ÷ programmatic creates) and, with
+// ProjectMetadata.enrichmentStatus, the programmatic-vs-ai_refined comparison.
+export interface DesignSystemEnrichClickProps {
+  page_name: 'design_system_project';
+  area: 'design_system_enrich';
+  element: 'ai_optimize';
+  design_system_id?: string;
+  project_kind?: TrackingProjectKind | null;
+}
+
+export interface DesignSystemEnrichResultProps {
+  page_name: 'design_system_project';
+  area: 'design_system_enrich';
+  result: 'success' | 'failed' | 'cancelled';
+  design_system_id?: string;
+  project_id?: string;
+  run_id?: string;
+  error_code?: string;
+  duration_ms?: number;
 }
 
 // --- Generic page_view (existing surfaces) ---
@@ -1114,6 +1230,12 @@ export interface HomeChatComposerClickProps {
     // composer's `element: 'attachment'` so the same dashboard counts
     // "user opened the file picker" across both surfaces.
     | 'attachment'
+    // Opening the "Import from library" picker from the home composer's "+"
+    // menu. Mirrors the chat_panel composer's `element: 'library'`.
+    | 'library'
+    // Opening the "Import from Figma" modal from the home composer's "+" menu
+    // (offline .fig decode). Mirrors the chat_panel composer's `figma_import`.
+    | 'figma_import'
     // Local-storage / working-dir picker under the home composer; `task_chip`
     // is the task-type rail (原型 / 幻灯片 / HyperFrames / 视频 / …).
     | 'working_dir'
@@ -1135,6 +1257,11 @@ export interface HomeChatComposerClickProps {
     // task type; for plugin-preset cards `plugin_id` / `plugin_type` identify
     // the preset. The raw prompt text is never sent (free text / PII rule).
     | 'example_prompt'
+    // The "Open as project" action on an example card — one-click remix that
+    // creates and enters a project seeded from the example instead of only
+    // loading it into the composer. Same `chip_id` / `plugin_id` / `plugin_type`
+    // attribution as `example_prompt`.
+    | 'example_open_project'
     // The "+" menu on the home composer (same control as the in-project
     // composer's `plus_*` events): opening it, inserting a
     // connector/plugin/mcp mention (`resource_kind` + `resource_id`), or
@@ -1247,6 +1374,7 @@ export interface ProjectsListControlsClickProps {
     | 'your_designs'
     | 'search_input'
     | 'select'
+    | 'refresh'
     | 'create_project'
     | 'grid_view'
     | 'list_view';
@@ -1506,15 +1634,83 @@ export interface DesignSystemsCreateClickProps {
   page_name: 'design_systems';
   area: 'design_system_create';
   element:
-    | 'github_repo_add'
+    | 'source_url_add'
+    | 'figma_url_add'
     | 'show_access_methods'
     | 'browse_folder'
     | 'upload_fig'
     | 'add_assets'
+    // Opens the preset-brand picker ("Start from a brand").
+    | 'start_from_brand'
     | 'continue_to_generation'
     | 'back';
   // State *after* the toggle; only sent with element=show_access_methods.
   methods_expanded?: boolean;
+}
+
+// Preset-brand picker ("Start from a brand") on the /design-systems/create
+// form. Picking a brand adds its site as a *source* for the design system —
+// brand is an input here, not a separate object. Privacy: never send the raw
+// brand domain/URL; only the curated category + quick-pick flag.
+export interface DesignSystemsPresetBrandPickerClickProps {
+  page_name: 'design_systems';
+  area: 'preset_brand_picker';
+  element: 'brand_pick' | 'quick_pick' | 'close';
+  // Curated category bucket of the picked brand (e.g. `software`, `finance`).
+  // Only on brand_pick / quick_pick. Never the domain.
+  preset_brand_category?: string;
+  // True when picked from the quick "popular brands" row rather than search.
+  is_quick_pick?: boolean;
+}
+
+export interface DesignSystemsPresetBrandPickerSurfaceViewProps {
+  page_name: 'design_systems';
+  area: 'preset_brand_picker';
+}
+
+// Direct in-panel edits of an existing design system (tracking spec §3.6,
+// E3). Covers the DS list general ops (edit-with-agent / refresh / download),
+// the DesignKitView module buttons (logo / typography / palette / images /
+// kit), and the brand preview card. `edit_surface` is always `direct_module`
+// here; agent-routed edits (chat / draw / edit / comment / mark) ride on
+// run_created.edit_surface instead. Never carries artifact content/URLs.
+export interface DesignSystemEditClickProps {
+  page_name: 'design_systems' | 'design_system_project';
+  area: 'design_system_edit';
+  element:
+    | 'edit_with_agent'
+    | 'refresh'
+    | 'download'
+    | 'logo_upload'
+    | 'logo_delete'
+    | 'design_md_copy'
+    | 'design_md_edit'
+    | 'design_md_upload'
+    | 'font_upload'
+    | 'color_edit'
+    | 'image_upload'
+    | 'image_delete'
+    | 'kit_refresh'
+    | 'kit_download'
+    | 'kit_import'
+    | 'kit_reset'
+    | 'kit_open'
+    | 'brand_card_use_in_chat'
+    | 'brand_card_open_project'
+    | 'brand_card_delete';
+  module?:
+    | 'logo'
+    | 'design_md'
+    | 'typography'
+    | 'palette'
+    | 'images'
+    | 'kit'
+    | 'brand_card'
+    | 'general';
+  edit_surface?: TrackingDesignSystemEditSurface;
+  artifact_kind?: 'design_system';
+  design_system_id?: string;
+  project_id?: string;
 }
 
 // INTEGRATIONS
@@ -1552,6 +1748,7 @@ export interface IntegrationsConnectorsTabClickProps {
     | 'save_key'
     | 'clear'
     | 'get_api_key'
+    | 'gate_card'
     | 'provider_chip'
     | 'search_connectors';
 }
@@ -1588,6 +1785,10 @@ export interface ChatPanelClickProps {
     | 'chat_input'
     | 'composer_settings'
     | 'attachment'
+    | 'library'
+    // Opening the "Import from Figma" modal from the chat composer's "+" menu
+    // (offline .fig decode). Sits beside `library` as a sibling import source.
+    | 'figma_import'
     | 'send'
     | 'mention_popover_trigger'
     | 'resources_popover_trigger';
@@ -1642,7 +1843,12 @@ export interface DesignToolboxClickProps {
 //     or jumping to the add-resource surface (`resource_kind`).
 //   - `design_system_switch`: picked a design system from the composer
 //     (`design_system_id`).
-//   - `working_dir_switch`: changed the project's local-storage working dir.
+//   - `working_dir` / `working_dir_recent` / `working_dir_clear`: the
+//     working-dir picker under the composer — picking a new folder, re-selecting
+//     one from the "Recent folders" submenu, or clearing the bound dir. Fires on
+//     the click itself (intent), identical timing/semantics to the home
+//     composer's `working_dir*` elements, so one dashboard counts the action
+//     across both surfaces.
 //   - `agent_selector_open` / `agent_select` / `agent_model_select`: the CLI/
 //     agent/model dropdown (`agent_id` / `model_id`).
 //   - `context_remove`: removed a staged context chip (`resource_kind` +
@@ -1655,7 +1861,9 @@ export interface ComposerBarClickProps {
     | 'plus_pick'
     | 'plus_add'
     | 'design_system_switch'
-    | 'working_dir_switch'
+    | 'working_dir'
+    | 'working_dir_recent'
+    | 'working_dir_clear'
     | 'agent_selector_open'
     | 'agent_select'
     | 'agent_model_select'
@@ -1798,8 +2006,11 @@ export interface FileManagerClickProps {
   area: 'file_manager';
   element:
     | 'new_sketch'
+    | 'new_browser'
+    | 'create_design_system'
     | 'paste'
     | 'upload'
+    | 'library'
     | 'select_all_on_page'
     | 'select_everything'
     | 'download_as_zip'
@@ -1869,8 +2080,14 @@ export interface ArtifactToolbarClickProps {
     | 'reload'
     | 'preview'
     | 'source'
+    // Copies a screenshot of the current preview to the clipboard (does not
+    // start a run). Tracked so the preview-export tool's usage is measurable.
+    | 'screenshot'
     | 'tweaks'
-    | 'draw'
+    // The Mark (mark-pen) annotation tool. Renamed from `draw` to match the
+    // product label users see; the draw-overlay sub-toolbar keeps area
+    // `draw_toolbar`.
+    | 'mark'
     | 'comment'
     | 'pods'
     | 'inspect'
@@ -2025,7 +2242,10 @@ export interface PresentPopoverClickProps {
 export interface ShareOptionPopoverClickProps {
   page_name: 'artifact';
   area: 'share_option_popover';
-  element: TrackingExportFormat;
+  // Export/share formats, plus 'publish_required_guide' for the share-intent
+  // signal: the user opened Share wanting a link but the artifact isn't
+  // deployed yet, so only the "publish online first" guide row is shown.
+  element: TrackingExportFormat | 'publish_required_guide';
   artifact_id: string;
   artifact_kind: TrackingArtifactKind;
   project_id: string;
@@ -2166,6 +2386,7 @@ export interface SettingsConnectorsClickProps {
     | 'save_key'
     | 'clear'
     | 'get_api_key'
+    | 'gate_card'
     | 'provider_chip'
     | 'search_connectors';
   connector_id?: string;
@@ -2280,6 +2501,9 @@ export type UiClickProps =
   | DesignSystemsTemplatesModalClickProps
   | DesignSystemsTemplatesModalSharePopoverClickProps
   | DesignSystemsCreateClickProps
+  | DesignSystemsPresetBrandPickerClickProps
+  | DesignSystemEnrichClickProps
+  | DesignSystemEditClickProps
   | IntegrationsTabClickProps
   | IntegrationsMcpTabClickProps
   | IntegrationsConnectorsTabClickProps
@@ -2448,6 +2672,7 @@ export type SurfaceViewProps =
   | PluginDetailModalSurfaceViewProps
   | PluginImportModalSurfaceViewProps
   | DesignSystemsTemplatesModalSurfaceViewProps
+  | DesignSystemsPresetBrandPickerSurfaceViewProps
   | AssistantFeedbackReasonPanelSurfaceViewProps
   | QuestionsFormSurfaceViewProps
   | UpdateIndicatorSurfaceViewProps
@@ -2526,7 +2751,26 @@ export interface RunCreatedProps {
   entry_from?:
     | 'new_project'
     | 'chat_composer'
+    // Preview-annotation entries: `comment` (comment/board pin flow) and
+    // `mark` (Mark draw-overlay flow). Both run against an existing artifact.
+    | 'comment'
+    | 'mark'
+    // `next_step`: composer seeded by a guided Next-step action (best-effort,
+    // tagged on the following send). `question_answer`: submitting answers to
+    // an inline `<question-form>` clarification.
+    | 'next_step'
+    | 'question_answer'
     | TrackingDesignSystemRunEntryFrom;
+  // Session-dimension run context (0-based `turn_index` within the browser
+  // analytics session, `is_first_run` === turn_index 0). Lets the dashboard
+  // sequence a session's runs and read "did this session reach an artifact,
+  // and on which turn?". Optional: omitted when the client could not compute
+  // them (e.g. storage unavailable).
+  turn_index?: number;
+  is_first_run?: boolean;
+  // True when the project already had a generated artifact when this run
+  // started (project-scoped) — i.e. the run is an edit, not a first creation.
+  has_existing_artifact?: boolean;
   project_source?: TrackingProjectSource;
   project_id: string;
   conversation_id: string | null;
@@ -2534,7 +2778,14 @@ export interface RunCreatedProps {
   project_kind: TrackingProjectKind | null;
   design_system_id?: string;
   design_system_source: TrackingDesignSystemSource;
+  // Official preset vs user-built; `design_system_slug` carries the concrete
+  // preset id when official (never set for custom — only the id is sent there).
+  design_system_kind?: TrackingDesignSystemKind;
+  design_system_slug?: string;
   design_system_version?: string;
+  // Which surface drove this run when it's editing an existing DS
+  // (chat / edit / draw / comment / mark). Only on design_system_project runs.
+  edit_surface?: TrackingDesignSystemEditSurface;
   // DS-variant context. `ds_source_origin` mirrors the
   // `TrackingDesignSystemOrigin` set used on DS page_views (where
   // the DS came from), separate from the runtime-selection
@@ -2564,7 +2815,16 @@ export interface RunCreatedProps {
   // own default was selected; use `modelIdForTracking` to bucket null/empty
   // into `'default'` at every emit site.
   model_id: string;
-  agent_provider_id: TrackingCliProviderId;
+  // CLI providers for daemon-executed runs; BYOK providers for runs streamed
+  // client-side against the user's own key (those never reach a local CLI).
+  agent_provider_id: TrackingCliProviderId | TrackingByokProviderId;
+  // The runtime this run launched with, stamped on the event so it cannot
+  // drift. Normally `runtime_type` rides on the global super-property, but the
+  // active runtime can change mid-stream (e.g. the user flips the avatar-menu
+  // mode while a BYOK turn is in flight), which would split one run across
+  // buckets. Client-side BYOK emits set this explicitly; daemon run events
+  // already pin it. Omit to inherit the global value.
+  runtime_type?: TrackingRuntimeType;
   skill_id: string | null;
   mcp_id: string | null;
   // Composer mode the prompt was sent in. `ask` is the lighter Q&A mode
@@ -2606,7 +2866,19 @@ export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
   tool_call_seen?: boolean;
   artifact_write_seen?: boolean;
   live_artifact_seen?: boolean;
+  // Distinct artifact files this run produced OR edited (created + modified),
+  // measured agent-agnostically by a filesystem snapshot diff in the daemon
+  // (`run-artifact-fs.ts`). An edit-only turn that rewrites an existing file
+  // still reports >0 — the directory's file count is unchanged but the run did
+  // produce artifact work. Replaces the tool-stream-derived count, which only
+  // `claude_code` reported in a recognized shape.
   artifact_count: number;
+  // Breakdown of `artifact_count`. `artifacts_created` (new files) approximates
+  // an activation signal; `artifacts_modified` (existing files edited)
+  // approximates an iteration / engagement signal. Optional: emitted only when
+  // the daemon captured a baseline snapshot for the run.
+  artifacts_created?: number;
+  artifacts_modified?: number;
   // True when the run raised a `<question-form>` clarification. Such runs
   // are intent-clarification turns (the agent stops to ask the user a question)
   // and therefore inherently produce no artifact, so the dashboard can exclude
@@ -2623,12 +2895,32 @@ export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
   uncached_input_tokens?: number;
   estimated_context_tokens?: number;
   cache_hit_ratio?: number;
+  // Cache-hit of the turn's FIRST model call (vs `cache_hit_ratio`, which is the
+  // last/aggregate call). The first call is the session-reuse signal: within a
+  // turn, later calls re-read the growing cached prefix and inflate the
+  // aggregate regardless of reuse. Per-call-usage agents (claude/opencode/
+  // codebuddy/pi) source this from the stream; codex from its rollout.
+  first_call_input_tokens?: number;
+  first_call_cache_read_input_tokens?: number;
+  first_call_cache_hit_ratio?: number;
+  // Whether this run is a non-first turn (a prior completed assistant turn
+  // exists). Slice first_call_cache_hit_ratio by this to isolate the turns
+  // where session reuse applies.
+  is_followup_turn?: boolean;
   cache_token_source?: 'anthropic' | 'openai' | 'unavailable';
   queue_duration_ms?: number;
   pre_spawn_duration_ms?: number;
   process_spawn_duration_ms?: number;
   time_to_first_token_ms?: number;
   spawn_to_first_token_ms?: number;
+  // `spawn_to_first_token_ms` split into auditable subsegments so dashboards
+  // can separate local CLI startup from session handshake from provider
+  // first-token latency. The four parts sum back to `spawn_to_first_token_ms`
+  // (absent subsegments count as 0 and roll into the remainder).
+  cli_ready_ms?: number;
+  session_init_ms?: number;
+  model_first_token_ms?: number;
+  spawn_to_first_token_remainder_ms?: number;
   generation_duration_ms?: number;
   tool_call_count?: number;
   tool_duration_ms?: number;
@@ -2686,6 +2978,8 @@ export interface RunRetryBaseProps {
 
 export interface RunRetryAttemptedProps extends RunRetryBaseProps {
   retry_reason: 'transient_failure';
+  // Backoff delay (ms) waited before this retry attempt was restarted.
+  retry_delay_ms?: number;
 }
 
 export interface RunRetryFinishedProps extends RunRetryBaseProps {
@@ -2775,6 +3069,32 @@ export interface ArtifactExportResultProps {
   result: TrackingExportResult;
   error_code?: string;
   export_duration_ms: number;
+  project_id: string;
+  project_kind: TrackingProjectKind | null;
+}
+
+export type TrackingDeployProvider = 'vercel' | 'cloudflare_pages';
+
+// Fired from the deploy modal when a real publish attempt resolves — NOT when
+// the modal merely opens (that path is `artifact_export_result` with
+// export_format vercel/cloudflare_pages and only means "popover opened").
+// `result` is 'success' once the provider accepts the deploy (the link may
+// still be delayed/protected), 'failed' on a hard error or missing config.
+export interface ArtifactDeployResultProps {
+  page_name: 'artifact';
+  area: 'deploy_modal';
+  artifact_id: string;
+  artifact_kind: TrackingArtifactKind;
+  provider: TrackingDeployProvider;
+  result: TrackingExportResult;
+  // True when this attempt saved a new/changed token (the user actually
+  // entered a key this run), so "configured a key AND deployed" is queryable.
+  saved_new_token: boolean;
+  // True when the provider had no saved, configured credentials before this
+  // attempt — i.e. this is a first-time setup-and-deploy.
+  first_configure: boolean;
+  error_code?: string;
+  deploy_duration_ms: number;
   project_id: string;
   project_kind: TrackingProjectKind | null;
 }
@@ -2941,6 +3261,7 @@ export type AnalyticsEventPayload =
   | { event: 'update_apply_observed'; props: UpdateApplyObservedProps }
   | { event: 'file_upload_result'; props: FileUploadResultProps }
   | { event: 'artifact_export_result'; props: ArtifactExportResultProps }
+  | { event: 'artifact_deploy_result'; props: ArtifactDeployResultProps }
   | { event: 'feedback_submit_result'; props: FeedbackSubmitResultProps }
   | { event: 'assistant_feedback_click'; props: AssistantFeedbackClickProps }
   | {
@@ -2973,7 +3294,8 @@ export type AnalyticsEventPayload =
   | { event: 'design_system_create_result'; props: DesignSystemCreateResultProps }
   | { event: 'design_system_review_result'; props: DesignSystemReviewResultProps }
   | { event: 'design_system_status_result'; props: DesignSystemStatusResultProps }
-  | { event: 'design_system_apply_result'; props: DesignSystemApplyResultProps };
+  | { event: 'design_system_apply_result'; props: DesignSystemApplyResultProps }
+  | { event: 'design_system_enrich_result'; props: DesignSystemEnrichResultProps };
 
 // ---- Enum mapping helpers (code ↔ CSV wire format) -----------------------
 
@@ -2988,7 +3310,7 @@ export function sessionModeToTracking(
 }
 
 // Code `ProjectKind` from packages/contracts/src/api/projects.ts:
-//   'prototype' | 'deck' | 'template' | 'other' | 'image' | 'video' | 'audio'
+//   'prototype' | 'deck' | 'template' | 'other' | 'brand' | 'image' | 'video' | 'audio'
 // Discriminates HyperFrames from generic AI video. A HyperFrames project is
 // stored as `kind: 'video'` with `metadata.videoModel === 'hyperframes-html'`
 // (the local HTML→MP4 renderer); callers pass that videoModel through so the
@@ -2996,19 +3318,47 @@ export function sessionModeToTracking(
 // `'hyperframes'` member docblock on `TrackingProjectKind`.
 const HYPERFRAMES_VIDEO_MODEL = 'hyperframes-html';
 
+// Discriminators read off a project's persisted `metadata` to split the coarse
+// product `kind` into the finer analytics `project_kind` (so a created
+// project's kind matches the Home task_chip the user picked). All optional —
+// when none are supplied the function behaves exactly as the legacy
+// `(kind, videoModel)` mapping.
+export interface ProjectKindTrackingHints {
+  fidelity?: string | null | undefined;
+  intent?: string | null | undefined;
+  platform?: string | null | undefined;
+  platformTargets?: readonly string[] | null | undefined;
+}
+
+function isMobileSurface(hints: ProjectKindTrackingHints | undefined): boolean {
+  const mobile = (target: string | null | undefined): boolean =>
+    target === 'mobile-ios' || target === 'mobile-android';
+  if (mobile(hints?.platform)) return true;
+  return (hints?.platformTargets ?? []).some(mobile);
+}
+
 export function projectKindToTracking(
   kind: string | null | undefined,
   videoModel?: string | null,
+  hints?: ProjectKindTrackingHints,
 ): TrackingProjectKind | null {
   switch (kind) {
     case 'prototype':
+      // Prototype subtypes share `kind: 'prototype'` but carry a distinguishing
+      // metadata field. Precedence (a prototype matching several): live_artifact
+      // > wireframe > mobile, then plain prototype.
+      if (hints?.intent === 'live-artifact') return 'live_artifact';
+      if (hints?.fidelity === 'wireframe') return 'wireframe';
+      if (isMobileSurface(hints)) return 'mobile';
       return 'prototype';
     case 'deck':
       return 'slide_deck';
     case 'template':
       return 'template';
     case 'other':
-      return 'other';
+      // Documents (resumes / reports / PDFs) ride the generic `other` kind but
+      // tag `intent: 'document'` so they split out of catch-all `other`.
+      return hints?.intent === 'document' ? 'document' : 'other';
     case 'image':
       return 'image';
     case 'video':
@@ -3017,12 +3367,39 @@ export function projectKindToTracking(
       return videoModel === HYPERFRAMES_VIDEO_MODEL ? 'hyperframes' : 'video';
     case 'audio':
       return 'audio';
+    case 'brand':
+      return 'brand';
     case 'live-artifact':
     case 'live_artifact':
       return 'live_artifact';
     default:
       return null;
   }
+}
+
+// Convenience wrapper: derive the analytics `project_kind` straight from a
+// project's persisted metadata, forwarding the subtype discriminators
+// (fidelity / intent / platform) so prototype/other projects resolve to their
+// finer kind. Prefer this at every call site that has the full metadata object.
+export function projectKindFromMetadataToTracking(
+  metadata:
+    | {
+        kind?: string | null;
+        videoModel?: string | null;
+        fidelity?: string | null;
+        intent?: string | null;
+        platform?: string | null;
+        platformTargets?: readonly string[] | null;
+      }
+    | null
+    | undefined,
+): TrackingProjectKind | null {
+  return projectKindToTracking(metadata?.kind, metadata?.videoModel, {
+    fidelity: metadata?.fidelity,
+    intent: metadata?.intent,
+    platform: metadata?.platform,
+    platformTargets: metadata?.platformTargets,
+  });
 }
 
 // Code `CreateTab` from apps/web/src/components/NewProjectPanel.tsx:
@@ -3287,11 +3664,7 @@ export interface DeriveConfigureGlobalsInput {
 
 export function deriveConfigureGlobals(
   input: DeriveConfigureGlobalsInput,
-): {
-  has_available_configure_cli: boolean;
-  configure_type: TrackingConfigureType;
-  configure_availability: TrackingConfigureAvailability;
-} {
+): AnalyticsConfigureGlobals {
   const agents = input.agents ?? [];
   // The AMR runtime is bundled with the app, so its agent row must not
   // count as a user-configured local CLI: with it included every install
@@ -3338,10 +3711,50 @@ export function deriveConfigureGlobals(
     configureAvailability = 'unknown';
   }
 
+  // The single active runtime — NOT the configure cascade, so there is no
+  // 'both'. The active execution path is steered by `mode` (the user's
+  // selected execution mode) first, then the selected agent: the bundled
+  // `amr` agent id means AMR cloud; otherwise local CLI when one is the
+  // selected/available runtime. BYOK only surfaces when `mode === 'api'` or a
+  // saved key is visible — the daemon never sees a key (mode is pinned to
+  // 'daemon' there), so daemon-side run events rely on the web client's
+  // run-request override to report 'byok'. Falls back through the same
+  // capability signals as configure_type for the ambient (no-mode) case.
+  let runtimeType: TrackingRuntimeType;
+  if (input.mode === 'api') {
+    // `api` mode IS the active BYOK execution path. It must win over a
+    // remembered `agentId === 'amr'`: switching AMR → BYOK only flips
+    // `config.mode` and leaves `config.agentId` as 'amr' (see App.tsx mode
+    // switch), so checking agentId first would mislabel live BYOK runs as
+    // amr_cloud.
+    runtimeType = 'byok';
+  } else if (input.agentId === 'amr') {
+    runtimeType = 'amr_cloud';
+  } else if (input.mode === 'daemon' && selectedAgentAvailable) {
+    runtimeType = 'local_cli';
+  } else if (hasAvailableCli) {
+    runtimeType = 'local_cli';
+  } else if (byokSignal) {
+    runtimeType = 'byok';
+  } else if (amrAuthorized) {
+    runtimeType = 'amr_cloud';
+  } else {
+    runtimeType = 'none';
+  }
+
   return {
     has_available_configure_cli: hasAvailableCli,
     configure_type: configureType,
     configure_availability: configureAvailability,
+    runtime_type: runtimeType,
+    // Independent per-path runnable flags (no cascade masking — see
+    // AnalyticsConfigureGlobals). `cli_runnable` mirrors
+    // `has_available_configure_cli`; `byok_runnable` uses the actually-saved
+    // key signal (not the `mode === 'api'` fallback, which can be true with no
+    // key yet); `amr_runnable` is sign-in.
+    cli_runnable: hasAvailableCli,
+    byok_runnable: byokConfigured,
+    amr_runnable: amrAuthorized,
   };
 }
 

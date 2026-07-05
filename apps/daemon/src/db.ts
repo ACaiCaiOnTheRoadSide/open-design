@@ -9,10 +9,9 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { ProjectBrowserWorkspaceTab, ProjectTabsState } from '@open-design/contracts';
 import { fileURLToPath } from 'node:url';
-import { migrateCritique } from './critique/persistence.js';
-import { migrateMediaTasks } from './media-tasks.js';
-import { migratePlugins } from './plugins/persistence.js';
-import { migrateTenantId, currentTenantId, currentUserId } from './multitenant.js';
+// sqlite 时代的 migrate*() 入口已废弃:PG 模式下 schema 全部由 runPgMigrations
+// 应用 migrations/*.sql 管理(上游新表 —— 如 library —— 也走 .sql 迁移接入)。
+import { currentTenantId, currentUserId } from './multitenant.js';
 import { resolveDaemonDbConfig } from './storage/daemon-db.js';
 import { openPgAsync, type AsyncDb } from './storage/pg-async.js';
 
@@ -977,6 +976,9 @@ export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbR
       )
       .get(conversationId, tenantId) as DbRow | undefined;
     const position = (max?.m ?? -1) + 1;
+    const createdAt = typeof m.createdAt === 'number' && Number.isFinite(m.createdAt)
+      ? m.createdAt
+      : now;
     // 23 values: id, conversation_id, role, content, agent_id, agent_name,
     // run_id, run_status, last_run_event_id, events_json, attachments_json,
     // comment_attachments_json, produced_files_json, feedback_json,
@@ -1015,7 +1017,7 @@ export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbR
       m.startedAt ?? null,
       m.endedAt ?? null,
       position,
-      now,
+      createdAt,
       tenantId,
     );
   }

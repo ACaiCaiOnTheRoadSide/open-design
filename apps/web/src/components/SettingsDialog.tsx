@@ -9,7 +9,13 @@ import {
   settingsSectionToTracking,
 } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
-import { recordAmrEntry } from '../analytics/amr-attribution';
+import {
+  amrHandoffDeviceId,
+  attributedAmrUrl,
+  recordAmrEntry,
+  type TrackingAmrEntrySource,
+} from '../analytics/amr-attribution';
+import { getResolvedDeviceId } from '../analytics/client';
 import {
   trackSettingsAppearanceClick,
   trackSettingsByokModelsFetchResult,
@@ -56,6 +62,7 @@ import {
   KNOWN_PROVIDERS,
   hasAnyConfiguredProvider,
   mergeDaemonMediaProviders,
+  saveConfig,
   syncComposioConfigToDaemon,
   syncConfigToDaemon,
   syncMediaProvidersToDaemon,
@@ -109,6 +116,7 @@ import {
 } from '../providers/registry';
 import { MEDIA_PROVIDERS } from '../media/models';
 import { useByokImageModelOptions, useByokVideoModelOptions, useByokSpeechModelOptions } from '../media/aihubmix-image-models';
+import { isVisualStabilityMode } from '../utils/visualStability';
 import { XaiOAuthControl } from './XaiOAuthControl';
 import type { MediaProvider } from '../media/models';
 import { PetSettings } from './pet/PetSettings';
@@ -628,7 +636,7 @@ const AGENT_CLI_ENV_FIELDS = [
     agentId: 'claude',
     envKey: 'ANTHROPIC_API_KEY',
     labelKey: 'settings.cliEnvClaudeApiKey',
-    placeholder: 'Paste proxy API key',
+    placeholder: 'Paste CLI API key',
     secret: true,
   },
   {
@@ -661,7 +669,7 @@ const AGENT_CLI_ENV_FIELDS = [
     agentId: 'codex',
     envKey: 'OPENAI_API_KEY',
     labelKey: 'settings.cliEnvCodexApiKey',
-    labelSuffix: 'OPENAI_API_KEY · proxy/legacy',
+    labelSuffix: 'OPENAI_API_KEY',
     placeholder: 'Paste OPENAI_API_KEY',
     secret: true,
   },
@@ -789,14 +797,28 @@ export function isValidApiBaseUrl(value: string): boolean {
   return Boolean(result.parsed && !result.error);
 }
 
+const AGENT_CLI_AUTH_ENV_KEYS = new Set([
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CODEX_API_KEY',
+  'OPENAI_API_KEY',
+]);
+const AGENT_CLI_BASE_URL_ENV_KEYS = new Set(['ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL']);
+
 export function updateCurrentApiProtocolConfig(
   config: AppConfig,
   patch: Partial<ApiProtocolConfig>,
 ): AppConfig {
   const protocol = config.apiProtocol ?? 'anthropic';
+  const clearedApiKey =
+    patch.apiKey !== undefined &&
+    !patch.apiKey.trim() &&
+    Boolean(currentApiProtocolConfig(config).apiKey.trim());
+  const defaultModel = defaultApiProtocolConfig(protocol).model;
   const nextApiConfig: ApiProtocolConfig = {
     ...currentApiProtocolConfig(config),
     ...patch,
+    ...(clearedApiKey && defaultModel ? { model: defaultModel } : {}),
   };
   return applyApiProtocolConfig(
     {
@@ -819,11 +841,23 @@ export function updateAgentCliEnvValue(
 ): AppConfig {
   const value = rawValue.trim();
   const agentCliEnv = { ...(config.agentCliEnv ?? {}) };
+  const agentCliEnvIntent = { ...(config.agentCliEnvIntent ?? {}) };
   const nextAgentEnv = { ...(agentCliEnv[agentId] ?? {}) };
+  const nextAgentIntent = { ...(agentCliEnvIntent[agentId] ?? {}) };
   if (value) {
     nextAgentEnv[envKey] = value;
   } else {
     delete nextAgentEnv[envKey];
+  }
+
+  const hasAuthKey = Object.keys(nextAgentEnv).some((key) => AGENT_CLI_AUTH_ENV_KEYS.has(key));
+  if (
+    (AGENT_CLI_AUTH_ENV_KEYS.has(envKey) && value) ||
+    (AGENT_CLI_BASE_URL_ENV_KEYS.has(envKey) && hasAuthKey)
+  ) {
+    nextAgentIntent.apiKeyOverride = true;
+  } else if (AGENT_CLI_AUTH_ENV_KEYS.has(envKey) && !hasAuthKey) {
+    delete nextAgentIntent.apiKeyOverride;
   }
 
   if (Object.keys(nextAgentEnv).length > 0) {
@@ -832,9 +866,16 @@ export function updateAgentCliEnvValue(
     delete agentCliEnv[agentId];
   }
 
+  if (Object.keys(nextAgentEnv).length > 0 && Object.keys(nextAgentIntent).length > 0) {
+    agentCliEnvIntent[agentId] = nextAgentIntent;
+  } else {
+    delete agentCliEnvIntent[agentId];
+  }
+
   return {
     ...config,
     agentCliEnv: Object.keys(agentCliEnv).length > 0 ? agentCliEnv : {},
+    agentCliEnvIntent: Object.keys(agentCliEnvIntent).length > 0 ? agentCliEnvIntent : {},
   };
 }
 
@@ -1139,6 +1180,8 @@ export function SettingsDialog({
   }, []);
   const [showApiKey, setShowApiKey] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
+  const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(false);
+  const [settingsFullscreen, setSettingsFullscreen] = useState(false);
   // Scroll the right-hand content pane back to the top whenever the user
   // picks a different settings section. Without this, switching from a
   // long section the user had scrolled (e.g. Library) into a short one
@@ -1309,6 +1352,7 @@ export function SettingsDialog({
   const modelSelectRef = useRef<HTMLButtonElement | null>(null);
   const customModelInputRef = useRef<HTMLInputElement | null>(null);
   const focusByokRequiredFieldAfterProtocolSwitchRef = useRef(false);
+  const visualStabilityMode = isVisualStabilityMode();
   // Tracks whether the current BYOK model value came from an explicit user
   // pick (combobox selection or custom entry) rather than an auto-populated
   // provider preset. The account-model auto-switch must never overwrite a
@@ -1318,6 +1362,21 @@ export function SettingsDialog({
   const [agentCustomModelIds, setAgentCustomModelIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  // 白标:上游此处还有「检查更新」(fetchLatestGithubReleaseInfo + 打开 GitHub
+  // releases 页)。SaaS 前端不请求 github.com,About 区不渲染更新入口,故不引入。
+  // Precise inverse of App.handleCompleteOnboarding: flip
+  // onboardingCompleted back to false, mirror it to localStorage and the
+  // daemon through the same config-persist path, then route the user into
+  // the first-run flow so they can replay setup (including brand extraction).
+  const handleResetOnboarding = useCallback(() => {
+    const next: AppConfig = { ...cfg, onboardingCompleted: false };
+    setCfg(next);
+    saveConfig(next);
+    void syncConfigToDaemon(next);
+    onClose();
+    navigateRoute({ kind: 'home', view: 'onboarding' });
+  }, [cfg, onClose]);
+
   // Imperative handle for the External MCP section. The dialog footer Save
   // routes through this when the MCP tab is active so the user can press the
   // single Save button at the bottom instead of hunting for the inner one.
@@ -1518,11 +1577,32 @@ export function SettingsDialog({
       setAgentRescanRunning(false);
     }
   };
-  const openAgentFixUrl = (url: string | undefined) => {
+  const attributedAmrSettingsUrl = (
+    url: string,
+    sourceDetail: TrackingAmrEntrySource,
+  ) => {
+    const attribution = recordAmrEntry(analytics.track, sourceDetail, new Date(), {
+      metricsConsent: cfg.telemetry?.metrics === true,
+    });
+    const deviceId = amrHandoffDeviceId({
+      metricsConsent: cfg.telemetry?.metrics === true,
+      resolvedDeviceId: getResolvedDeviceId(),
+      installationId: cfg.installationId,
+    });
+    return attributedAmrUrl(url, attribution, deviceId);
+  };
+  const openAgentFixUrl = (
+    url: string | undefined,
+    amrEntrySourceDetail?: TrackingAmrEntrySource,
+  ) => {
     const href = sanitizeHttpsUrl(url);
     if (!href) return;
     markAgentInstallIntent();
-    void openExternalUrl(href);
+    void openExternalUrl(
+      amrEntrySourceDetail
+        ? attributedAmrSettingsUrl(href, amrEntrySourceDetail)
+        : href,
+    );
   };
   const diagnosticHandlersForAgent = (agent: AgentInfo) => {
     const docsUrl = sanitizeHttpsUrl(agent.docsUrl);
@@ -1530,7 +1610,15 @@ export function SettingsDialog({
     return {
       onRescan: () => void handleRefreshAgents(),
       ...(docsUrl ? { onOpenDocs: () => openAgentFixUrl(docsUrl) } : {}),
-      ...(installUrl ? { onOpenInstall: () => openAgentFixUrl(installUrl) } : {}),
+      ...(installUrl
+        ? {
+            onOpenInstall: () =>
+              openAgentFixUrl(
+                installUrl,
+                agent.id === 'amr' ? 'settings_amr_install' : undefined,
+              ),
+          }
+        : {}),
     };
   };
   useEffect(() => {
@@ -2531,6 +2619,7 @@ export function SettingsDialog({
   ]);
   useEffect(() => {
     if (cfg.mode !== 'api') return;
+    if (visualStabilityMode) return;
     if (providerTestState.status === 'running') return;
     if (byokFirstPartyBaseUrl?.hostTypo) return;
     if (blockingByokDraftIssues(byokDraftValidation).length > 0) return;
@@ -2550,9 +2639,11 @@ export function SettingsDialog({
     cfg.mode,
     cfg.model,
     providerTestState.status,
+    visualStabilityMode,
   ]);
   useEffect(() => {
     if (cfg.mode !== 'api') return;
+    if (visualStabilityMode) return;
     if (apiProtocol === 'azure' || apiProtocol === 'ollama') return;
     if (byokFirstPartyBaseUrl?.hostTypo) return;
     if (blockingByokDraftIssues(byokModelFetchDraftValidation).length > 0) return;
@@ -2575,6 +2666,7 @@ export function SettingsDialog({
     byokModelFetchDraftValidation,
     providerModelsCommittedKey,
     providerModelsKey,
+    visualStabilityMode,
   ]);
   const currentProviderModelsResult =
     providerModelsState.status === 'done' &&
@@ -2979,10 +3071,21 @@ export function SettingsDialog({
     );
   };
 
+  const settingsSidebarToggleLabel = settingsSidebarCollapsed
+    ? 'Expand settings sidebar'
+    : 'Collapse settings sidebar';
+  const settingsFullscreenLabel = settingsFullscreen
+    ? t('common.exitFullscreen')
+    : t('common.fullscreen');
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal modal-settings"
+        className={
+          'modal modal-settings' +
+          (settingsSidebarCollapsed ? ' settings-sidebar-collapsed' : '') +
+          (settingsFullscreen ? ' settings-fullscreen' : '')
+        }
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-dialog-title"
@@ -3028,7 +3131,21 @@ export function SettingsDialog({
           </div>
           <button
             type="button"
-            className="settings-close"
+            className="settings-chrome-btn settings-fullscreen-toggle"
+            onClick={() => setSettingsFullscreen((current) => !current)}
+            aria-label={settingsFullscreenLabel}
+            aria-pressed={settingsFullscreen}
+            title={settingsFullscreenLabel}
+          >
+            <Icon
+              name={settingsFullscreen ? 'minimize' : 'maximize'}
+              size={15}
+              strokeWidth={2}
+            />
+          </button>
+          <button
+            type="button"
+            className="settings-chrome-btn settings-close"
             onClick={onClose}
             aria-label={t('common.close')}
             title={t('common.close')}
@@ -3055,7 +3172,27 @@ export function SettingsDialog({
         </header>
 
         <div className="modal-body">
-          <aside className="settings-sidebar" aria-label="Settings sections">
+          <button
+            type="button"
+            className="settings-sidebar-toggle"
+            onClick={() => setSettingsSidebarCollapsed((current) => !current)}
+            aria-label={settingsSidebarToggleLabel}
+            aria-pressed={settingsSidebarCollapsed}
+            aria-controls="settings-sidebar"
+            title={settingsSidebarToggleLabel}
+          >
+            <Icon
+              name={settingsSidebarCollapsed ? 'chevron-right' : 'chevron-left'}
+              size={15}
+              strokeWidth={2}
+            />
+          </button>
+          <aside
+            id="settings-sidebar"
+            className="settings-sidebar"
+            aria-label="Settings sections"
+            aria-hidden={settingsSidebarCollapsed ? true : undefined}
+          >
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'execution' ? ' active' : ''}`}
@@ -3496,7 +3633,15 @@ export function SettingsDialog({
                                       install_status: 'installed',
                                     });
                                     if (isAmrAgent) {
-                                      recordAmrEntry(analytics.track, 'settings_amr_agent_card');
+                                      recordAmrEntry(
+                                        analytics.track,
+                                        'settings_amr_agent_card',
+                                        new Date(),
+                                        {
+                                          metricsConsent:
+                                            cfg.telemetry?.metrics === true,
+                                        },
+                                      );
                                     }
                                     setCfg((c) => ({ ...c, agentId: a.id }));
                                   }}
@@ -3606,7 +3751,10 @@ export function SettingsDialog({
                                         skipInitialRefresh
                                         signInLabel={t('settings.amrAuthorize')}
                                         showConsoleAction={amrCardStatus?.loggedIn === true}
+                                        iconOnlySignOut
                                         amrEntrySourceDetail="settings_amr_authorize"
+                                        metricsConsent={cfg.telemetry?.metrics === true}
+                                        installationId={cfg.installationId}
                                         revealPendingCancelAction={amrRevealPendingCancelAction}
                                         onStatusChange={setAmrCardStatus}
                                       />
@@ -3812,7 +3960,15 @@ export function SettingsDialog({
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="agent-card-link agent-card-link--ghost"
-                                        onClick={markAgentInstallIntent}
+                                        onClick={(event) => {
+                                          markAgentInstallIntent();
+                                          if (a.id === 'amr') {
+                                            event.currentTarget.href = attributedAmrSettingsUrl(
+                                              installUrl,
+                                              'settings_amr_install',
+                                            );
+                                          }
+                                        }}
                                       >
                                         {t('settings.agentInstall.install')}
                                       </a>
@@ -4610,6 +4766,15 @@ export function SettingsDialog({
                 </div>
                 <ExportDiagnosticsRow />
               </div>
+              <div className="settings-about-diagnostics">
+                <div className="settings-about-diagnostics-text">
+                  <h4>{t('settings.resetOnboarding')}</h4>
+                  <p className="hint">{t('settings.resetOnboardingDesc')}</p>
+                </div>
+                <Button onClick={handleResetOnboarding}>
+                  {t('settings.resetOnboardingButton')}
+                </Button>
+              </div>
             </section>
           ) : null}
           </div>
@@ -4677,6 +4842,7 @@ export function ConnectorSection({
       | 'save_key'
       | 'clear'
       | 'get_api_key'
+      | 'gate_card'
       | 'provider_chip'
       | 'search_connectors',
   ) => void;
@@ -6156,6 +6322,7 @@ function MediaProvidersSection({
           // the "Coming soon" <details> below.
           const disabled = false;
           const supportsCustomModel = provider.supportsCustomModel === true;
+          const requiresCredentials = provider.credentialsRequired !== false;
           const clearable = isStoredMediaProviderEntryPresent(entry);
           const apiKeyVisible = visibleApiKeys.has(provider.id);
           return (
@@ -6197,107 +6364,109 @@ function MediaProvidersSection({
                 */}
               </div>
               {provider.id === 'grok' ? <XaiOAuthControl /> : null}
-              <div className="media-provider-body">
-                <div className="media-provider-secret-field">
+              {requiresCredentials ? (
+                <div className="media-provider-body">
+                  <div className="media-provider-secret-field">
+                    <input
+                      type={apiKeyVisible ? 'text' : 'password'}
+                      value={entry.apiKey}
+                      placeholder={isSavedState ? t('settings.connectorsReplaceKeyPlaceholder') : t('settings.mediaProviderPlaceholder')}
+                      aria-label={`${provider.label} ${t('settings.mediaProviderApiKey')}`}
+                      disabled={disabled}
+                      onFocus={() => {
+                        trackSettingsMediaProvidersClick(analytics.track, {
+                          page_name: 'settings',
+                          area: 'media_providers',
+                          element: 'key_input',
+                          providers_id: provider.id,
+                          is_configured: clearable,
+                        });
+                      }}
+                      onChange={(e) => updateProvider(provider, { apiKey: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="secret-visibility-button"
+                      disabled={disabled}
+                      aria-label={
+                        apiKeyVisible
+                          ? `${provider.label} ${t('settings.hideKey')}`
+                          : `${provider.label} ${t('settings.showKey')}`
+                      }
+                      aria-pressed={apiKeyVisible}
+                      onClick={() => toggleApiKeyVisibility(provider.id)}
+                    >
+                        <Icon name={apiKeyVisible ? 'eye' : 'eye-off'} size={15} />
+                      </button>
+                    </div>
                   <input
-                    type={apiKeyVisible ? 'text' : 'password'}
-                    value={entry.apiKey}
-                    placeholder={isSavedState ? t('settings.connectorsReplaceKeyPlaceholder') : t('settings.mediaProviderPlaceholder')}
-                    aria-label={`${provider.label} ${t('settings.mediaProviderApiKey')}`}
+                    value={entry.baseUrl}
+                    placeholder={provider.defaultBaseUrl || t('settings.mediaProviderBaseUrlPlaceholder')}
+                    aria-label={`${provider.label} ${t('settings.mediaProviderBaseUrl')}`}
                     disabled={disabled}
                     onFocus={() => {
                       trackSettingsMediaProvidersClick(analytics.track, {
                         page_name: 'settings',
                         area: 'media_providers',
-                        element: 'key_input',
+                        element: 'url_input',
                         providers_id: provider.id,
                         is_configured: clearable,
                       });
                     }}
-                    onChange={(e) => updateProvider(provider, { apiKey: e.target.value })}
+                    onChange={(e) => updateProvider(provider, { baseUrl: e.target.value })}
                   />
+                  {supportsCustomModel ? (
+                    <input
+                      value={entry.model ?? ''}
+                      placeholder="gemini-3.1-flash-image-preview"
+                      aria-label={`${provider.label} model`}
+                      disabled={disabled}
+                      onChange={(e) => updateProvider(provider, { model: e.target.value })}
+                    />
+                  ) : null}
                   <button
                     type="button"
-                    className="secret-visibility-button"
-                    disabled={disabled}
-                    aria-label={
-                      apiKeyVisible
-                        ? `${provider.label} ${t('settings.hideKey')}`
-                        : `${provider.label} ${t('settings.showKey')}`
-                    }
-                    aria-pressed={apiKeyVisible}
-                    onClick={() => toggleApiKeyVisibility(provider.id)}
+                    className="ghost"
+                    disabled={!clearable}
+                    onClick={() => {
+                      trackSettingsMediaProvidersClick(analytics.track, {
+                        page_name: 'settings',
+                        area: 'media_providers',
+                        element: 'clear',
+                        providers_id: provider.id,
+                        // The click reports the state at the moment the
+                        // user pressed Clear; the actual clear only lands
+                        // after they confirm the dialog below, but the
+                        // dashboard cares about the intent signal.
+                        is_configured: clearable,
+                      });
+                      // Match the existing window.confirm guard the rest of
+                      // the app uses for destructive actions (conversation
+                      // delete, design delete, file delete in FileWorkspace).
+                      // Without this a stray click on the row's Clear button
+                      // wipes the saved key with no recovery. Issue #737.
+                      if (
+                        !confirm(
+                          t('settings.mediaProviderClearConfirm', {
+                            name: provider.label,
+                          }),
+                        )
+                      ) {
+                        return;
+                      }
+                      updateProvider(provider, {
+                        apiKey: '',
+                        baseUrl: '',
+                        model: '',
+                        apiKeyConfigured: false,
+                        apiKeyTail: '',
+                      });
+                    }}
                   >
-                      <Icon name={apiKeyVisible ? 'eye' : 'eye-off'} size={15} />
-                    </button>
-                  </div>
-                <input
-                  value={entry.baseUrl}
-                  placeholder={provider.defaultBaseUrl || t('settings.mediaProviderBaseUrlPlaceholder')}
-                  aria-label={`${provider.label} ${t('settings.mediaProviderBaseUrl')}`}
-                  disabled={disabled}
-                  onFocus={() => {
-                    trackSettingsMediaProvidersClick(analytics.track, {
-                      page_name: 'settings',
-                      area: 'media_providers',
-                      element: 'url_input',
-                      providers_id: provider.id,
-                      is_configured: clearable,
-                    });
-                  }}
-                  onChange={(e) => updateProvider(provider, { baseUrl: e.target.value })}
-                />
-                {supportsCustomModel ? (
-                  <input
-                    value={entry.model ?? ''}
-                    placeholder="gemini-3.1-flash-image-preview"
-                    aria-label={`${provider.label} model`}
-                    disabled={disabled}
-                    onChange={(e) => updateProvider(provider, { model: e.target.value })}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={!clearable}
-                  onClick={() => {
-                    trackSettingsMediaProvidersClick(analytics.track, {
-                      page_name: 'settings',
-                      area: 'media_providers',
-                      element: 'clear',
-                      providers_id: provider.id,
-                      // The click reports the state at the moment the
-                      // user pressed Clear; the actual clear only lands
-                      // after they confirm the dialog below, but the
-                      // dashboard cares about the intent signal.
-                      is_configured: clearable,
-                    });
-                    // Match the existing window.confirm guard the rest of
-                    // the app uses for destructive actions (conversation
-                    // delete, design delete, file delete in FileWorkspace).
-                    // Without this a stray click on the row's Clear button
-                    // wipes the saved key with no recovery. Issue #737.
-                    if (
-                      !confirm(
-                        t('settings.mediaProviderClearConfirm', {
-                          name: provider.label,
-                        }),
-                      )
-                    ) {
-                      return;
-                    }
-                    updateProvider(provider, {
-                      apiKey: '',
-                      baseUrl: '',
-                      model: '',
-                      apiKeyConfigured: false,
-                      apiKeyTail: '',
-                    });
-                  }}
-                >
-                  {t('settings.mediaProviderClear')}
-                </button>
-              </div>
+                    {t('settings.mediaProviderClear')}
+                  </button>
+                </div>
+              ) : null}
             </div>
           );
         })}

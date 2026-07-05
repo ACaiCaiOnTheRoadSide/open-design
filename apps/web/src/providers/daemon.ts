@@ -47,6 +47,10 @@ function detectClientType(): 'desktop' | 'web' | 'unknown' {
   return 'unknown';
 }
 import { parseSseFrame } from './sse';
+import {
+  summarizeArtifactsForTranscript,
+  type PersistedArtifactFileRef,
+} from '../artifacts/strip';
 import { trackRunProgress, trackRunStart, trackRunTerminal } from '../observability/stuck-run';
 
 const MAX_TRANSCRIPT_MESSAGE_CHARS = 12_000;
@@ -154,7 +158,10 @@ function scopeHistoryToAgent(history: ChatMessage[], targetAgentId?: string): Ch
 // User content is preserved verbatim — a user message that legitimately
 // quotes `<question-form>` (e.g. discussing the markup with the agent)
 // must not be mangled.
-export function sanitizePriorAssistantTurnForTranscript(content: string): string {
+export function sanitizePriorAssistantTurnForTranscript(
+  content: string,
+  persistedArtifactFiles: ReadonlyArray<PersistedArtifactFileRef> = [],
+): string {
   let sanitized = content.replace(
     // `\1` backreference keeps the open/close tag names matched so we never
     // splice across a `<question-form>…</ask-question>` mismatch.
@@ -174,7 +181,42 @@ export function sanitizePriorAssistantTurnForTranscript(content: string): string
       return match;
     },
   );
+  // Replace prior-turn `<artifact>` HTML with a one-line summary — but ONLY
+  // for artifacts whose save to the project files is confirmed by the
+  // message's producedFiles record. persistArtifact has refusal and
+  // write-failure branches; on those paths the transcript copy is the only
+  // surviving artifact body, so an unconfirmed block stays verbatim (the
+  // 12K truncation below still bounds it) and a follow-up turn can repair it.
+  // For confirmed saves the agent reads/edits the file from disk, never from
+  // this transcript copy, so re-sending the whole document each turn is pure
+  // waste — the summary keeps identifier/title/type plus the saved file name.
+  // Runs before truncateForTranscript so the summarized message no longer
+  // trips the 12K cap. Uses markdown-aware detection so a literal
+  // `<artifact>` recited in a code fence survives.
+  sanitized = summarizeArtifactsForTranscript(sanitized, persistedArtifactFiles);
   return sanitized;
+}
+
+// producedFiles → the persistence evidence summarizeArtifactsForTranscript
+// matches artifact blocks against. producedFiles is the whole per-turn file
+// diff — tool-written files included — so a name collision with an unrelated
+// same-turn file must not count as proof the <artifact> body was saved. Only
+// artifact-originated saves qualify: persistArtifact always writes an explicit
+// (non-inferred) manifest, whereas tool-written files surface with no manifest
+// or a daemon-inferred one (`metadata.inferred === true`). Within that
+// narrowed set, the manifest identifier is the strongest link (it survives
+// `-2`/`-3` collision renames); the file name is the fallback for artifact
+// saves whose manifest predates identifier metadata.
+function persistedArtifactFilesOf(message: ChatMessage): PersistedArtifactFileRef[] {
+  return (message.producedFiles ?? [])
+    .filter((file) => file.artifactManifest && file.artifactManifest.metadata?.inferred !== true)
+    .map((file) => {
+      const identifier = file.artifactManifest?.metadata?.identifier;
+      return {
+        name: file.name,
+        identifier: typeof identifier === 'string' && identifier ? identifier : undefined,
+      };
+    });
 }
 
 export function buildDaemonTranscript(history: ChatMessage[], targetAgentId?: string): string {
@@ -184,7 +226,7 @@ export function buildDaemonTranscript(history: ChatMessage[], targetAgentId?: st
       const trimmed = m.content.trim();
       const sanitized =
         m.role === 'assistant'
-          ? sanitizePriorAssistantTurnForTranscript(trimmed)
+          ? sanitizePriorAssistantTurnForTranscript(trimmed, persistedArtifactFilesOf(m))
           : trimmed;
       return `## ${m.role}\n${escapeTranscriptRoleDelimiters(truncateForTranscript(sanitized))}`;
     })
@@ -243,6 +285,7 @@ export interface DaemonStreamOptions {
   context?: RunContextSelection;
   appliedPluginSnapshotId?: string | null;
   mediaExecution?: MediaExecutionPolicy;
+  titleGeneration?: { enabled?: boolean };
   locale?: string;
   initialLastEventId?: string | null;
   onRunCreated?: (runId: string) => void;
@@ -536,6 +579,7 @@ export async function streamViaDaemon({
   context,
   appliedPluginSnapshotId,
   mediaExecution,
+  titleGeneration,
   locale,
   initialLastEventId,
   onRunCreated,
@@ -572,6 +616,7 @@ export async function streamViaDaemon({
     ...(context ? { context } : {}),
     ...(research ? { research } : {}),
     ...(mediaExecution ? { mediaExecution } : {}),
+    ...(titleGeneration?.enabled ? { titleGeneration: { enabled: true } } : {}),
     ...(analyticsHints ? { analyticsHints } : {}),
   };
   const body = JSON.stringify(request);
@@ -702,6 +747,12 @@ export interface VelaLoginStatus {
   profile: string;
   user: VelaUser | null;
   configPath: string;
+  // Device-authorization details parsed from `vela login` output while a login
+  // is in flight, so the UI can offer a manual sign-in link when the browser
+  // did not auto-open. See parseVelaLoginActivation in the daemon's vela.ts.
+  activationUrl?: string;
+  userCode?: string;
+  browserOpenFailed?: boolean;
 }
 
 // AMR (vela) login surfaces three thin endpoints on the daemon:
@@ -740,12 +791,15 @@ export interface StartVelaLoginResult {
 
 export async function startVelaLogin(
   attribution?: AmrEntryAttribution | null,
+  odDeviceId?: string | null,
 ): Promise<StartVelaLoginResult> {
   try {
+    const loginAttribution =
+      attribution && odDeviceId ? { ...attribution, odDeviceId } : attribution;
     const resp = await fetch('/api/integrations/vela/login', {
       method: 'POST',
-      headers: attribution ? { 'Content-Type': 'application/json' } : undefined,
-      body: attribution ? JSON.stringify({ attribution }) : undefined,
+      headers: loginAttribution ? { 'Content-Type': 'application/json' } : undefined,
+      body: loginAttribution ? JSON.stringify({ attribution: loginAttribution }) : undefined,
     });
     if (resp.ok) {
       const body = (await resp.json()) as { pid?: number };
@@ -1156,6 +1210,9 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   if (t === 'text_delta' && typeof data.delta === 'string') {
     return { kind: 'text', text: data.delta };
   }
+  if (t === 'conversation_title' && typeof data.title === 'string') {
+    return { kind: 'conversation_title', title: data.title };
+  }
   if (t === 'thinking_delta' && typeof data.delta === 'string') {
     return { kind: 'thinking', text: data.delta };
   }
@@ -1211,6 +1268,15 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
       label: 'warning',
       detail: `Model emitted fabricated role marker ("${data.marker}"). Response was truncated to prevent unauthorized instruction injection.`,
     };
+  }
+  if (t === 'tool_loop' && typeof data.toolName === 'string') {
+    const toolName = data.toolName;
+    const count = typeof data.count === 'number' ? data.count : 0;
+    const detail =
+      data.action === 'halt'
+        ? `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
+        : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
+    return { kind: 'status', label: 'warning', detail };
   }
   if (t === 'raw' && typeof data.line === 'string') {
     return { kind: 'raw', line: data.line };
