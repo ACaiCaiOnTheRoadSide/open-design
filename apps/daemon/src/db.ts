@@ -283,6 +283,91 @@ export async function listLatestProjectRunStatuses(db: SqliteDb) {
   return latestByProject;
 }
 
+export async function listLatestConversationRunStatuses(db: SqliteDb) {
+  const tenantId = currentTenantId();
+  const rows = await db
+    .prepare(
+      `SELECT m.conversation_id AS conversationId,
+              m.run_id AS runId,
+              m.run_status AS status,
+              COALESCE(m.ended_at, m.started_at, m.created_at) AS updatedAt,
+              m.position AS position
+         FROM messages m
+        WHERE m.run_status IS NOT NULL
+          AND m.tenant_id = ?
+        ORDER BY updatedAt DESC, m.position DESC`,
+    )
+    .all(tenantId) as DbRow[];
+  const latestByConversation = new Map<string, DbRow>();
+  for (const row of rows) {
+    if (!latestByConversation.has(row.conversationId)) {
+      latestByConversation.set(row.conversationId, {
+        value: normalizeProjectRunStatus(row.status),
+        updatedAt: Number(row.updatedAt),
+        runId: row.runId ?? undefined,
+      });
+    }
+  }
+  return latestByConversation;
+}
+
+export async function listFirstConversationRunStatuses(db: SqliteDb) {
+  const tenantId = currentTenantId();
+  const rows = await db
+    .prepare(
+      `SELECT m.conversation_id AS conversationId,
+              m.run_id AS runId,
+              m.run_status AS status,
+              COALESCE(m.ended_at, m.started_at, m.created_at) AS updatedAt,
+              m.position AS position
+         FROM messages m
+        WHERE m.run_status IS NOT NULL
+          AND m.run_id IS NOT NULL
+          AND m.tenant_id = ?
+        ORDER BY m.position ASC`,
+    )
+    .all(tenantId) as DbRow[];
+  const firstByConversation = new Map<string, DbRow>();
+  for (const row of rows) {
+    if (!firstByConversation.has(row.conversationId)) {
+      firstByConversation.set(row.conversationId, {
+        value: normalizeProjectRunStatus(row.status),
+        updatedAt: Number(row.updatedAt),
+        runId: row.runId ?? undefined,
+      });
+    }
+  }
+  return firstByConversation;
+}
+
+export async function listLatestRunStatuses(db: SqliteDb) {
+  const tenantId = currentTenantId();
+  const rows = await db
+    .prepare(
+      `SELECT m.run_id AS runId,
+              m.run_status AS status,
+              COALESCE(m.ended_at, m.started_at, m.created_at) AS updatedAt,
+              m.position AS position
+         FROM messages m
+        WHERE m.run_status IS NOT NULL
+          AND m.run_id IS NOT NULL
+          AND m.tenant_id = ?
+        ORDER BY updatedAt DESC, m.position DESC`,
+    )
+    .all(tenantId) as DbRow[];
+  const latestByRun = new Map<string, DbRow>();
+  for (const row of rows) {
+    if (!latestByRun.has(row.runId)) {
+      latestByRun.set(row.runId, {
+        value: normalizeProjectRunStatus(row.status),
+        updatedAt: Number(row.updatedAt),
+        runId: row.runId ?? undefined,
+      });
+    }
+  }
+  return latestByRun;
+}
+
 export async function listProjectsAwaitingInput(db: SqliteDb) {
   const tenantId = currentTenantId();
   const rows = await db
@@ -323,6 +408,43 @@ export async function listProjectsAwaitingInput(db: SqliteDb) {
     )
     .all(tenantId) as DbRow[];
   return new Set((rows as DbRow[]).map((row: DbRow) => row.projectId));
+}
+
+export async function listConversationsAwaitingInput(db: SqliteDb) {
+  const tenantId = currentTenantId();
+  const rows = await db
+    .prepare(
+      `SELECT latest.conversationId
+         FROM (
+           SELECT m.conversation_id AS conversationId,
+                  m.created_at AS createdAt,
+                  m.position AS position,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY m.conversation_id
+                    ORDER BY m.created_at DESC, m.position DESC
+                  ) AS rowNum
+             FROM messages m
+            WHERE m.role = 'assistant'
+              AND m.tenant_id = ?
+              AND (
+                LOWER(m.content) LIKE '%<question-form%'
+                OR LOWER(m.content) LIKE '%<ask-question%'
+              )
+         ) latest
+        WHERE latest.rowNum = 1
+          AND NOT EXISTS (
+            SELECT 1
+              FROM messages reply
+             WHERE reply.conversation_id = latest.conversationId
+               AND reply.role = 'user'
+               AND (
+                 reply.created_at > latest.createdAt
+                 OR (reply.created_at = latest.createdAt AND reply.position > latest.position)
+               )
+          )`,
+    )
+    .all(tenantId) as DbRow[];
+  return new Set((rows as DbRow[]).map((row: DbRow) => row.conversationId));
 }
 
 export async function getProject(db: SqliteDb, id: string) {
@@ -831,15 +953,22 @@ export async function upsertAgentSession(
     agentId: string;
     sessionId: string;
     stablePromptHash?: string | null;
+    model?: string | null;
+    cwd?: string | null;
+    lastMessageId?: string | null;
   },
 ): Promise<void> {
   const tenantId = currentTenantId();
   await db.prepare(
-    `INSERT INTO agent_sessions (conversation_id, agent_id, session_id, stable_prompt_hash, updated_at, tenant_id)
-       VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO agent_sessions
+       (conversation_id, agent_id, session_id, stable_prompt_hash, model, cwd, last_message_id, updated_at, tenant_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(conversation_id, agent_id)
        DO UPDATE SET session_id = excluded.session_id,
                      stable_prompt_hash = excluded.stable_prompt_hash,
+                     model = excluded.model,
+                     cwd = excluded.cwd,
+                     last_message_id = excluded.last_message_id,
                      updated_at = excluded.updated_at,
                      tenant_id = excluded.tenant_id`,
   ).run(
@@ -847,6 +976,9 @@ export async function upsertAgentSession(
     input.agentId,
     input.sessionId,
     input.stablePromptHash ?? null,
+    input.model ?? null,
+    input.cwd ?? null,
+    input.lastMessageId ?? null,
     Date.now(),
     tenantId,
   );
@@ -856,11 +988,17 @@ export async function getAgentSessionRecord(
   db: SqliteDb,
   conversationId: string,
   agentId: string,
-): Promise<{ sessionId: string; stablePromptHash: string | null } | null> {
+): Promise<{
+  sessionId: string;
+  stablePromptHash: string | null;
+  model: string | null;
+  cwd: string | null;
+  lastMessageId: string | null;
+} | null> {
   const tenantId = currentTenantId();
   const row = await db
     .prepare(
-      `SELECT session_id, stable_prompt_hash FROM agent_sessions
+      `SELECT session_id, stable_prompt_hash, model, cwd, last_message_id FROM agent_sessions
         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?`,
     )
     .get(conversationId, agentId, tenantId) as DbRow | undefined;
@@ -869,7 +1007,33 @@ export async function getAgentSessionRecord(
     sessionId: row.session_id,
     stablePromptHash:
       typeof row.stable_prompt_hash === 'string' ? row.stable_prompt_hash : null,
+    model: typeof row.model === 'string' ? row.model : null,
+    cwd: typeof row.cwd === 'string' ? row.cwd : null,
+    lastMessageId: typeof row.last_message_id === 'string' ? row.last_message_id : null,
   };
+}
+
+// Conversation cursor for the resume identity guard: the id of the latest
+// COMPLETED assistant message in the conversation, EXCLUDING the current run's
+// in-flight placeholder (`excludeMessageId`). `resumableMessageId` is the one
+// allowed exception (resume-on-failure session's own last turn). See upstream
+// v0.13 agent-session-resume.ts for the full rationale.
+export async function latestCompletedAssistantMessageId(
+  db: SqliteDb,
+  conversationId: string,
+  excludeMessageId: string,
+  resumableMessageId: string | null = null,
+): Promise<string | null> {
+  const tenantId = currentTenantId();
+  const row = await db
+    .prepare(
+      `SELECT id FROM messages
+        WHERE conversation_id = ? AND tenant_id = ? AND role = 'assistant' AND id != ?
+          AND (run_status = 'succeeded' OR id = ?)
+        ORDER BY position DESC LIMIT 1`,
+    )
+    .get(conversationId, tenantId, excludeMessageId, resumableMessageId) as DbRow | undefined;
+  return row && typeof row.id === 'string' ? row.id : null;
 }
 
 export async function updateAgentSessionStableHash(
@@ -936,7 +1100,7 @@ export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbR
           SET role = ?, content = ?, agent_id = ?, agent_name = ?,
               run_id = ?, run_status = ?, last_run_event_id = ?,
               events_json = ?, attachments_json = ?, comment_attachments_json = ?,
-              produced_files_json = ?, feedback_json = ?,
+              produced_files_json = ?, trace_object_files_json = ?, feedback_json = ?,
               pre_turn_file_names_json = ?,
               session_mode = ?, run_context_json = ?, applied_plugin_snapshot_json = ?,
               telemetry_finalized_at = CASE
@@ -957,6 +1121,7 @@ export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbR
       m.attachments ? JSON.stringify(m.attachments) : null,
       m.commentAttachments ? JSON.stringify(m.commentAttachments) : null,
       m.producedFiles ? JSON.stringify(m.producedFiles) : null,
+      m.traceObjectFiles ? JSON.stringify(m.traceObjectFiles) : null,
       m.feedback ? JSON.stringify(m.feedback) : null,
       m.preTurnFileNames ? JSON.stringify(m.preTurnFileNames) : null,
       normalizeMessageSessionModeForStorage(m.sessionMode),
@@ -990,10 +1155,10 @@ export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbR
          (id, conversation_id, role, content, agent_id, agent_name,
           run_id, run_status, last_run_event_id, events_json,
           attachments_json, comment_attachments_json, produced_files_json,
-          feedback_json, pre_turn_file_names_json,
+          trace_object_files_json, feedback_json, pre_turn_file_names_json,
           session_mode, run_context_json, applied_plugin_snapshot_json,
           telemetry_finalized_at, started_at, ended_at, position, created_at, tenant_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       m.id,
       conversationId,
@@ -1008,6 +1173,7 @@ export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbR
       m.attachments ? JSON.stringify(m.attachments) : null,
       m.commentAttachments ? JSON.stringify(m.commentAttachments) : null,
       m.producedFiles ? JSON.stringify(m.producedFiles) : null,
+      m.traceObjectFiles ? JSON.stringify(m.traceObjectFiles) : null,
       m.feedback ? JSON.stringify(m.feedback) : null,
       m.preTurnFileNames ? JSON.stringify(m.preTurnFileNames) : null,
       normalizeMessageSessionModeForStorage(m.sessionMode),
@@ -1036,6 +1202,7 @@ export async function upsertMessage(db: SqliteDb, conversationId: string, m: DbR
               attachments_json AS attachmentsJson,
               comment_attachments_json AS commentAttachmentsJson,
               produced_files_json AS producedFilesJson,
+              trace_object_files_json AS traceObjectFilesJson,
               feedback_json AS feedbackJson,
               pre_turn_file_names_json AS preTurnFileNamesJson,
               session_mode AS sessionMode,
@@ -1481,6 +1648,7 @@ function normalizeMessage(row: DbRow) {
     attachments: parseJsonOrUndef(row.attachmentsJson),
     commentAttachments: parseJsonOrUndef(row.commentAttachmentsJson),
     producedFiles: parseJsonOrUndef(row.producedFilesJson),
+    traceObjectFiles: parseJsonOrUndef(row.traceObjectFilesJson),
     feedback: parseJsonOrUndef(row.feedbackJson),
     preTurnFileNames: parseJsonOrUndef(row.preTurnFileNamesJson),
     sessionMode: normalizeMessageSessionMode(row.sessionMode),

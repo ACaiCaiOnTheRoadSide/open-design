@@ -38,8 +38,8 @@ runs:
         sudo apt-get update
         # ffmpeg encodes the clips; the Noto CJK + emoji fonts give headless
         # Chrome a real CJK/emoji fallback so templates that rely on system
-        # fonts for Chinese/Japanese/Korean (or load Noto SC from Google Fonts
-        # but race) render glyphs instead of missing-glyph tofu boxes.
+        # fonts for 中文/日本語/한국어 (or load Noto SC from Google Fonts but
+        # race) render glyphs instead of missing-glyph tofu boxes.
         sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-noto-color-emoji
         # npm chokes on the workspace:* root manifest; use pnpm to drop
         # puppeteer-core into the workspace node_modules (CI-only, not committed).
@@ -97,7 +97,7 @@ runs:
         endpoint="${R2_ENDPOINT%/}"
         # cp (not sync --delete) so untouched clips already on R2 stay put.
         # Keys are content-addressed (<id>/<fingerprint>/preview.mp4), so the
-        # clips are immutable - let the CDN cache them forever (a content change
+        # clips are immutable — let the CDN cache them forever (a content change
         # ships a new directory). Garbage collection is a separate scheduled job.
         aws s3 cp .tmp/plugin-previews "s3://$R2_BUCKET/plugin-previews/" \
           --recursive --no-progress \

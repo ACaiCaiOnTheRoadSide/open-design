@@ -803,6 +803,14 @@ function inspectProviderCompletion(
     };
   }
 
+  if (protocol === 'bedrock') {
+    return {
+      valid: false,
+      kind: 'unknown',
+      detail: 'AWS Bedrock BYOK connection tests need AWS credential signing, which is not supported by the current API-key smoke test.',
+    };
+  }
+
   return { valid: false };
 }
 
@@ -1204,6 +1212,10 @@ function buildProviderCall(input: ProviderTestRequest): ProviderCallShape {
         },
       };
     }
+    case 'bedrock':
+      throw new Error(
+        'AWS Bedrock BYOK requires AWS credential signing; the current provider smoke test only supports API-key based providers.',
+      );
     default:
       throw new Error(`Unknown protocol: ${(input as { protocol?: string }).protocol}`);
   }
@@ -2060,8 +2072,8 @@ async function testAgentConnectionInternal(
   };
 
   try {
-    if (input.agentId === 'opencode') {
-      await prepareOpenCodeConnectionTestCwd(tempDir);
+    if (input.agentId === 'opencode' || input.agentId === 'mimo') {
+      if (input.agentId === 'opencode') await prepareOpenCodeConnectionTestCwd(tempDir);
     }
     let args: string[];
     try {
@@ -2080,10 +2092,10 @@ async function testAgentConnectionInternal(
       // fail on unrelated user-installed OpenCode plugins. `opencode run
       // --pure` keeps the smoke test isolated while regular chat runs retain
       // the user's full plugin environment.
-      if (input.agentId === 'opencode' && !args.includes('--pure')) {
+      if ((input.agentId === 'opencode' || input.agentId === 'mimo') && !args.includes('--pure')) {
         args.push('--pure');
       }
-      if (input.agentId === 'opencode' && !args.includes('--title')) {
+      if ((input.agentId === 'opencode' || input.agentId === 'mimo') && !args.includes('--title')) {
         args.push('--title', 'Connection test');
       }
     } catch (err) {
@@ -2286,7 +2298,7 @@ async function testAgentConnectionInternal(
       }
       const stderrTail = sink.getStderrTail().trim();
       const rawStdoutTail = sink.getRawStdoutTail().trim();
-      if (input.agentId === 'opencode' && exitedCleanly && rawStdoutTail) {
+      if ((input.agentId === 'opencode' || input.agentId === 'mimo') && exitedCleanly && rawStdoutTail) {
         const recoveredText = extractOpenCodeTextFromRawStdout(rawStdoutTail).trim();
         if (recoveredText) {
           return resultFromAgentText(recoveredText, {

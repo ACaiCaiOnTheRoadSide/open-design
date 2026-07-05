@@ -48,7 +48,7 @@ jobs:
           NEW=.tmp/plugin-previews/manifest.json
           diff_result="$(node scripts/plugin-previews-diff.mjs "$OLD" "$NEW")"
           case "$diff_result" in
-            changed) echo "previews changed - post-merge bake will publish clips and open the rolling manifest PR" ;;
+            changed) echo "previews changed — post-merge bake will publish clips and open the rolling manifest PR" ;;
             unchanged) echo "previews unchanged" ;;
             *) echo "unexpected diff result: '$diff_result'" >&2; exit 1 ;;
           esac

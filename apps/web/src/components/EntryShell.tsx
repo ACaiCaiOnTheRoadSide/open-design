@@ -66,7 +66,7 @@ import type {
   TrackingCliProviderId,
 } from '@open-design/contracts/analytics';
 import { agentIdToTracking } from '@open-design/contracts/analytics';
-import { useT } from '../i18n';
+import { useT, useI18n } from '../i18n';
 import { navigate, useRoute } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import type {
@@ -111,6 +111,7 @@ import { AgentIcon } from './AgentIcon';
 import { LanguageMenu } from './LanguageMenu';
 import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
+import { enterpriseUrl } from './enterpriseUrl';
 import {
   EntrySettingsMenu,
   type EntrySettingsSection,
@@ -179,7 +180,7 @@ function writeStoredRailOpen(open: boolean): void {
 }
 
 const DISCORD_URL = 'https://discord.gg/mHAjSMV6gz';
-const X_URL = 'https://x.com/nexudotio';
+const X_URL = 'https://x.com/OpenDesignHQ';
 const ONBOARDING_DROPDOWN_OPEN_EVENT = 'open-design:onboarding-dropdown-open';
 
 // The topbar chips (GitHub star, model switcher, Use everywhere)
@@ -361,7 +362,7 @@ interface Props {
   ) => Promise<ImportClaudeDesignOutcome | void> | ImportClaudeDesignOutcome | void;
   onImportFolder?: (baseDir: string) => Promise<void> | void;
   onImportFolderResponse?: (response: OpenDesignHostProjectImportSuccess) => Promise<void> | void;
-  onOpenProject: (id: string) => Promise<boolean> | boolean | void;
+  onOpenProject: (id: string, fileName?: string) => Promise<boolean> | boolean | void;
   onOpenLiveArtifact: (projectId: string, artifactId: string) => void;
   onDeleteProject: (id: string) => Promise<boolean | void> | boolean | void;
   onRenameProject: (id: string, name: string) => void;
@@ -478,6 +479,7 @@ export function EntryShell({
   onCompleteOnboarding,
 }: Props) {
   const t = useT();
+  const { locale: uiLocale } = useI18n();
   const discordPresence = useDiscordPresence();
   // Each entry sub-view (home / projects / design-systems) is its own
   // URL now, so the browser back/forward buttons work and a deep link
@@ -1490,12 +1492,6 @@ function OnboardingView({
     return fields.map(([label, value]) => `- ${label}: ${value}`).join('\n');
   }
 
-  function hasOnboardingProfileChoices(snapshot: OnboardingProfileState): boolean {
-    return Boolean(
-      snapshot.role || snapshot.orgSize || snapshot.useCase.length > 0 || snapshot.source,
-    );
-  }
-
   async function persistOnboardingProfileToMemory(): Promise<void> {
     const body = buildOnboardingProfileBody(profileRef.current);
     if (!body || body === lastPersistedOnboardingProfileBodyRef.current) return;
@@ -2183,7 +2179,7 @@ function OnboardingView({
         aria-label={t('settings.welcomeTitle')}
       >
         <div className="onboarding-cloud__topbar">
-          <LanguageMenu compact />
+          <LanguageMenu compact placement="down" align="end" />
           <button
             type="button"
             className="onboarding-cloud__theme"
@@ -2478,31 +2474,6 @@ function OnboardingView({
                   }}
                 />
               </div>
-              {hasOnboardingProfileChoices(profile) ? (
-                <div className="onboarding-view__memory-callout">
-                  <span className="onboarding-view__memory-callout-icon" aria-hidden>
-                    <Icon name="sparkles" size={16} />
-                  </span>
-                  <div className="onboarding-view__memory-callout-body">
-                    <strong>{t('settings.onboardingMemoryCalloutTitle')}</strong>
-                    <p>{t('settings.onboardingMemoryCalloutBody')}</p>
-                    <ul className="onboarding-view__memory-benefits">
-                      <li>
-                        <Icon name="check" size={13} aria-hidden />
-                        <span>{t('settings.onboardingMemoryBenefitIntent')}</span>
-                      </li>
-                      <li>
-                        <Icon name="check" size={13} aria-hidden />
-                        <span>{t('settings.onboardingMemoryBenefitFewerQuestions')}</span>
-                      </li>
-                      <li>
-                        <Icon name="check" size={13} aria-hidden />
-                        <span>{t('settings.onboardingMemoryBenefitPersonalized')}</span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-              ) : null}
             </div>
           ) : null}
 

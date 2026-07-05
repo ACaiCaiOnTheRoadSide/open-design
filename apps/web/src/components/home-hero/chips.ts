@@ -193,6 +193,20 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
       kind: 'apply-scenario',
       pluginId: 'od-new-generation',
       projectKind: 'other',
+      // od-new-generation declares `artifactKind` / `audience` / `topic` as
+      // required inputs with NO manifest defaults. The Home composer dropped
+      // its inline plugin-inputs form (`footerInputNamesForChip` returns []),
+      // so an unseeded bind leaves `pluginInputsAreValid` false forever, which
+      // gates the composer via `submitDisabled` — Send stays dead even after
+      // the user types a brief. Seed generic document defaults so the required
+      // inputs are satisfied on bind; the user's typed brief still drives the
+      // actual content. (Every other create chip binds a plugin that ships
+      // defaults — this is the one generic-router chip that must seed them.)
+      inputs: {
+        artifactKind: 'document',
+        audience: 'readers',
+        topic: 'the user brief',
+      },
       projectMetadata: {
         kind: 'other',
         // Analytics-only tag: splits this card's projects out of generic
