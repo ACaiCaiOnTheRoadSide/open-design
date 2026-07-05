@@ -336,6 +336,7 @@ import {
   buildClaudeMcpJson,
   buildOpenCodeMcpConfigContent,
   mergeOpenCodeProviderConfig,
+  openCodeProviderConfigModel,
   isManagedProjectCwd,
   readMcpConfig,
   writeMcpConfig,
@@ -2748,8 +2749,10 @@ async function persistRunEventToAssistantMessage(db, run, event, data) {
   if (!persisted) return;
   if (persisted.kind === 'usage') {
     // resolvedModel is what the spawn actually passed to the CLI; fall back to
-    // the runtime-reported model, then the raw request value.
-    const model = [run.resolvedModel, run.observedModel, run.model].find(
+    // the runtime-reported model, then the raw request value, then the model
+    // from the injected BYOK provider config (SaaS web path pins the model
+    // there and nowhere else — without it every metering row is NULL).
+    const model = [run.resolvedModel, run.observedModel, run.model, run.byokModel].find(
       (m) => typeof m === 'string' && m,
     );
     if (model) persisted.model = model;
@@ -12418,10 +12421,17 @@ export async function startServer({
       // daemon: the Go gateway injects each caller's BYOK via the
       // X-OD-Provider-Config header → ALS) over the container-level env
       // fallback (single-key / local dev).
+      const injectedProviderConfig =
+        currentProviderConfig() ?? process.env.OD_OPENCODE_PROVIDER_CONFIG;
       opencodeConfigContent = mergeOpenCodeProviderConfig(
         opencodeConfigContent,
-        currentProviderConfig() ?? process.env.OD_OPENCODE_PROVIDER_CONFIG,
+        injectedProviderConfig,
       );
+      // usage 计量归因兜底:SaaS 网页端不传 model、opencode 流帧不带模型,
+      // resolvedModel/observedModel/run.model 三级全空 → 计量行 model 为 NULL。
+      // BYOK 配置顶层的 model 就是 opencode 实际选用的,记到 run 上垫底。
+      const byokModel = openCodeProviderConfigModel(injectedProviderConfig);
+      if (byokModel) run.byokModel = byokModel;
     }
 
     // Pre-flight the composed prompt against any argv-byte budget the

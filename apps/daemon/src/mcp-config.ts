@@ -564,6 +564,24 @@ export function mergeOpenCodeProviderConfig(
   return Object.keys(merged).length > 0 ? JSON.stringify(merged) : null;
 }
 
+// openCodeProviderConfigModel 从注入的 BYOK provider 配置 JSON 里取顶层
+// `model`("<provider>/<model>",Go 网关 BuildAgentEnvVars 构造)。SaaS 网页
+// 端不传 model 参数、opencode 流帧也不带模型,这是 usage 计量归因模型的
+// 最后一级兜底 —— 配置里的 model 正是 opencode 实际选用的。
+export function openCodeProviderConfigModel(
+  injectedJson: string | null | undefined,
+): string | null {
+  const raw = typeof injectedJson === 'string' ? injectedJson.trim() : '';
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const model = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).model : null;
+    return typeof model === 'string' && model ? model : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildOpenCodeExternalDirectoryAllowlist(
   directories: string[] | undefined,
 ): Record<string, 'allow'> | null {

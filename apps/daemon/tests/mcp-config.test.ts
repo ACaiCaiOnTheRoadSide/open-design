@@ -10,6 +10,7 @@ import {
   buildOpenCodeMcpConfigContent,
   isManagedProjectCwd,
   mergeOpenCodeProviderConfig,
+  openCodeProviderConfigModel,
   readMcpConfig,
   sanitizeMcpServer,
   writeMcpConfig,
@@ -1146,6 +1147,25 @@ describe('MCP_TEMPLATES', () => {
     // GitHub repo slug). Getting this wrong silently 404s on the registry.
     expect(tpl?.args).toEqual(['-y', 'a11y-mcp-server']);
     expect(tpl?.envFields ?? []).toEqual([]);
+  });
+});
+
+describe('openCodeProviderConfigModel', () => {
+  it('extracts the top-level model slug from injected BYOK config', () => {
+    const injected = JSON.stringify({
+      provider: { openai: { options: { apiKey: 'sk-x' }, models: { 'gpt-4o': {} } } },
+      model: 'openai/gpt-4o',
+    });
+    expect(openCodeProviderConfigModel(injected)).toBe('openai/gpt-4o');
+  });
+
+  it('returns null when config is absent, invalid, or has no model', () => {
+    expect(openCodeProviderConfigModel(null)).toBeNull();
+    expect(openCodeProviderConfigModel(undefined)).toBeNull();
+    expect(openCodeProviderConfigModel('')).toBeNull();
+    expect(openCodeProviderConfigModel('{not valid')).toBeNull();
+    expect(openCodeProviderConfigModel(JSON.stringify({ provider: {} }))).toBeNull();
+    expect(openCodeProviderConfigModel(JSON.stringify({ model: 42 }))).toBeNull();
   });
 });
 
