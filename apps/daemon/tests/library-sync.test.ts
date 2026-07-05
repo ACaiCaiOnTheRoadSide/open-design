@@ -7,9 +7,18 @@
 //     user dropped in → manual-upload, and scaffolding (css/js) is excluded,
 //   - the timeline buckets by the artifact's own mtime (not sync time), and
 //   - the pass is idempotent (re-running indexes nothing new).
+//
+// 本 fork 的 openDatabase 连的是共享 PG 测试库(忽略传入路径),不是每测一个
+// 临时 sqlite 文件。projects/conversations/messages/library_assets 的 id 是全局
+// 主键,library_assets 还有 UNIQUE(content_hash)。上游那种固定 id('proj-1')
+// 和固定字节(相同 png / html)在共享库里会跨测试、跨运行撞主键或被内容哈希
+// 去重(把 result.projectAssets/designSystems 计数拉低)——所以每个测试用
+// randomUUID 铸唯一 id,并把 run id 揉进文件内容让 content hash 也唯一;断言
+// 一律经 projectId / designSystemId 过滤(legacy 租户是共享的,不假设库为空)。
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -22,54 +31,66 @@ import {
 } from '../src/db.js';
 import { listLibraryAssets } from '../src/library-store.js';
 import { reconcileLibrary } from '../src/library-sync.js';
-import type Database from 'better-sqlite3';
 
-let db: Database.Database;
+let db: Awaited<ReturnType<typeof openDatabase>>;
 let dataDir: string;
 let projectsDir: string;
 let designSystemsDir: string;
 let libraryDir: string;
 
-const PROJECT_ID = 'proj-1';
-const DS_DIR = 'acme';
+// Per-test unique ids/content (see header comment): minted in beforeEach.
+let run: string;
+let projectId: string;
+let convId: string;
+let msgId: string;
+let dsDir: string;
+let dsId: string;
+
 // A fixed past day so we can assert the timeline buckets by file mtime.
 const ARTIFACT_DATE = '2021-04-08';
 const ARTIFACT_TS = new Date(`${ARTIFACT_DATE}T12:00:00`).getTime();
 
 beforeEach(async () => {
+  run = randomUUID().slice(0, 8);
+  projectId = `proj-${run}`;
+  convId = `conv-${run}`;
+  msgId = `msg-${run}`;
+  dsDir = `acme-${run}`;
+  dsId = `user:${dsDir}`;
   dataDir = await mkdtemp(path.join(os.tmpdir(), 'od-library-sync-'));
   projectsDir = path.join(dataDir, 'projects');
   designSystemsDir = path.join(dataDir, 'design-systems');
   libraryDir = path.join(dataDir, 'library');
   await mkdir(projectsDir, { recursive: true });
   await mkdir(designSystemsDir, { recursive: true });
-  db = openDatabase(dataDir, { dataDir });
+  db = await openDatabase(dataDir, { dataDir });
 });
 
 afterEach(async () => {
-  closeDatabase();
+  await closeDatabase();
   await rm(dataDir, { recursive: true, force: true });
 });
 
 async function seedProject(): Promise<void> {
   const now = Date.now();
-  insertProject(db, { id: PROJECT_ID, name: 'Proj', createdAt: now, updatedAt: now });
-  insertConversation(db, {
-    id: 'conv-1',
-    projectId: PROJECT_ID,
+  await insertProject(db, { id: projectId, name: 'Proj', createdAt: now, updatedAt: now });
+  await insertConversation(db, {
+    id: convId,
+    projectId,
     title: 'C',
     createdAt: now,
     updatedAt: now,
   });
 
-  const dir = path.join(projectsDir, PROJECT_ID);
+  const dir = path.join(projectsDir, projectId);
   await mkdir(dir, { recursive: true });
   // index.html + render.png are agent-produced; logo.png is a user drop-in;
-  // styles.css is scaffolding (must be excluded).
-  await writeFile(path.join(dir, 'index.html'), '<!doctype html><h1>Deck</h1>');
+  // styles.css is scaffolding (must be excluded). Content embeds the run id so
+  // content hashes stay unique in the shared library table.
+  await writeFile(path.join(dir, 'index.html'), `<!doctype html><h1>Deck ${run}</h1>`);
   // Distinct bytes per png so content-hash dedup keeps them separate assets.
-  await writeFile(path.join(dir, 'render.png'), pngBytes('render'));
-  await writeFile(path.join(dir, 'logo.png'), pngBytes('logo'));
+  await writeFile(path.join(dir, 'render.png'), pngBytes(`render-${run}`));
+  await writeFile(path.join(dir, 'logo.png'), pngBytes(`logo-${run}`));
   await writeFile(path.join(dir, 'styles.css'), 'h1{color:red}');
   // Stamp the deliverables with a known past mtime to assert timeline bucketing.
   const stamp = new Date(ARTIFACT_TS);
@@ -77,8 +98,8 @@ async function seedProject(): Promise<void> {
     await utimes(path.join(dir, f), stamp, stamp);
   }
 
-  upsertMessage(db, 'conv-1', {
-    id: 'msg-1',
+  await upsertMessage(db, convId, {
+    id: msgId,
     role: 'assistant',
     content: 'made a deck',
     producedFiles: [
@@ -89,7 +110,7 @@ async function seedProject(): Promise<void> {
 }
 
 async function seedDesignSystem(): Promise<void> {
-  const root = path.join(designSystemsDir, DS_DIR);
+  const root = path.join(designSystemsDir, dsDir);
   await mkdir(root, { recursive: true });
   await writeFile(
     path.join(root, 'DESIGN.md'),
@@ -99,13 +120,16 @@ async function seedDesignSystem(): Promise<void> {
     path.join(root, 'manifest.json'),
     JSON.stringify({
       schemaVersion: 'od-design-system-project/v1',
-      id: DS_DIR,
+      id: dsDir,
       name: 'Acme',
       category: 'Brand',
       files: { design: 'DESIGN.md', tokens: 'tokens.css', components: 'components.html' },
     }),
   );
-  await writeFile(path.join(root, 'components.html'), '<!doctype html><button>Acme</button>');
+  await writeFile(
+    path.join(root, 'components.html'),
+    `<!doctype html><button>Acme ${run}</button>`,
+  );
 }
 
 // A tiny valid 1x1 PNG so dimension sniffing / mime detection have real bytes.
@@ -139,7 +163,9 @@ describe('reconcileLibrary', () => {
     expect(result.projectAssets).toBe(3);
     expect(result.total).toBe(4);
 
-    const assets = listLibraryAssets(db, {});
+    // Scope to this test's project — the shared legacy tenant may hold assets
+    // from other tests/runs.
+    const assets = await listLibraryAssets(db, { projectId });
     const byRel = new Map(assets.map((a) => [a.relPath, a]));
 
     // No scaffolding leaked in.
@@ -151,16 +177,18 @@ describe('reconcileLibrary', () => {
     expect(sourceKindFor('logo.png')).toBe('manual-upload'); // user drop-in
 
     // The design system is one `design-system` card linking back to itself.
-    const ds = assets.find((a) => a.kind === 'design-system');
+    const ds = (await listLibraryAssets(db, { designSystemId: dsId })).find(
+      (a) => a.kind === 'design-system',
+    );
     expect(ds).toBeTruthy();
     expect(ds?.sources?.[0]?.sourceKind).toBe('design-system');
-    expect(ds?.sources?.[0]?.designSystemId).toBe(`user:${DS_DIR}`);
+    expect(ds?.sources?.[0]?.designSystemId).toBe(dsId);
 
     // Project assets are referenced (bytes stay in the project) and back-link it.
     const html = byRel.get('index.html')!;
     expect(html.storage).toBe('referenced');
-    expect(html.originProjectId).toBe(PROJECT_ID);
-    expect(html.sources?.[0]?.projectId).toBe(PROJECT_ID);
+    expect(html.originProjectId).toBe(projectId);
+    expect(html.sources?.[0]?.projectId).toBe(projectId);
 
     // Timeline buckets by the artifact's own mtime, not the sync time.
     expect(html.archivedDate).toBe(ARTIFACT_DATE);
@@ -172,16 +200,20 @@ describe('reconcileLibrary', () => {
 
     const first = await reconcileLibrary(db, paths());
     expect(first.total).toBe(4);
-    const countAfterFirst = listLibraryAssets(db, {}).length;
+    const projCountAfterFirst = (await listLibraryAssets(db, { projectId })).length;
+    const dsCountAfterFirst = (await listLibraryAssets(db, { designSystemId: dsId })).length;
+    expect(projCountAfterFirst).toBe(3);
+    expect(dsCountAfterFirst).toBe(1);
 
     const second = await reconcileLibrary(db, paths());
     expect(second.total).toBe(0);
     expect(second.deduped).toBeGreaterThanOrEqual(4);
-    expect(listLibraryAssets(db, {}).length).toBe(countAfterFirst);
+    expect((await listLibraryAssets(db, { projectId })).length).toBe(projCountAfterFirst);
+    expect((await listLibraryAssets(db, { designSystemId: dsId })).length).toBe(dsCountAfterFirst);
   });
 
   it('skips manifest preview paths that escape the design-system root', async () => {
-    const root = path.join(designSystemsDir, DS_DIR);
+    const root = path.join(designSystemsDir, dsDir);
     await mkdir(root, { recursive: true });
     await writeFile(path.join(designSystemsDir, 'outside.html'), '<!doctype html><h1>Secret</h1>');
     await writeFile(
@@ -192,17 +224,22 @@ describe('reconcileLibrary', () => {
       path.join(root, 'manifest.json'),
       JSON.stringify({
         schemaVersion: 'od-design-system-project/v1',
-        id: DS_DIR,
+        id: dsDir,
         name: 'Acme',
         preview: { pages: [{ path: '../outside.html', role: 'overview' }] },
       }),
     );
-    await writeFile(path.join(root, 'components.html'), '<!doctype html><button>Safe</button>');
+    await writeFile(
+      path.join(root, 'components.html'),
+      `<!doctype html><button>Safe ${run}</button>`,
+    );
 
     const result = await reconcileLibrary(db, paths());
 
     expect(result.designSystems).toBe(1);
-    const ds = listLibraryAssets(db, {}).find((asset) => asset.kind === 'design-system');
+    const ds = (await listLibraryAssets(db, { designSystemId: dsId })).find(
+      (asset) => asset.kind === 'design-system',
+    );
     expect(ds?.relPath).toBe('components.html');
     expect(await realpath(path.resolve(ds?.filePath ?? ''))).toBe(
       await realpath(path.join(root, 'components.html')),
@@ -210,7 +247,7 @@ describe('reconcileLibrary', () => {
   });
 
   it('does not register a design-system preview that is a symlink', async () => {
-    const root = path.join(designSystemsDir, DS_DIR);
+    const root = path.join(designSystemsDir, dsDir);
     await mkdir(root, { recursive: true });
     await writeFile(path.join(designSystemsDir, 'outside.html'), '<!doctype html><h1>Secret</h1>');
     await writeFile(
@@ -221,7 +258,7 @@ describe('reconcileLibrary', () => {
       path.join(root, 'manifest.json'),
       JSON.stringify({
         schemaVersion: 'od-design-system-project/v1',
-        id: DS_DIR,
+        id: dsDir,
         name: 'Acme',
         preview: { pages: [{ path: 'components.html', role: 'overview' }] },
       }),
@@ -231,6 +268,10 @@ describe('reconcileLibrary', () => {
     const result = await reconcileLibrary(db, paths());
 
     expect(result.designSystems).toBe(0);
-    expect(listLibraryAssets(db, {}).filter((asset) => asset.kind === 'design-system')).toEqual([]);
+    expect(
+      (await listLibraryAssets(db, { designSystemId: dsId })).filter(
+        (asset) => asset.kind === 'design-system',
+      ),
+    ).toEqual([]);
   });
 });

@@ -11,6 +11,7 @@
 
 import type { AsyncDb } from './storage/pg-async.js';
 import { randomUUID } from 'node:crypto';
+import { currentTenantId } from './multitenant.js';
 import type {
   LibraryAsset,
   LibraryAssetFilter,
@@ -242,13 +243,14 @@ export interface InsertLibraryAssetInput {
 
 export async function insertLibraryAsset(db: SqliteDb, input: InsertLibraryAssetInput): Promise<void> {
   const now = Date.now();
+  const tenantId = currentTenantId();
   await db.prepare(
     `INSERT INTO library_assets
        (id, kind, storage, source_url, source_title, source_domain,
         captured_at, archived_date, file_path, origin_project_id, rel_path,
         mime, width, height, size, content_hash, caption, ocr_text,
-        palette_json, tags_json, metadata_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        palette_json, tags_json, metadata_json, created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.kind,
@@ -273,6 +275,7 @@ export async function insertLibraryAsset(db: SqliteDb, input: InsertLibraryAsset
     input.metadata ? JSON.stringify(input.metadata) : null,
     now,
     now,
+    tenantId,
   );
 }
 
@@ -306,22 +309,22 @@ export async function updateLibraryAsset(db: SqliteDb, id: string, patch: Librar
   if ('metadata' in patch) assign('metadata_json', patch.metadata ? JSON.stringify(patch.metadata) : null);
   if (sets.length === 0) return;
   assign('updated_at', Date.now());
-  args.push(id);
-  await db.prepare(`UPDATE library_assets SET ${sets.join(', ')} WHERE id = ?`).run(...args);
+  args.push(id, currentTenantId());
+  await db.prepare(`UPDATE library_assets SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`).run(...args);
 }
 
 export async function findLibraryAssetByHash(db: SqliteDb, contentHash: string): Promise<LibraryAssetRecord | null> {
   const raw = (await db
-    .prepare(`SELECT ${ASSET_COLS} FROM library_assets WHERE content_hash = ?`)
-    .get(contentHash)) as RawAssetRow | undefined;
+    .prepare(`SELECT ${ASSET_COLS} FROM library_assets WHERE content_hash = ? AND tenant_id = ?`)
+    .get(contentHash, currentTenantId())) as RawAssetRow | undefined;
   if (!raw) return null;
   return normalizeAsset(raw, await listLibraryAssetSources(db, raw.id));
 }
 
 export async function getLibraryAsset(db: SqliteDb, id: string): Promise<LibraryAssetRecord | null> {
   const raw = (await db
-    .prepare(`SELECT ${ASSET_COLS} FROM library_assets WHERE id = ?`)
-    .get(id)) as RawAssetRow | undefined;
+    .prepare(`SELECT ${ASSET_COLS} FROM library_assets WHERE id = ? AND tenant_id = ?`)
+    .get(id, currentTenantId())) as RawAssetRow | undefined;
   if (!raw) return null;
   return normalizeAsset(raw, await listLibraryAssetSources(db, raw.id));
 }
@@ -341,9 +344,9 @@ export async function findReferencedAssetByOrigin(
   const raw = (await db
     .prepare(
       `SELECT ${ASSET_COLS} FROM library_assets
-        WHERE origin_project_id = ? AND rel_path = ? LIMIT 1`,
+        WHERE origin_project_id = ? AND rel_path = ? AND tenant_id = ? LIMIT 1`,
     )
-    .get(originProjectId, relPath)) as RawAssetRow | undefined;
+    .get(originProjectId, relPath, currentTenantId())) as RawAssetRow | undefined;
   if (!raw) return null;
   return normalizeAsset(raw, await listLibraryAssetSources(db, raw.id));
 }
@@ -357,19 +360,19 @@ export async function hasDesignSystemSource(db: SqliteDb, designSystemId: string
   const row = await db
     .prepare(
       `SELECT 1 FROM library_asset_sources
-        WHERE design_system_id = ? AND source_kind = 'design-system' LIMIT 1`,
+        WHERE design_system_id = ? AND source_kind = 'design-system' AND tenant_id = ? LIMIT 1`,
     )
-    .get(designSystemId);
+    .get(designSystemId, currentTenantId());
   return Boolean(row);
 }
 
 export async function deleteLibraryAsset(db: SqliteDb, id: string): Promise<void> {
-  await db.prepare(`DELETE FROM library_assets WHERE id = ?`).run(id);
+  await db.prepare(`DELETE FROM library_assets WHERE id = ? AND tenant_id = ?`).run(id, currentTenantId());
 }
 
 export async function listLibraryAssets(db: SqliteDb, filter: LibraryAssetFilter = {}): Promise<LibraryAssetRecord[]> {
-  const where: string[] = [];
-  const args: unknown[] = [];
+  const where: string[] = ['a.tenant_id = ?'];
+  const args: unknown[] = [currentTenantId()];
   if (filter.kind) {
     where.push('a.kind = ?');
     args.push(filter.kind);
@@ -408,7 +411,7 @@ export async function listLibraryAssets(db: SqliteDb, filter: LibraryAssetFilter
     where.push('EXISTS (SELECT 1 FROM library_asset_sources s WHERE s.asset_id = a.id AND s.design_system_id = ?)');
     args.push(filter.designSystemId);
   }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const whereSql = `WHERE ${where.join(' AND ')}`;
   const limit = Number.isFinite(filter.limit) ? Math.max(1, Math.min(Number(filter.limit), 1000)) : 500;
   const raws = (await db
     .prepare(
@@ -465,8 +468,8 @@ function normalizeSource(raw: RawSourceRow): LibraryAssetSource {
 
 export async function listLibraryAssetSources(db: SqliteDb, assetId: string): Promise<LibraryAssetSource[]> {
   const raws = (await db
-    .prepare(`SELECT ${SOURCE_COLS} FROM library_asset_sources WHERE asset_id = ? ORDER BY created_at ASC`)
-    .all(assetId)) as RawSourceRow[];
+    .prepare(`SELECT ${SOURCE_COLS} FROM library_asset_sources WHERE asset_id = ? AND tenant_id = ? ORDER BY created_at ASC`)
+    .all(assetId, currentTenantId())) as RawSourceRow[];
   return raws.map(normalizeSource);
 }
 
@@ -476,9 +479,9 @@ async function listLibraryAssetSourcesFor(db: SqliteDb, assetIds: string[]): Pro
   const placeholders = assetIds.map(() => '?').join(', ');
   const raws = (await db
     .prepare(
-      `SELECT ${SOURCE_COLS} FROM library_asset_sources WHERE asset_id IN (${placeholders}) ORDER BY created_at ASC`,
+      `SELECT ${SOURCE_COLS} FROM library_asset_sources WHERE asset_id IN (${placeholders}) AND tenant_id = ? ORDER BY created_at ASC`,
     )
-    .all(...assetIds)) as RawSourceRow[];
+    .all(...assetIds, currentTenantId())) as RawSourceRow[];
   for (const raw of raws) {
     const normalized = normalizeSource(raw);
     const list = out.get(raw.assetId) ?? [];
@@ -508,6 +511,7 @@ export async function addLibraryAssetSource(db: SqliteDb, input: AddLibrarySourc
     .prepare(
       `SELECT id FROM library_asset_sources
         WHERE asset_id = ?
+          AND tenant_id = ?
           AND source_kind = ?
           AND COALESCE(project_id,'') = COALESCE(?, '')
           AND COALESCE(conversation_id,'') = COALESCE(?, '')
@@ -517,6 +521,7 @@ export async function addLibraryAssetSource(db: SqliteDb, input: AddLibrarySourc
     )
     .get(
       input.assetId,
+      currentTenantId(),
       input.sourceKind,
       input.projectId ?? null,
       input.conversationId ?? null,
@@ -528,8 +533,8 @@ export async function addLibraryAssetSource(db: SqliteDb, input: AddLibrarySourc
   await db.prepare(
     `INSERT INTO library_asset_sources
        (id, asset_id, source_kind, project_id, conversation_id, run_id,
-        design_system_id, rel_path, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        design_system_id, rel_path, created_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     randomUUID(),
     input.assetId,
@@ -540,6 +545,7 @@ export async function addLibraryAssetSource(db: SqliteDb, input: AddLibrarySourc
     input.designSystemId ?? null,
     input.relPath ?? null,
     Date.now(),
+    currentTenantId(),
   );
 }
 
@@ -574,8 +580,8 @@ const TASK_COLS = `id, asset_id AS assetId, status, progress_json AS progressJso
 
 export async function insertLibraryTask(db: SqliteDb, task: LibraryTask): Promise<void> {
   await db.prepare(
-    `INSERT INTO library_tasks (id, asset_id, status, progress_json, error_json, started_at, ended_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO library_tasks (id, asset_id, status, progress_json, error_json, started_at, ended_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     task.id,
     task.assetId,
@@ -584,11 +590,12 @@ export async function insertLibraryTask(db: SqliteDb, task: LibraryTask): Promis
     task.error ? JSON.stringify(task.error) : null,
     task.startedAt,
     task.endedAt ?? null,
+    currentTenantId(),
   );
 }
 
 export async function getLibraryTask(db: SqliteDb, id: string): Promise<LibraryTask | null> {
-  const raw = (await db.prepare(`SELECT ${TASK_COLS} FROM library_tasks WHERE id = ?`).get(id)) as
+  const raw = (await db.prepare(`SELECT ${TASK_COLS} FROM library_tasks WHERE id = ? AND tenant_id = ?`).get(id, currentTenantId())) as
     | RawTaskRow
     | undefined;
   return raw ? normalizeTask(raw) : null;
@@ -603,13 +610,14 @@ export async function updateLibraryTask(
   if (!existing) return;
   const next = { ...existing, ...patch };
   await db.prepare(
-    `UPDATE library_tasks SET status = ?, progress_json = ?, error_json = ?, ended_at = ? WHERE id = ?`,
+    `UPDATE library_tasks SET status = ?, progress_json = ?, error_json = ?, ended_at = ? WHERE id = ? AND tenant_id = ?`,
   ).run(
     next.status,
     JSON.stringify(next.progress ?? []),
     next.error ? JSON.stringify(next.error) : null,
     next.endedAt ?? null,
     id,
+    currentTenantId(),
   );
 }
 
@@ -623,25 +631,35 @@ export interface LibraryTokenRow {
   extensionOrigin: string;
   createdAt: number;
   lastUsedAt: number;
+  // 铸 token 时的租户(配对请求在带租户的 UI 会话里发起)。扩展端后续请求
+  // 只带 token 不带 X-Tenant-Id,验证成功后据此恢复 ALS(镜像 tool-token 模式),
+  // 素材读写才落在归属租户下。
+  tenantId: string;
 }
 
-export async function insertLibraryToken(db: SqliteDb, row: LibraryTokenRow): Promise<void> {
+export async function insertLibraryToken(
+  db: SqliteDb,
+  row: Omit<LibraryTokenRow, 'tenantId'> & { tenantId?: string },
+): Promise<void> {
   await db.prepare(
-    `INSERT INTO library_tokens (token_hash, label, extension_origin, created_at, last_used_at)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO library_tokens (token_hash, label, extension_origin, created_at, last_used_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (token_hash) DO UPDATE SET
        label = excluded.label,
        extension_origin = excluded.extension_origin,
        created_at = excluded.created_at,
-       last_used_at = excluded.last_used_at`,
-  ).run(row.tokenHash, row.label, row.extensionOrigin, row.createdAt, row.lastUsedAt);
+       last_used_at = excluded.last_used_at,
+       tenant_id = excluded.tenant_id`,
+  ).run(row.tokenHash, row.label, row.extensionOrigin, row.createdAt, row.lastUsedAt, row.tenantId ?? currentTenantId());
 }
 
+// token 是不可猜的随机值,按 hash 全局查找(扩展请求没有租户上下文);
+// 行上的 tenantId 由调用方(validateLibraryToken)用于恢复 ALS。
 export async function findLibraryTokenByHash(db: SqliteDb, tokenHash: string): Promise<LibraryTokenRow | null> {
   const raw = (await db
     .prepare(
       `SELECT token_hash AS tokenHash, label, extension_origin AS extensionOrigin,
-              created_at AS createdAt, last_used_at AS lastUsedAt
+              created_at AS createdAt, last_used_at AS lastUsedAt, tenant_id AS tenantId
          FROM library_tokens WHERE token_hash = ?`,
     )
     .get(tokenHash)) as LibraryTokenRow | undefined;
@@ -656,12 +674,14 @@ export async function listLibraryTokens(db: SqliteDb): Promise<LibraryTokenRow[]
   return (await db
     .prepare(
       `SELECT token_hash AS tokenHash, label, extension_origin AS extensionOrigin,
-              created_at AS createdAt, last_used_at AS lastUsedAt
-         FROM library_tokens ORDER BY created_at DESC`,
+              created_at AS createdAt, last_used_at AS lastUsedAt, tenant_id AS tenantId
+         FROM library_tokens WHERE tenant_id = ? ORDER BY created_at DESC`,
     )
-    .all()) as LibraryTokenRow[];
+    .all(currentTenantId())) as LibraryTokenRow[];
 }
 
+// 全局(不过滤租户):boot 时喂 /api origin 中间件的 allowlist,
+// 各租户配对的扩展 origin 都需放行;鉴权在 token 校验层,不在 CORS 层。
 export async function listLibraryTokenOrigins(db: SqliteDb): Promise<string[]> {
   const rows = (await db
     .prepare(`SELECT DISTINCT extension_origin AS origin FROM library_tokens`)

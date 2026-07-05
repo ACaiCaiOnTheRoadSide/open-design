@@ -4,9 +4,15 @@
 // daemon HTTP boundary (the cheapest layer that sees the whole flow).
 
 import type http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startServer } from '../src/server.js';
+
+// 本 fork 的 daemon 连共享 PG 测试库,library_assets 有全局 UNIQUE(content_hash)
+// 且按内容哈希去重。ingest 固定字节会跨运行命中上一轮的资产行(afterAll 清理
+// 失败时尤甚)——所以每次运行把 randomUUID 揉进被摄取的内容,保证摄取的是
+// 全新资产。
 
 describe('library edit-as-page route', () => {
   let server: http.Server;
@@ -50,7 +56,7 @@ describe('library edit-as-page route', () => {
   }
 
   it('turns a captured html asset into a new editable project seeded with index.html', async () => {
-    const html = '<!doctype html><html><body><h1>Captured page</h1></body></html>';
+    const html = `<!doctype html><html><body><h1>Captured page ${randomUUID()}</h1></body></html>`;
     const asset = await ingest({ text: html, kind: 'html', sourceTitle: 'Captured Test Page' });
     expect(asset.kind).toBe('html');
 
@@ -93,7 +99,7 @@ describe('library edit-as-page route', () => {
   });
 
   it('rejects edit-as-page for a non-html asset', async () => {
-    const asset = await ingest({ text: 'just some notes', kind: 'text' });
+    const asset = await ingest({ text: `just some notes ${randomUUID()}`, kind: 'text' });
     const resp = await fetch(
       `${baseUrl}/api/library/assets/${encodeURIComponent(asset.id)}/edit-as-page`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },

@@ -8,6 +8,7 @@
 // from SQLite on daemon boot so a paired extension survives restarts.
 
 import type { AsyncDb } from './storage/pg-async.js';
+import { enterTenant } from './multitenant.js';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import type { LibraryConnectionStatus } from '@open-design/contracts';
 import {
@@ -120,6 +121,10 @@ export async function validateLibraryToken(
   if (!token) return { ok: false };
   const row = await findLibraryTokenByHash(db, tokenHash(token));
   if (!row) return { ok: false };
+  // 多租户:扩展端请求只带 token、无 X-Tenant-Id 头,全局中间件把请求留在
+  // LEGACY_TENANT。用铸 token 时记录的租户恢复本请求的 ALS(镜像
+  // authorizeToolRequest 的 tool-token 模式),素材读写才落在归属租户下。
+  if (row.tenantId) enterTenant(row.tenantId);
   await touchLibraryToken(db, row.tokenHash);
   return { ok: true, row };
 }

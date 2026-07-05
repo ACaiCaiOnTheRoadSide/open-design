@@ -2,14 +2,21 @@
 // carry a `metadata.figmaCapture` marker (which the web "Download Figma" action
 // and `od library figma` gate on), and the OD Figma capture IR round-trips
 // through the content-addressed sidecar next to the owned HTML object.
+//
+// 本 fork 的数据层是共享 PG 测试库(openDatabase 忽略传入路径),不再有上游的
+// `new Database(':memory:')` + migrateLibrary(schema 全部由 migrations/*.sql
+// 走 openDatabase 里的 runPgMigrations 应用)。library_assets 有全局
+// UNIQUE(content_hash),上游固定字节(相同 PNG magic / 相同 html)第二次运行
+// 会被内容哈希去重、`deduped` 断言翻车——所以每个测试把 run id 揉进资产字节,
+// 保证 content hash 唯一。sidecar 文件本身仍落在每测独立的 mkdtemp libraryDir。
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
 
-import { migrateLibrary } from '../src/library-store.js';
+import { closeDatabase, openDatabase } from '../src/db.js';
 import {
   registerLibraryAsset,
   resolveAssetElementSidecarPath,
@@ -18,17 +25,20 @@ import {
   writeFigmaSidecar,
 } from '../src/library.js';
 
-let db: Database.Database;
+let db: Awaited<ReturnType<typeof openDatabase>>;
 let libraryDir: string;
+let run: string;
+
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 beforeEach(async () => {
-  db = new Database(':memory:');
-  migrateLibrary(db);
+  run = randomUUID().slice(0, 8);
   libraryDir = await mkdtemp(path.join(os.tmpdir(), 'od-library-figma-'));
+  db = await openDatabase(libraryDir, { dataDir: libraryDir });
 });
 
 afterEach(async () => {
-  db.close();
+  await closeDatabase();
   await rm(libraryDir, { recursive: true, force: true });
 });
 
@@ -48,7 +58,7 @@ describe('library figma capture sidecar', () => {
       storage: 'owned',
       kind: 'html',
       mime: 'text/html',
-      text: '<!doctype html><html><body><h1>Example</h1></body></html>',
+      text: `<!doctype html><html><body><h1>Example ${run}</h1></body></html>`,
       sourceUrl: 'https://example.com/',
       sourceTitle: 'Example',
       tags: ['page-capture'],
@@ -77,7 +87,8 @@ describe('library figma capture sidecar', () => {
       storage: 'owned',
       kind: 'image',
       mime: 'image/png',
-      bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      // Trailing tag bytes keep the content hash unique per test in the shared DB.
+      bytes: Buffer.concat([PNG_MAGIC, Buffer.from(`\n<!-- element-${run} -->`)]),
       tags: ['element', 'section'],
       metadata: { element: { tag: 'section', selector: 'section.hero', width: 800, height: 400, hasHtml: true } },
       source: { sourceKind: 'clipper' },
@@ -101,8 +112,9 @@ describe('library figma capture sidecar', () => {
       kind: 'image',
       mime: 'image/png',
       absPath: path.join(libraryDir, 'nope.png'),
-      // referenced assets only need bytes for hashing; supply them inline.
-      bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      // referenced assets only need bytes for hashing; supply them inline
+      // (unique per test so the shared-DB content-hash dedup can't kick in).
+      bytes: Buffer.concat([PNG_MAGIC, Buffer.from(`\n<!-- referenced-${run} -->`)]),
       source: { sourceKind: 'manual-upload' },
     });
     expect(resolveAssetFigmaSidecarPath(asset, libraryDir)).toBeNull();
