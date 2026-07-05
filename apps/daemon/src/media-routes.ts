@@ -12,6 +12,9 @@ import {
 } from './aihubmix.js';
 import { isSandboxModeEnabled } from './sandbox-mode.js';
 import { isMediaModelServable, storeMediaToBackend } from './media.js';
+import { findMediaModel } from './media-models.js';
+import { recordMediaUsage } from './media-usage.js';
+import { currentUserId } from './multitenant.js';
 import type { ToolTokenGrant } from './tool-tokens.js';
 import path from 'node:path';
 
@@ -147,6 +150,10 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       return sendApiError(res, 403, denial.code, denial.message);
     }
 
+    // 计量归因:在请求 ALS 作用域内同步捕获。web 直发路径来自 X-OD-User-Id;
+    // agent 回连路径由 authorizeToolRequest 从 grant.userId 恢复进 ALS。
+    const usageUserId = currentUserId();
+
     let task: Awaited<ReturnType<typeof createMediaTask>> | null = null;
     try {
       const taskId = randomUUID();
@@ -204,6 +211,27 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           task.endedAt = Date.now();
           void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
 
+          // 计量落库(media_usage,insert-only):stub 产物是 provider 挂掉后的
+          // 占位文件,记 failed 且无计量值,绝不算成真实用量。
+          const stubbed = meta?.usedStubFallback === true || meta?.intentionalStub === true;
+          void recordMediaUsage(db, {
+            userId: usageUserId,
+            projectId,
+            taskId,
+            surface,
+            provider: meta?.providerId ?? undefined,
+            model,
+            status: stubbed ? 'failed' : 'done',
+            measures: stubbed ? undefined : meta?.usage,
+            outputBytes: typeof meta?.size === 'number' ? meta.size : undefined,
+            elapsedMs: task.endedAt - task.startedAt,
+            errorCode: meta?.usedStubFallback
+              ? 'stub_fallback'
+              : meta?.intentionalStub
+                ? 'intentional_stub'
+                : undefined,
+          });
+
           const backendUrl = process.env.OD_BACKEND_URL;
           const daemonToken = process.env.OD_API_TOKEN;
           if (backendUrl && daemonToken && meta?.name) {
@@ -232,6 +260,23 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           };
           task.endedAt = Date.now();
           void persistMediaTask(task).catch((e: any) => console.error('[media] persist task failed:', e));
+
+          // 失败也记一行(无计量值),供失败率统计;provider 从目录解析,兜底 undefined。
+          void recordMediaUsage(db, {
+            userId: usageUserId,
+            projectId,
+            taskId,
+            surface,
+            provider: findMediaModel(model)?.provider ?? undefined,
+            model,
+            status: 'failed',
+            outputBytes: undefined,
+            elapsedMs: task.endedAt - task.startedAt,
+            errorCode:
+              typeof task.error.code === 'string' && task.error.code
+                ? task.error.code
+                : `http_${task.error.status ?? 400}`,
+          });
           notifyTaskWaiters(task);
           console.error(
             `[task ${taskId.slice(0, 8)}] failed status=${task.error.status} ` +

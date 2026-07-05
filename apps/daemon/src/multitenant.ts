@@ -87,19 +87,23 @@ export function runWithTenant<T>(
  * validating the token we restore the run's tenant from grant.tenantId
  * for the remainder of the request handler. Each HTTP request is its own
  * async chain, so this stays isolated per-request.
+ *
+ * `userId` 可选:tool-token 回调没有 X-OD-User-Id 头,团队租户下 tenant_id
+ * 区分不了成员,所以把 mint 时捕获的 grant.userId 一并恢复进 ALS,媒体计量
+ * (media_usage)才能归因到发起 run 的用户。不传则保留请求已有的 userId。
  */
-export function enterTenant(tenantId: string): void {
+export function enterTenant(tenantId: string, userId?: string): void {
   if (!tenantId) return;
   // Preserve any provider config / media defaults already bound for this
   // request so re-scoping the tenant (tool-token callback path) does not drop
   // the caller's BYOK or the admin's default media model.
   const store = tenantStorage.getStore();
-  const userId = store?.userId;
+  const effectiveUserId = userId ?? store?.userId;
   const providerConfig = store?.providerConfig;
   const mediaDefaults = store?.mediaDefaults;
   tenantStorage.enterWith({
     tenantId,
-    ...(userId !== undefined ? { userId } : {}),
+    ...(effectiveUserId !== undefined ? { userId: effectiveUserId } : {}),
     ...(providerConfig !== undefined ? { providerConfig } : {}),
     ...(mediaDefaults !== undefined ? { mediaDefaults } : {}),
   });

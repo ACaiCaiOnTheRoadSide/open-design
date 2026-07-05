@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { currentTenantId, currentMediaDefaults, type MediaDefaults } from './multitenant.js';
+import { currentTenantId, currentUserId, currentMediaDefaults, type MediaDefaults } from './multitenant.js';
 
 export const DEFAULT_TOOL_TOKEN_TTL_MS = 15 * 60 * 1000;
 
@@ -52,6 +52,10 @@ export interface ToolTokenGrant {
   // memory-connectors) run inside an existing request ALS scope and don't
   // need restoration, so they may omit it.
   tenantId?: string;
+  // 发起 run 的用户(X-OD-User-Id),mint 时从 ALS 捕获。团队租户下 tenantId
+  // 区分不了成员;agent 工具回调不带该头,验证 token 后随 tenant 一起恢复进
+  // ALS,媒体计量(media_usage)据此归因到用户。可缺省(网关未传时)。
+  userId?: string;
   allowedEndpoints: readonly ToolEndpoint[];
   allowedOperations: readonly ToolOperation[];
   issuedAt: string;
@@ -81,6 +85,8 @@ export interface MintToolTokenOptions {
   // Tenant owning this run. Defaults to currentTenantId() at mint time when
   // omitted (mint happens inside the request handler's ALS scope).
   tenantId?: string;
+  // Defaults to currentUserId() at mint time when omitted.
+  userId?: string;
   // Defaults to currentMediaDefaults() at mint time when omitted.
   mediaDefaults?: MediaDefaults;
   allowedEndpoints?: readonly ToolEndpoint[];
@@ -167,6 +173,7 @@ export class ToolTokenRegistry {
     // for the conditional spread (exactOptionalPropertyTypes rejects assigning a
     // possibly-undefined value to the optional `mediaDefaults` slot).
     const mediaDefaults = options.mediaDefaults ?? currentMediaDefaults();
+    const userId = options.userId ?? currentUserId();
 
     const stored: StoredToolTokenGrant = {
       token,
@@ -174,6 +181,7 @@ export class ToolTokenRegistry {
       runId: options.runId,
       projectId: options.projectId,
       tenantId: options.tenantId ?? currentTenantId(),
+      ...(userId !== undefined ? { userId } : {}),
       allowedEndpoints: [...(options.allowedEndpoints ?? CHAT_TOOL_ENDPOINTS)],
       allowedOperations: [...(options.allowedOperations ?? CHAT_TOOL_OPERATIONS)],
       issuedAt: new Date(nowMs).toISOString(),

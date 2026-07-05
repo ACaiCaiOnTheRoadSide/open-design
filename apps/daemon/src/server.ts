@@ -3854,15 +3854,16 @@ function authorizeToolRequest(req, res, operation) {
   }
   // Multitenancy: agent callbacks carry the tool token but no X-Tenant-Id
   // header, so the global tenantMiddleware left us at LEGACY_TENANT. Restore
-  // the run's tenant for the rest of this request so tenant-scoped writes
-  // (media tasks, messages) land under the owning tenant.
-  if (validation.grant.tenantId) enterTenant(validation.grant.tenantId);
+  // the run's tenant (and the minting user, for media usage attribution) for
+  // the rest of this request so tenant-scoped writes (media tasks, messages)
+  // land under the owning tenant.
+  if (validation.grant.tenantId) enterTenant(validation.grant.tenantId, validation.grant.userId);
   return validation.grant;
 }
 
 function optionalToolGrantFromRequest(req, options = {}) {
   const validation = toolTokenRegistry.validate(bearerTokenFromRequest(req), options);
-  if (validation.ok && validation.grant.tenantId) enterTenant(validation.grant.tenantId);
+  if (validation.ok && validation.grant.tenantId) enterTenant(validation.grant.tenantId, validation.grant.userId);
   return validation.ok ? validation.grant : null;
 }
 

@@ -65,6 +65,7 @@ import {
 } from './media-models.js';
 import { assertAndFetchExternalAsset } from './connectionTest.js';
 import { resolveModelAlias, resolveProviderConfig } from './media-config.js';
+import { probeMp4DurationSec, type MediaUsageMeasures } from './media-usage.js';
 import {
   ensureProject,
   kindFor,
@@ -153,7 +154,16 @@ type MediaContext = {
   /** Additional reference images for multi-image i2v / style reference flows. */
   imageRefs: ImageRef[];
 };
-type RenderResult = { bytes: Buffer; providerNote: string; suggestedExt?: string };
+// usage 是渲染器的可选计量增强:durationSec/resolution 填「实际生效值」
+// (吸附、prompt 内嵌标志覆盖之后的),providerUsage 存 provider 返回的原始
+// 计费字段(如火山 usage)。不填也没关系——generateMedia 收口处会实测产物
+// 容器时长兜底(media-usage.ts),新 provider 默认零成本被计量覆盖。
+type RenderResult = {
+  bytes: Buffer;
+  providerNote: string;
+  suggestedExt?: string;
+  usage?: { durationSec?: number; resolution?: string; providerUsage?: unknown };
+};
 type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -549,6 +559,9 @@ export async function generateMedia(args: {
   let providerNote: string;
   let suggestedExt: string | undefined;
   let providerId = def.provider;
+  // 渲染器上报的计量增强(可选,见 RenderResult.usage)。目前只有火山视频
+  // 分支填;其他 provider 由收口处的容器实测兜底,无需逐分支接线。
+  let rendererUsage: RenderResult['usage'];
   // Tracks whether the bytes came from a real provider call or from the
   // stub fallback. Surfaces in the response so the CLI/agent can tell a
   // legitimate placeholder ("provider not integrated yet") apart from a
@@ -609,6 +622,7 @@ export async function generateMedia(args: {
       bytes = result.bytes;
       providerNote = result.providerNote;
       suggestedExt = result.suggestedExt;
+      rendererUsage = result.usage;
     } else if (def.provider === 'volcengine' && surface === 'image') {
       const result = await renderVolcengineImage(ctx, credentials);
       bytes = result.bytes;
@@ -803,6 +817,38 @@ export async function generateMedia(args: {
   const finalTarget = path.join(dir, finalOut);
   await writeFile(finalTarget, bytes);
   const st = await stat(finalTarget);
+
+  // 计量块(media-usage.ts):与 provider 无关,stub 产物(占位文件)不计量
+  // ——路由层据 usedStubFallback/intentionalStub 记为失败行。视频时长三级
+  // 来源:实测产物容器 > 渲染器上报的生效值 > 请求参数(已夹取)。
+  let usage: MediaUsageMeasures | undefined;
+  if (!usedStubFallback && !intentionalStub) {
+    const resolution = rendererUsage?.resolution ?? ctx.aspect;
+    if (surface === 'image') {
+      usage = { imagesCount: 1, ...(resolution ? { resolution } : {}) };
+    } else if (surface === 'video') {
+      const measured = probeMp4DurationSec(bytes);
+      const durationSec = measured ?? rendererUsage?.durationSec ?? clampedLength;
+      const durationSource: MediaUsageMeasures['durationSource'] | undefined =
+        measured != null
+          ? 'measured'
+          : rendererUsage?.durationSec != null
+            ? 'reported'
+            : typeof clampedLength === 'number'
+              ? 'requested'
+              : undefined;
+      usage = {
+        ...(typeof durationSec === 'number' ? { videoDurationSec: durationSec } : {}),
+        ...(durationSource ? { durationSource } : {}),
+        ...(resolution ? { resolution } : {}),
+        ...(rendererUsage?.providerUsage !== undefined
+          ? { providerUsage: rendererUsage.providerUsage }
+          : {}),
+      };
+    }
+    // audio:计量列已预留,本期不统计。
+  }
+
   return {
     name: finalOut,
     size: st.size,
@@ -817,6 +863,7 @@ export async function generateMedia(args: {
     usedStubFallback,
     intentionalStub,
     warnings,
+    ...(usage ? { usage } : {}),
   };
 }
 
@@ -1432,6 +1479,9 @@ async function renderVolcengineVideo(ctx: MediaContext, credentials: ProviderCon
       : 12 * 60 * 1000;
   let videoUrl: string | null = null;
   let lastStatus = '';
+  // 任务结果里的 usage(Ark 视频按 token 计费,completion_tokens 即账单单位)。
+  // 目前除 status/video_url/error 外整个响应都被丢弃,这里原样捕获供计量对账。
+  let providerUsage: unknown;
   // Emit a "task accepted" line right away so the agent's chat shows
   // something within the first second instead of going silent for the
   // full poll loop. cc's Bash tool considers a long-quiet pipe stuck
@@ -1468,6 +1518,7 @@ async function renderVolcengineVideo(ctx: MediaContext, credentials: ProviderCon
     }
     if (lastStatus === 'succeeded') {
       videoUrl = pollData?.content?.video_url || null;
+      if (pollData?.usage !== undefined) providerUsage = pollData.usage;
       break;
     }
     if (lastStatus === 'failed' || lastStatus === 'cancelled') {
@@ -1484,10 +1535,21 @@ async function renderVolcengineVideo(ctx: MediaContext, credentials: ProviderCon
   const arr = await dlResp.arrayBuffer();
   const bytes = Buffer.from(arr);
 
+  // 计量用的生效值:时长/分辨率以最终发给火山的 prompt 标志为准——用户
+  // prompt 自带 --duration/--resolution 时会覆盖我们的默认(见上面的
+  // suffixFlags 逻辑),ctx.length 不可信。
+  const effDuration = Number(fullText.match(/--duration\s+(\d+(?:\.\d+)?)/)?.[1]) || durationSec;
+  const effResolution = fullText.match(/--resolution\s+(\S+)/)?.[1] || resolution;
+
   return {
     bytes,
     providerNote: `volcengine/${ctx.wireModel} · ${ratio} · ${durationSec}s · ${bytes.length} bytes`,
     suggestedExt: '.mp4',
+    usage: {
+      durationSec: effDuration,
+      resolution: effResolution,
+      ...(providerUsage !== undefined ? { providerUsage } : {}),
+    },
   };
 }
 
