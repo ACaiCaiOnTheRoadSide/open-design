@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { DesignSystemTokenContractRebuildJobResponse } from '@open-design/contracts';
@@ -30,7 +30,7 @@ import { installFromTarget, uninstallById } from '../library-install.js';
 import type { RouteDeps } from '../server-context.js';
 
 export interface RegisterAtomRoutesDeps {
-  db: Database.Database;
+  db: AsyncDb;
   resources: { FIRST_PARTY_ATOMS: Array<{ id: string; taskKinds: string[]; [key: string]: unknown }> };
 }
 

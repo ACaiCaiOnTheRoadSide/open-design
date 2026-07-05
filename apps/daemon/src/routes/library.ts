@@ -139,7 +139,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   ): Promise<{ relPath: string; elementRelPath?: string }> {
     const bytesPath = resolveAssetBytesPath(asset, PROJECTS_DIR);
     if (!bytesPath) throw new Error('asset bytes not available');
-    const project = getProject(db, projectId);
+    const project = await getProject(db, projectId);
     if (!project) throw new Error('project not found');
     const subdir = dir && dir.trim() ? dir.trim() : 'library';
     const { absDir, relDir } = await ensureProjectSubdir(
@@ -152,7 +152,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     const ext = extForMime(asset.mime, undefined);
     const name = `${stem}${ext}`;
     await copyFile(bytesPath, path.join(absDir, name));
-    addLibraryAssetSource(db, { assetId: asset.id, sourceKind, projectId });
+    await addLibraryAssetSource(db, { assetId: asset.id, sourceKind, projectId });
     const relPath = relDir ? `${relDir}/${name}` : name;
 
     // Element-pick captures carry the picked node's outerHTML in a sidecar.
@@ -232,7 +232,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     applyExtensionCors(req, res);
     res.status(204).end();
   });
-  app.post('/api/library/pair/confirm', (req, res) => {
+  app.post('/api/library/pair/confirm', async (req, res) => {
     applyExtensionCors(req, res);
     const body = req.body ?? {};
     const code = String(body.code ?? '');
@@ -240,7 +240,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (!code || !extensionOrigin) {
       return sendApiError(res, 400, 'BAD_REQUEST', 'code and extensionOrigin are required');
     }
-    const result = confirmPairing(db, { code, extensionOrigin, label: body.label });
+    const result = await confirmPairing(db, { code, extensionOrigin, label: body.label });
     if (!result.ok) {
       return sendApiError(res, 401, 'PAIRING_FAILED', result.error);
     }
@@ -248,8 +248,8 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   });
 
   // Loopback-only: web UI connection status.
-  app.get('/api/library/connection', requireLocalDaemonRequest, (_req, res) => {
-    res.json(libraryConnectionStatus(db));
+  app.get('/api/library/connection', requireLocalDaemonRequest, async (_req, res) => {
+    res.json(await libraryConnectionStatus(db));
   });
 
   // --- ingest --------------------------------------------------------------
@@ -269,7 +269,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     const isExtensionOrigin =
       origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
     let sourceKind: LibrarySourceKind;
-    if (isExtensionOrigin || validateLibraryToken(db, bearerToken(req)).ok) {
+    if (isExtensionOrigin || (await validateLibraryToken(db, bearerToken(req))).ok) {
       sourceKind = 'clipper';
     } else if (isLocalSameOrigin(req, resolvedPortRef.current)) {
       sourceKind = 'manual-upload';
@@ -382,19 +382,19 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
       if (figmaIr) {
         await writeFigmaSidecar(LIBRARY_DIR, assetRecord.contentHash, figmaIr);
         if (result.deduped && !assetRecord.metadata?.figmaCapture && figmaMeta) {
-          updateLibraryAsset(db, assetRecord.id, {
+          await updateLibraryAsset(db, assetRecord.id, {
             metadata: { ...(assetRecord.metadata ?? {}), figmaCapture: figmaMeta },
           });
-          assetRecord = getLibraryAsset(db, assetRecord.id) ?? assetRecord;
+          assetRecord = (await getLibraryAsset(db, assetRecord.id)) ?? assetRecord;
         }
       }
       if (elementHtml) {
         await writeElementSidecar(LIBRARY_DIR, assetRecord.contentHash, elementHtml);
         if (result.deduped && !assetRecord.metadata?.element && reqMetadata?.element) {
-          updateLibraryAsset(db, assetRecord.id, {
+          await updateLibraryAsset(db, assetRecord.id, {
             metadata: { ...(assetRecord.metadata ?? {}), element: reqMetadata.element },
           });
-          assetRecord = getLibraryAsset(db, assetRecord.id) ?? assetRecord;
+          assetRecord = (await getLibraryAsset(db, assetRecord.id)) ?? assetRecord;
         }
       }
 
@@ -431,7 +431,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (str(q.projectId)) filter.projectId = str(q.projectId)!;
     if (str(q.designSystemId)) filter.designSystemId = str(q.designSystemId)!;
     if (q.limit) filter.limit = Number(q.limit);
-    const assets = listLibraryAssets(db, filter).map(toPublicAsset);
+    const assets = (await listLibraryAssets(db, filter)).map(toPublicAsset);
     res.json({ assets });
   });
 
@@ -447,14 +447,14 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     }
   });
 
-  app.get('/api/library/assets/:id', (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+  app.get('/api/library/assets/:id', async (req, res) => {
+    const asset = await getLibraryAsset(db, req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     res.json({ asset: toPublicAsset(asset) });
   });
 
   app.delete('/api/library/assets/:id', requireLocalDaemonRequest, async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await getLibraryAsset(db, req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     // Only unlink bytes we own and that live under LIBRARY_DIR.
     if (asset.storage === 'owned' && asset.filePath) {
@@ -463,13 +463,13 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
         await unlink(abs).catch(() => {});
       }
     }
-    deleteLibraryAsset(db, asset.id);
+    await deleteLibraryAsset(db, asset.id);
     emit('delete', { assetId: asset.id });
     res.json({ ok: true });
   });
 
   app.get('/api/library/assets/:id/raw', async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await getLibraryAsset(db, req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const abs = resolveAssetBytesPath(asset, PROJECTS_DIR);
     if (!abs) return sendApiError(res, 404, 'NOT_FOUND', 'asset bytes not available');
@@ -490,7 +490,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // downloadable JSON, importable via the OD Figma plugin. Reads ride loopback
   // same-origin like /raw; the clipper downloads its own captures directly.
   app.get('/api/library/assets/:id/figma', async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await getLibraryAsset(db, req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const sidecar = resolveAssetFigmaSidecarPath(asset, LIBRARY_DIR);
     if (!sidecar) return sendApiError(res, 404, 'NOT_FOUND', 'no figma capture for this asset');
@@ -511,7 +511,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // Serve the outerHTML sidecar of an element-pick screenshot. Read on demand
   // by the Library preview's "Element HTML" panel.
   app.get('/api/library/assets/:id/element', async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await getLibraryAsset(db, req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const sidecar = resolveAssetElementSidecarPath(asset, LIBRARY_DIR);
     if (!sidecar) return sendApiError(res, 404, 'NOT_FOUND', 'no element markup for this asset');
@@ -530,7 +530,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // --- apply to project (web / Insert from Library) ------------------------
 
   app.post('/api/library/assets/:id/apply', requireLocalDaemonRequest, async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await getLibraryAsset(db, req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const projectId = typeof req.body?.projectId === 'string' ? req.body.projectId : '';
     if (!projectId) return sendApiError(res, 400, 'BAD_REQUEST', 'projectId is required');
@@ -553,7 +553,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // user can edit it (srcDoc bridge + agent surgical edits) right away. This is
   // the clipper "capture → editable OD page" exit, driven from the Library.
   app.post('/api/library/assets/:id/edit-as-page', requireLocalDaemonRequest, async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await getLibraryAsset(db, req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     if (asset.kind !== 'html') {
       return sendApiError(res, 400, 'NOT_HTML', 'only html captures can be opened as an editable page');
@@ -570,7 +570,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
       // back-link to the source asset rides on metadata so the asset's "Open
       // project" affordance can resolve it.
       const metadata = { kind: 'prototype', odLibraryAssetId: asset.id };
-      insertProject(db, {
+      await insertProject(db, {
         id: projectId,
         name: baseName || 'Captured page',
         skillId: null,
@@ -580,7 +580,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
         createdAt: now,
         updatedAt: now,
       });
-      insertConversation(db, {
+      await insertConversation(db, {
         id: conversationId,
         projectId,
         title: null,
@@ -593,7 +593,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
       // the publication/stub guards (a captured page is arbitrary markup) while
       // still rendering and editing like any project HTML.
       await writeProjectFile(PROJECTS_DIR, projectId, 'index.html', Buffer.from(html, 'utf8'), {}, metadata);
-      addLibraryAssetSource(db, { assetId: asset.id, sourceKind: 'manual-upload', projectId });
+      await addLibraryAssetSource(db, { assetId: asset.id, sourceKind: 'manual-upload', projectId });
       const body: LibraryEditAsPageResponse = { projectId, conversationId, relPath: 'index.html' };
       res.json(body);
     } catch (err) {
@@ -614,7 +614,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (typeof body.kind === 'string') filter.kind = body.kind as LibraryAssetKind;
     if (typeof body.date === 'string') filter.date = body.date;
     filter.limit = Number.isFinite(body.limit) ? Number(body.limit) : 20;
-    const results = listLibraryAssets(db, filter).map((asset) => ({ asset: toPublicAsset(asset), score: 0 }));
+    const results = (await listLibraryAssets(db, filter)).map((asset) => ({ asset: toPublicAsset(asset), score: 0 }));
     res.json({ results, semantic: false });
   });
 
@@ -623,7 +623,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (!grant) return;
     const assetId = typeof req.body?.assetId === 'string' ? req.body.assetId : '';
     if (!assetId) return sendApiError(res, 400, 'BAD_REQUEST', 'assetId is required');
-    const asset = getLibraryAsset(db, assetId);
+    const asset = await getLibraryAsset(db, assetId);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const projectId = grant.projectId ?? (typeof req.body?.projectId === 'string' ? req.body.projectId : '');
     if (!projectId) return sendApiError(res, 400, 'BAD_REQUEST', 'projectId is required');

@@ -258,7 +258,7 @@ export async function startBrandExtraction(
   const pendingPrompt = runProgrammatic
     ? null
     : brandExtractionPrompt({ url, brandId: id, host, hasWebsiteSource, hasDesignMdSource });
-  insertProject(db, {
+  await insertProject(db, {
     id: projectId,
     name,
     skillId: null,
@@ -270,7 +270,7 @@ export async function startBrandExtraction(
     updatedAt: now,
   });
   const conversationId = randomId();
-  insertConversation(db, {
+  await insertConversation(db, {
     id: conversationId,
     projectId,
     title: null,
@@ -329,7 +329,7 @@ export async function startBrandExtraction(
   // brand.html is the star of the workspace (active tab). The target site stays
   // available as a secondary in-app browser tab so the user can glance at it /
   // clear an anti-bot wall by hand when the agent asks.
-  setTabs(db, projectId, {
+  await setTabs(db, projectId, {
     tabs: [BRAND_KIT_FILE],
     active: BRAND_KIT_FILE,
     ...(hasWebsiteSource
@@ -345,7 +345,7 @@ export async function startBrandExtraction(
   // agent/browser fallback to drive from the scaffold instead.
   const programmaticStartedAt = Date.now();
   const programmaticTranscript = runProgrammatic && opts.userDesignSystemsRoot
-    ? seedProgrammaticExtractionStartTranscript({
+    ? await seedProgrammaticExtractionStartTranscript({
         db,
         conversationId,
         randomId,
@@ -399,9 +399,9 @@ export async function startBrandExtraction(
     });
     opts.onBackgroundExtraction?.(settled);
     void settled
-      .then((result) => {
+      .then(async (result) => {
         if (!result && !programmaticOptions.abortSignal?.aborted) {
-          updateProject(db, projectId, { pendingPrompt: fallbackPrompt });
+          await updateProject(db, projectId, { pendingPrompt: fallbackPrompt });
         }
         return seedReadyProgrammaticExtractionTranscript({
           db,
@@ -450,7 +450,7 @@ export async function backfillBrandExtractionTranscriptForProject(input: {
   };
   transcriptAgent?: StartBrandExtractionOptions['transcriptAgent'];
 }): Promise<void> {
-  if (listMessages(input.db, input.conversationId).length > 0) return;
+  if ((await listMessages(input.db, input.conversationId)).length > 0) return;
   const metadata = input.project.metadata;
   if (!metadata || metadata.kind !== 'brand' || metadata.importedFrom !== 'brand-extraction') return;
   const brandId = metadata.brandId;
@@ -488,7 +488,7 @@ export async function backfillBrandExtractionTranscriptForProject(input: {
     });
     return;
   }
-  seedProgrammaticExtractionStartTranscript(transcriptInput);
+  await seedProgrammaticExtractionStartTranscript(transcriptInput);
 }
 
 interface ProgrammaticExtractionTranscript {
@@ -551,7 +551,7 @@ async function seedProgrammaticExtractionTranscript(input: {
   const body = copy.doneBody(input.designSystemId, sourceLine);
   const next = copy.next;
   const assistantContent = [title, '', body, '', next].join('\n');
-  const messages = listMessages(input.db, input.conversationId);
+  const messages = await listMessages(input.db, input.conversationId);
   const alreadySeeded = messages.some((message) =>
     message.role === 'assistant' && message.content === assistantContent
   );
@@ -560,13 +560,13 @@ async function seedProgrammaticExtractionTranscript(input: {
     userMessageId: input.randomId(),
     assistantMessageId: input.randomId(),
   };
-  upsertMessage(input.db, input.conversationId, {
+  await upsertMessage(input.db, input.conversationId, {
     id: transcript.userMessageId,
     role: 'user',
     content: copy.user(sourceLine),
     createdAt: input.startedAt,
   });
-  upsertMessage(input.db, input.conversationId, {
+  await upsertMessage(input.db, input.conversationId, {
     id: transcript.assistantMessageId,
     role: 'assistant',
     content: assistantContent,
@@ -587,7 +587,7 @@ async function seedProgrammaticExtractionTranscript(input: {
   });
 }
 
-function seedProgrammaticExtractionStartTranscript(input: {
+async function seedProgrammaticExtractionStartTranscript(input: {
   db: Parameters<typeof insertProject>[0];
   conversationId: string;
   randomId: () => string;
@@ -596,7 +596,7 @@ function seedProgrammaticExtractionStartTranscript(input: {
   locale: string;
   startedAt: number;
   transcriptAgent?: StartBrandExtractionOptions['transcriptAgent'];
-}): ProgrammaticExtractionTranscript {
+}): Promise<ProgrammaticExtractionTranscript> {
   const copy = brandExtractionTranscriptCopy(input.locale);
   const sourceLine = input.sourceUrl.startsWith('designmd://')
     ? copy.sourceDesignMd
@@ -604,13 +604,13 @@ function seedProgrammaticExtractionStartTranscript(input: {
   const userMessageId = input.randomId();
   const assistantMessageId = input.randomId();
   const startedText = copy.started(sourceLine);
-  upsertMessage(input.db, input.conversationId, {
+  await upsertMessage(input.db, input.conversationId, {
     id: userMessageId,
     role: 'user',
     content: copy.user(sourceLine),
     createdAt: input.startedAt,
   });
-  upsertMessage(input.db, input.conversationId, {
+  await upsertMessage(input.db, input.conversationId, {
     id: assistantMessageId,
     role: 'assistant',
     content: startedText,
@@ -963,9 +963,9 @@ async function finalizeBrandCore(opts: FinalizeBrandCoreOptions): Promise<BrandF
   await linkUserDesignSystemProject(userDesignSystemsRoot, designSystemId, projectId);
   throwIfProgrammaticExtractionAborted(opts.abortSignal);
 
-  const existing = getProject(db, projectId);
+  const existing = await getProject(db, projectId);
   if (existing) {
-    updateProject(db, projectId, {
+    await updateProject(db, projectId, {
       name: `${brand.name || meta.sourceUrl} Design System`,
       skillId: existing.skillId ?? null,
       designSystemId,
@@ -1063,7 +1063,7 @@ export async function runProgrammaticExtraction(
       throwIfProgrammaticExtractionAborted(opts.abortSignal);
       const finalized = await finalizeBrandCore({ ...opts, brand, guideMd });
       throwIfProgrammaticExtractionAborted(opts.abortSignal);
-      updateProject(opts.db, opts.projectId, {
+      await updateProject(opts.db, opts.projectId, {
         pendingPrompt: brandExtractionPrompt({
           url: meta.sourceUrl,
           brandId: id,
@@ -1096,7 +1096,7 @@ export async function runProgrammaticExtraction(
   throwIfProgrammaticExtractionAborted(opts.abortSignal);
   const finalized = await finalizeBrandCore({ ...opts, brand, guideMd });
   throwIfProgrammaticExtractionAborted(opts.abortSignal);
-  updateProject(opts.db, opts.projectId, {
+  await updateProject(opts.db, opts.projectId, {
     pendingPrompt: brandExtractionPrompt({
       url: meta.sourceUrl,
       brandId: id,
@@ -1150,7 +1150,7 @@ export async function extractBrandFromHtml(
   const finalized = await finalizeBrandCore({ ...opts, projectId, brand, guideMd });
   // Flip the project to enrichment mode so a follow-up "AI Optimize" refines the
   // same design system in place rather than re-running the blocked extraction.
-  updateProject(opts.db, projectId, {
+  await updateProject(opts.db, projectId, {
     pendingPrompt: brandExtractionPrompt({
       url: meta.sourceUrl,
       brandId: id,

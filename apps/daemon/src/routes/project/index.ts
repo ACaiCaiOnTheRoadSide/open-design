@@ -1529,7 +1529,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // project record onto the incoming patch so the user can keep
       // patching other metadata without ever losing their import root.
       if (patch.metadata === null) {
-        const existing = getProject(db, req.params.id);
+        const existing = await getProject(db, req.params.id);
         if (existing?.metadata?.baseDir) {
           return sendApiError(
             res,

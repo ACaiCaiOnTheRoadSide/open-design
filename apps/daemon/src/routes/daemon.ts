@@ -44,9 +44,9 @@ export function registerDaemonRoutes(app: Express, deps: RegisterDaemonRoutesDep
         : { enabled: false },
       pid: process.pid,
       shuttingDown: deps.getDaemonShuttingDown(),
-      installedPlugins: (() => {
+      installedPlugins: await (async () => {
         try {
-          return (db.prepare('SELECT COUNT(*) AS n FROM installed_plugins').get())?.n ?? 0;
+          return (await db.prepare('SELECT COUNT(*) AS n FROM installed_plugins').get())?.n ?? 0;
         } catch {
           return 0;
         }
@@ -96,7 +96,7 @@ export function registerDaemonRoutes(app: Express, deps: RegisterDaemonRoutesDep
     try {
       const { verifySqliteIntegrity } = await import('../storage/db-inspect.js');
       const quick = String(req.query.quick ?? '').toLowerCase();
-      const report = verifySqliteIntegrity({ db, quick: quick === '1' || quick === 'true' });
+      const report = await verifySqliteIntegrity({ db, quick: quick === '1' || quick === 'true' });
       res.json(report);
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -109,7 +109,7 @@ export function registerDaemonRoutes(app: Express, deps: RegisterDaemonRoutesDep
       const file = path.join(paths.RUNTIME_DATA_DIR, 'app.sqlite');
       const before = await inspectSqliteDatabase({ db, file });
       const startedAt = Date.now();
-      db.exec('VACUUM');
+      await db.exec('VACUUM');
       const elapsedMs = Date.now() - startedAt;
       const after = await inspectSqliteDatabase({ db, file });
       res.json({

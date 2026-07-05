@@ -15,9 +15,9 @@
 // connection or mutates state.
 
 import { promises as fsp } from 'node:fs';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from './pg-async.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface DaemonDbTableInfo {
   name:      string;
@@ -51,9 +51,16 @@ export async function inspectSqliteDatabase(input: {
   const { db, file } = input;
 
   // 1. Schema version (user_version pragma).
+  // AsyncDb.pragma() has no `{ simple: true }` mode (better-sqlite3 API);
+  // it returns rows, so extract the first column of the first row — the
+  // same value `simple` would have produced on sqlite. On Postgres the
+  // adapter returns [] (pragma is a no-op) and this stays null.
   let schemaVersion: number | null = null;
   try {
-    const v = await db.pragma('user_version', { simple: true });
+    const rows = await db.pragma('user_version');
+    const v = Array.isArray(rows) && rows.length > 0
+      ? Object.values(rows[0] as Record<string, unknown>)[0]
+      : undefined;
     schemaVersion = typeof v === 'number' ? v : Number(v);
     if (!Number.isFinite(schemaVersion)) schemaVersion = null;
   } catch {

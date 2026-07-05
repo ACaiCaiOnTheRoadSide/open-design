@@ -7,7 +7,7 @@
 // allowlist the `/api` origin middleware consults. The allowlist is seeded
 // from SQLite on daemon boot so a paired extension survives restarts.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from './storage/pg-async.js';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import type { LibraryConnectionStatus } from '@open-design/contracts';
 import {
@@ -18,7 +18,7 @@ import {
   type LibraryTokenRow,
 } from './library-store.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 
@@ -82,11 +82,11 @@ export type ConfirmPairingResult =
   | { ok: true; token: string; label: string }
   | { ok: false; error: string };
 
-export function confirmPairing(
+export async function confirmPairing(
   db: SqliteDb,
   opts: { code: string; extensionOrigin: string; label?: string },
   now = Date.now(),
-): ConfirmPairingResult {
+): Promise<ConfirmPairingResult> {
   const entry = pendingPairing;
   if (!entry || entry.expiresAt < now) {
     pendingPairing = null;
@@ -101,7 +101,7 @@ export function confirmPairing(
   }
   const token = `odlt_${randomBytes(32).toString('base64url')}`;
   const label = (opts.label ?? '').trim() || 'Browser Extension';
-  insertLibraryToken(db, {
+  await insertLibraryToken(db, {
     tokenHash: tokenHash(token),
     label,
     extensionOrigin: origin,
@@ -113,19 +113,19 @@ export function confirmPairing(
   return { ok: true, token, label };
 }
 
-export function validateLibraryToken(
+export async function validateLibraryToken(
   db: SqliteDb,
   token: string | undefined | null,
-): { ok: true; row: LibraryTokenRow } | { ok: false } {
+): Promise<{ ok: true; row: LibraryTokenRow } | { ok: false }> {
   if (!token) return { ok: false };
-  const row = findLibraryTokenByHash(db, tokenHash(token));
+  const row = await findLibraryTokenByHash(db, tokenHash(token));
   if (!row) return { ok: false };
-  touchLibraryToken(db, row.tokenHash);
+  await touchLibraryToken(db, row.tokenHash);
   return { ok: true, row };
 }
 
-export function libraryConnectionStatus(db: SqliteDb): LibraryConnectionStatus {
-  const tokens = listLibraryTokens(db).map((t) => ({
+export async function libraryConnectionStatus(db: SqliteDb): Promise<LibraryConnectionStatus> {
+  const tokens = (await listLibraryTokens(db)).map((t) => ({
     label: t.label,
     extensionOrigin: t.extensionOrigin,
     createdAt: t.createdAt,

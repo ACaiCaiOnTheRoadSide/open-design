@@ -20,7 +20,7 @@
 
 import path from 'node:path';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from './storage/pg-async.js';
 import type { LibraryAssetKind, LibrarySourceKind } from '@open-design/contracts';
 import { listConversations, listMessages, listProjects } from './db.js';
 import { listDesignSystems } from './design-systems/index.js';
@@ -28,7 +28,7 @@ import { listFiles, resolveProjectDir } from './projects.js';
 import { registerLibraryAsset } from './library.js';
 import { findReferencedAssetByOrigin, hasDesignSystemSource } from './library-store.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface ReconcileLibraryPaths {
   LIBRARY_DIR: string;
@@ -193,7 +193,7 @@ async function reconcileDesignSystems(
   }
   for (const ds of systems) {
     try {
-      if (hasDesignSystemSource(db, ds.id)) {
+      if (await hasDesignSystemSource(db, ds.id)) {
         result.deduped += 1;
         continue;
       }
@@ -229,18 +229,18 @@ async function reconcileDesignSystems(
  * that produced it. Presence in this map = "generated/authored by an agent";
  * absence = "the user dropped it in" (→ manual-upload).
  */
-function buildProducedMap(db: SqliteDb, projectId: string): Map<string, string> {
+async function buildProducedMap(db: SqliteDb, projectId: string): Promise<Map<string, string>> {
   const produced = new Map<string, string>();
   let conversations: Array<{ id: string }>;
   try {
-    conversations = listConversations(db, projectId) as Array<{ id: string }>;
+    conversations = (await listConversations(db, projectId)) as Array<{ id: string }>;
   } catch {
     return produced;
   }
   for (const conv of conversations) {
     let messages: Array<{ producedFiles?: ProjectFileLike[] }>;
     try {
-      messages = listMessages(db, conv.id) as Array<{ producedFiles?: ProjectFileLike[] }>;
+      messages = (await listMessages(db, conv.id)) as Array<{ producedFiles?: ProjectFileLike[] }>;
     } catch {
       continue;
     }
@@ -262,7 +262,7 @@ async function reconcileProjects(
 ): Promise<void> {
   let projects: Array<{ id: string; metadata?: unknown }>;
   try {
-    projects = listProjects(db) as Array<{ id: string; metadata?: unknown }>;
+    projects = (await listProjects(db)) as Array<{ id: string; metadata?: unknown }>;
   } catch {
     return;
   }
@@ -279,14 +279,14 @@ async function reconcileProjects(
     } catch {
       continue;
     }
-    const producedMap = buildProducedMap(db, project.id);
+    const producedMap = await buildProducedMap(db, project.id);
     for (const file of files) {
       try {
         if (!isDeliverable(file)) continue;
         const rel = file.path ?? file.name;
         if (!rel) continue;
         // Cheap "already synced?" guard — no bytes read.
-        if (findReferencedAssetByOrigin(db, project.id, rel)) {
+        if (await findReferencedAssetByOrigin(db, project.id, rel)) {
           result.deduped += 1;
           continue;
         }

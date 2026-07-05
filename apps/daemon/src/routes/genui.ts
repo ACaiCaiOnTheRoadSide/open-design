@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 
 import { applyDiffReviewDecisionToCwd, getSnapshot, isDiffReviewSurfaceId, listIterationsForRun } from '../plugins/index.js';
 import { getProject } from '../db.js';
@@ -14,7 +14,7 @@ import {
 import { resolveProjectDir } from '../projects.js';
 
 export interface RegisterGenuiRoutesDeps {
-  db: Database.Database;
+  db: AsyncDb;
   design: {
     runs: {
       get(runId: string): { projectId?: string | null } | undefined;
@@ -29,18 +29,18 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
   const { db, design } = deps;
   const { PROJECTS_DIR } = deps.paths;
 
-  app.get('/api/runs/:runId/genui', (req, res) => {
+  app.get('/api/runs/:runId/genui', async (req, res) => {
     try {
-      const surfaces = listSurfacesForRun(db, req.params.runId);
+      const surfaces = await listSurfacesForRun(db, req.params.runId);
       res.json({ runId: req.params.runId, surfaces });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
   });
 
-  app.get('/api/projects/:projectId/genui', (req, res) => {
+  app.get('/api/projects/:projectId/genui', async (req, res) => {
     try {
-      const surfaces = listSurfacesForProject(db, req.params.projectId);
+      const surfaces = await listSurfacesForProject(db, req.params.projectId);
       res.json({ projectId: req.params.projectId, surfaces });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -60,11 +60,11 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
           WHERE run_id = ? AND surface_id = ? AND status = 'pending'
           ORDER BY requested_at DESC LIMIT 1`,
       );
-      const row = stmt.get(req.params.runId, req.params.surfaceId) as { id?: string } | undefined;
+      const row = (await stmt.get(req.params.runId, req.params.surfaceId)) as { id?: string } | undefined;
       if (!row?.id) {
         return res.status(404).json({ error: 'no pending surface for runId/surfaceId' });
       }
-      const updated = respondSurfaceRow(db, {
+      const updated = await respondSurfaceRow(db, {
         runId: req.params.runId,
         rowId: row.id,
         value,
@@ -77,7 +77,7 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
           const run = design.runs.get(req.params.runId);
           const projectId = run?.projectId ?? null;
           if (projectId) {
-            const project = getProject(db, projectId);
+            const project = await getProject(db, projectId);
             const metadata = project?.metadata && typeof project.metadata === 'string'
               ? JSON.parse(project.metadata)
               : project?.metadata ?? undefined;
@@ -105,9 +105,9 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
     }
   });
 
-  app.post('/api/projects/:projectId/genui/:surfaceId/revoke', (req, res) => {
+  app.post('/api/projects/:projectId/genui/:surfaceId/revoke', async (req, res) => {
     try {
-      const changed = revokeProjectSurface(db, {
+      const changed = await revokeProjectSurface(db, {
         projectId: req.params.projectId,
         surfaceId: req.params.surfaceId,
       });
@@ -117,7 +117,7 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
     }
   });
 
-  app.post('/api/projects/:projectId/genui/prefill', (req, res) => {
+  app.post('/api/projects/:projectId/genui/prefill', async (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const snapshotId = typeof body.snapshotId === 'string' ? body.snapshotId : '';
@@ -131,7 +131,7 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
       if (!snapshotId || !surfaceId) {
         return res.status(400).json({ error: 'snapshotId and surfaceId are required' });
       }
-      const row = prefillProjectSurface(db, {
+      const row = await prefillProjectSurface(db, {
         projectId: req.params.projectId,
         pluginSnapshotId: snapshotId,
         surfaceId,
@@ -147,19 +147,19 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
     }
   });
 
-  app.get('/api/runs/:runId/genui/:surfaceId', (req, res) => {
+  app.get('/api/runs/:runId/genui/:surfaceId', async (req, res) => {
     try {
-      const row = db.prepare(
+      const row = (await db.prepare(
         `SELECT id FROM genui_surfaces
           WHERE run_id = ? AND surface_id = ?
           ORDER BY requested_at DESC LIMIT 1`,
-      ).get(req.params.runId, req.params.surfaceId) as { id?: string } | undefined;
+      ).get(req.params.runId, req.params.surfaceId)) as { id?: string } | undefined;
       if (!row?.id) return res.status(404).json({ error: 'surface not found' });
-      const surface = getSurface(db, row.id);
+      const surface = await getSurface(db, row.id);
       if (!surface) return res.status(404).json({ error: 'surface not found' });
       let spec = null;
       if (surface.pluginSnapshotId) {
-        const snap = getSnapshot(db, surface.pluginSnapshotId);
+        const snap = await getSnapshot(db, surface.pluginSnapshotId);
         if (snap && Array.isArray(snap.genuiSurfaces)) {
           spec = snap.genuiSurfaces.find((s) => s?.id === surface.surfaceId) ?? null;
         }
@@ -170,16 +170,16 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
     }
   });
 
-  app.get('/api/runs/:runId/devloop-iterations', (req, res) => {
+  app.get('/api/runs/:runId/devloop-iterations', async (req, res) => {
     try {
-      const iterations = listIterationsForRun(db, req.params.runId);
+      const iterations = await listIterationsForRun(db, req.params.runId);
       res.json({ runId: req.params.runId, iterations });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
   });
 
-  app.post('/api/runs/:runId/replay', (req, res) => {
+  app.post('/api/runs/:runId/replay', async (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const explicitSnapshotId = typeof body.snapshotId === 'string' ? body.snapshotId : '';
@@ -189,7 +189,7 @@ export function registerGenuiRoutes(app: Express, deps: RegisterGenuiRoutesDeps)
           error: 'snapshotId is required (runs are in-memory; pass the snapshotId returned by /api/plugins/:id/apply)',
         });
       }
-      const snapshot = getSnapshot(db, snapshotId);
+      const snapshot = await getSnapshot(db, snapshotId);
       if (!snapshot) return res.status(404).json({ error: 'snapshot not found' });
       res.json({
         ok: true,

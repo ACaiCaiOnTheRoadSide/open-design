@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from 'express';
-import type * as BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDb } from '../../storage/pg-async.js';
 import path from 'node:path';
 
 export interface RegisterPluginAssetRoutesDeps {
@@ -11,7 +11,7 @@ export interface RegisterPluginAssetRoutesDeps {
   assembleExample: (templateHtml: string, slidesHtml: string, title: string) => string;
 }
 
-type PluginDbLike = BetterSqlite3.Database;
+type PluginDbLike = AsyncDb;
 
 interface PluginExampleOutput {
   path?: string;
@@ -42,7 +42,7 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
   async function servePluginSandboxedHtml(req: Request, res: Response, pickCandidates: (plugin: InstalledPluginLike) => Promise<string[]> | string[]) {
     try {
       const { getInstalledPlugin } = await import('../../plugins/index.js');
-      const plugin = getInstalledPlugin(db, routeParam(req.params.id)) as InstalledPluginLike | null;
+      const plugin = await getInstalledPlugin(db, routeParam(req.params.id)) as InstalledPluginLike | null;
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       const candidates = (await pickCandidates(plugin)).filter((p): p is string => typeof p === 'string' && p.length > 0);
       const fsp = await import('node:fs/promises');
@@ -226,7 +226,7 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
   app.get('/api/plugins/:id/asset/*splat', async (req, res) => {
     try {
       const { getInstalledPlugin } = await import('../../plugins/index.js');
-      const plugin = getInstalledPlugin(db, routeParam(req.params.id)) as InstalledPluginLike | null;
+      const plugin = await getInstalledPlugin(db, routeParam(req.params.id)) as InstalledPluginLike | null;
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       const splatParam = req.params.splat;
       const relpath = Array.isArray(splatParam) ? splatParam.join('/') : String(splatParam ?? '');

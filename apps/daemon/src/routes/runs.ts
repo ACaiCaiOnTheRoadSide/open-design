@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from 'express';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
@@ -84,7 +84,7 @@ import {
   runAskedUserQuestion,
 } from '../runtimes/run-artifacts.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 type JsonRecord = Record<string, unknown>;
 type ApiRequest = Request<Record<string, string>, unknown, JsonRecord>;
 type ApiResponse = Response<unknown>;
@@ -288,7 +288,7 @@ export interface RegisterRunRoutesDeps {
     runRetryEventsForAnalytics: (events: RunEventRecord[]) => RunRetryAnalyticsEvent[];
   };
   messages: {
-    pinAssistantMessageOnRunCreate: (db: SqliteDb, run: ChatRun) => void;
+    pinAssistantMessageOnRunCreate: (db: SqliteDb, run: ChatRun) => void | Promise<void>;
     reconcileAssistantMessageOnRunEnd: (
       db: SqliteDb,
       runs: ChatRunService,
@@ -494,7 +494,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         requestBody.pluginId || requestBody.appliedPluginSnapshotId;
       let runResolveBody: JsonRecord = requestBody;
       if (!explicitPlugin) {
-        const projectRow = toProjectRecord(getProject(db, requestBody.projectId));
+        const projectRow = toProjectRecord(await getProject(db, requestBody.projectId));
         const hasPin =
           typeof projectRow?.appliedPluginSnapshotId === 'string'
           && projectRow.appliedPluginSnapshotId.length > 0;
@@ -502,12 +502,12 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           const fallbackPluginId = defaultScenarioPluginIdForProjectMetadata(
             toScenarioProjectMetadata(projectRow?.metadata),
           );
-          if (fallbackPluginId && getInstalledPlugin(db, fallbackPluginId)) {
+          if (fallbackPluginId && (await getInstalledPlugin(db, fallbackPluginId))) {
             runResolveBody = { ...requestBody, pluginId: fallbackPluginId };
           }
         }
       }
-      const resolved = resolvePluginSnapshot({
+      const resolved = await resolvePluginSnapshot({
         db,
         body: runResolveBody,
         projectId: requestBody.projectId,
@@ -548,7 +548,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     let runProject: ProjectRecord | null = null;
     if (typeof meta.projectId === 'string' && meta.projectId) {
       try {
-        runProject = toProjectRecord(getProject(db, meta.projectId));
+        runProject = toProjectRecord(await getProject(db, meta.projectId));
         assertSandboxProjectRootAvailable(runProject?.metadata);
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {
@@ -601,7 +601,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       (typeof meta.conversationId !== 'string' || !meta.conversationId)
     ) {
       try {
-        const convs = toConversationRecords(listConversations(db, meta.projectId));
+        const convs = toConversationRecords(await listConversations(db, meta.projectId));
         const defaultConv = convs.length > 0
           ? [...convs].sort((a, b) => {
               const aCreated = Number(a?.createdAt);
@@ -622,7 +622,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
               ? meta.message
               : null;
           if (promptForUserMessage) {
-            upsertMessage(db, defaultConv.id, {
+            await upsertMessage(db, defaultConv.id, {
               id: randomUUID(),
               role: 'user',
               content: promptForUserMessage,
@@ -637,7 +637,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     const run = design.runs.create(meta);
     try {
-      pinAssistantMessageOnRunCreate(db, run);
+      await pinAssistantMessageOnRunCreate(db, run);
     } catch (err) {
       console.warn('[runs] message create pin failed', err);
     }
@@ -651,7 +651,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     if (resolvedSnapshot?.ok) {
       try {
         const { linkSnapshotToRun } = await import('../plugins/snapshots.js');
-        linkSnapshotToRun(db, resolvedSnapshot.snapshotId, run.id);
+        await linkSnapshotToRun(db, resolvedSnapshot.snapshotId, run.id);
       } catch {
         // Linking is best-effort here; in-memory run still carries the id.
       }
@@ -679,7 +679,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     reconcileAssistantMessageOnRunEnd(db, design.runs, run);
     if (run.projectId && run.conversationId) {
       try {
-        const project = toProjectRecord(getProject(db, run.projectId));
+        const project = toProjectRecord(await getProject(db, run.projectId));
         const projectRoot = resolveProjectDir(PROJECTS_DIR, run.projectId, project?.metadata);
         detectSkillPluginCandidateOnRunSuccess(db, design.runs, run, requestBody, projectRoot);
       } catch (err) {
@@ -699,12 +699,12 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const hintDsEnrichment = analyticsHints.dsEnrichment === true;
     const requestProjectId = typeof reqBody.projectId === 'string' ? reqBody.projectId : null;
     if (hintDsEnrichment && requestProjectId) {
-      design.runs.wait(run).then((status: TerminalRunStatus) => {
+      design.runs.wait(run).then(async (status: TerminalRunStatus) => {
         if (runResultFromStatus(status.status) !== 'success') return;
         try {
-          const enrichedProject = toProjectRecord(getProject(db, requestProjectId));
+          const enrichedProject = toProjectRecord(await getProject(db, requestProjectId));
           if (enrichedProject && isProjectEnrichableDesignSystem(enrichedProject)) {
-            updateProject(db, requestProjectId, {
+            await updateProject(db, requestProjectId, {
               metadata: {
                 ...(enrichedProject.metadata ?? {}),
                 enrichmentStatus: 'ai_refined',
@@ -786,7 +786,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           : {}),
       };
       const runProjectForAnalytics = requestProjectId
-        ? toProjectRecord(getProject(db, requestProjectId))
+        ? toProjectRecord(await getProject(db, requestProjectId))
         : null;
       const analyticsDesignSystemSelection = resolveEffectiveDesignSystemSelection({
         requestDesignSystemId: reqBody.designSystemId,
@@ -1000,7 +1000,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         // baseline-vs-optimized comparison. Mirrors server.ts hasPriorAssistantTurn.
         const isFollowupTurn = run.conversationId
           ? Boolean(
-              db
+              await db
                 .prepare(
                   `SELECT 1 FROM messages
                      WHERE conversation_id = ?
@@ -1226,7 +1226,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const run = design.runs.get(runId);
     if (!run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
     const status = design.runs.statusBody(run);
-    const project = run.projectId ? toProjectRecord(getProject(db, run.projectId)) : null;
+    const project = run.projectId ? toProjectRecord(await getProject(db, run.projectId)) : null;
     let files: ProjectFileEntry[] = [];
     if (project) {
       const packageMetadata = run.projectMetadata ?? null;
@@ -1381,7 +1381,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     res.json(body);
   });
 
-  app.post('/api/chat', (req: ApiRequest, res: ApiResponse) => {
+  app.post('/api/chat', async (req: ApiRequest, res: ApiResponse) => {
     if (ctx.lifecycle.isDaemonShuttingDown()) {
       return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
     }
@@ -1397,7 +1397,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     let chatProject: ProjectRecord | null = null;
     if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
       try {
-        chatProject = toProjectRecord(getProject(db, requestBody.projectId));
+        chatProject = toProjectRecord(await getProject(db, requestBody.projectId));
         assertSandboxProjectRootAvailable(chatProject?.metadata);
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {

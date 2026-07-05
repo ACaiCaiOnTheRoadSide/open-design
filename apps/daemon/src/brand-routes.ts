@@ -77,9 +77,9 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   const activeProgrammaticBrandExtractions = new Map<string, AbortController>();
 
   // GET /api/brands — list every stored brand as a summary.
-  app.get('/api/brands', (_req: Request, res: Response) => {
+  app.get('/api/brands', async (_req: Request, res: Response) => {
     try {
-      const statusContext = createBrandStatusContext(deps);
+      const statusContext = await createBrandStatusContext(deps);
       res.json({
         brands: listBrandSummaries(brandsRoot).map((summary) =>
           reconcileBrandSummaryStatus(brandsRoot, summary, statusContext),
@@ -298,14 +298,14 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   });
 
   // GET /api/brands/:id — full detail (meta + brand + guide). 404 if missing.
-  app.get('/api/brands/:id', (req: Request, res: Response) => {
+  app.get('/api/brands/:id', async (req: Request, res: Response) => {
     try {
       const detail = readBrandDetail(brandsRoot, String(req.params.id));
       if (!detail) {
         res.status(404).json({ error: 'brand not found' });
         return;
       }
-      res.json(reconcileBrandDetailStatus(brandsRoot, detail, createBrandStatusContext(deps)));
+      res.json(reconcileBrandDetailStatus(brandsRoot, detail, await createBrandStatusContext(deps)));
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
@@ -322,12 +322,12 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   });
 
   // GET /api/brands/:id/logo — serve the primary logo image. 404 if none.
-  app.get('/api/brands/:id/logo', (req: Request, res: Response) => {
+  app.get('/api/brands/:id/logo', async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const logoPath =
         resolveBrandLogoPath(brandsRoot, id)
-        ?? resolveBackingProjectLogoPath({ brandsRoot, projectsRoot, db }, id);
+        ?? await resolveBackingProjectLogoPath({ brandsRoot, projectsRoot, db }, id);
       if (!logoPath) {
         res.status(404).json({ error: 'logo not found' });
         return;
@@ -359,9 +359,9 @@ interface BrandStatusContext {
   awaitingInput: Set<string>;
 }
 
-function createBrandStatusContext(deps: BrandRoutesDeps): BrandStatusContext {
+async function createBrandStatusContext(deps: BrandRoutesDeps): Promise<BrandStatusContext> {
   const latestByProject = new Map<string, BrandRunStatus>();
-  for (const [projectId, status] of listLatestProjectRunStatuses(deps.db) as Map<string, BrandRunStatus>) {
+  for (const [projectId, status] of (await listLatestProjectRunStatuses(deps.db)) as Map<string, BrandRunStatus>) {
     latestByProject.set(projectId, status);
   }
   for (const run of deps.runs?.list() ?? []) {
@@ -377,7 +377,7 @@ function createBrandStatusContext(deps: BrandRoutesDeps): BrandStatusContext {
       errorCode: run.errorCode ?? null,
     });
   }
-  return { latestByProject, awaitingInput: listProjectsAwaitingInput(deps.db) };
+  return { latestByProject, awaitingInput: await listProjectsAwaitingInput(deps.db) };
 }
 
 function reconcileBrandSummaryStatus(
@@ -464,14 +464,14 @@ function normalizeBrandRunStatus(status: string): string {
   return status;
 }
 
-function resolveBackingProjectLogoPath(
+async function resolveBackingProjectLogoPath(
   deps: Pick<BrandRoutesDeps, 'brandsRoot' | 'projectsRoot' | 'db'>,
   id: string,
-): string | null {
+): Promise<string | null> {
   const detail = readBrandDetail(deps.brandsRoot, id);
   const projectId = detail?.meta.projectId;
   if (!projectId) return null;
-  const project = getProject(deps.db, projectId);
+  const project = await getProject(deps.db, projectId);
   if (!project) return null;
   const projectRoot = resolveProjectDir(deps.projectsRoot, projectId, project.metadata);
   const primary = detail.brand?.logo?.primary;

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { currentTenantId } from './multitenant.js';
+import { currentTenantId } from '../multitenant.js';
 
 export type MediaTaskStatus =
   | 'queued'

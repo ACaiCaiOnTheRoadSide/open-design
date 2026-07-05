@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 
 type JsonRecord = Record<string, unknown>;
 type SkillEntry = { id: string } & JsonRecord;
@@ -88,9 +88,9 @@ export function createDesignSystemServerServices({
     }>;
   };
   projects: {
-    getProject: (db: Database.Database, id: string) => ProjectRecord | null | undefined;
-    insertProject: (db: Database.Database, project: ProjectInsert) => ProjectRecord | null | undefined;
-    updateProject: (db: Database.Database, id: string, patch: ProjectPatch) => ProjectRecord | null | undefined;
+    getProject: (db: AsyncDb, id: string) => Promise<ProjectRecord | null | undefined>;
+    insertProject: (db: AsyncDb, project: ProjectInsert) => Promise<ProjectRecord | null | undefined>;
+    updateProject: (db: AsyncDb, id: string, patch: ProjectPatch) => Promise<ProjectRecord | null | undefined>;
     readProjectFile: (projectsDir: string, projectId: string, filePath: string, metadata?: JsonRecord) => Promise<{ buffer: Buffer }>;
     writeProjectFile: (projectsDir: string, projectId: string, filePath: string, content: Buffer, options?: JsonRecord, metadata?: JsonRecord) => Promise<unknown>;
     listFiles: (projectsDir: string, projectId: string, options?: { metadata?: JsonRecord }) => Promise<unknown[]>;
@@ -237,7 +237,7 @@ export function createDesignSystemServerServices({
     return userDesignSystemWorkspaceProjectId(id);
   }
 
-  async function ensureUserDesignSystemWorkspaceProject(dbHandle: Database.Database, id: string) {
+  async function ensureUserDesignSystemWorkspaceProject(dbHandle: AsyncDb, id: string) {
     const systems = await listAllDesignSystems();
     const summary = systems.find((s) => s.id === id && s.source === 'user');
     if (!summary) return null;
@@ -251,16 +251,16 @@ export function createDesignSystemServerServices({
       entryFile: 'DESIGN.md',
       sourceFileName: id,
     };
-    const existing = projects.getProject(dbHandle, projectId);
+    const existing = await projects.getProject(dbHandle, projectId);
     const projectName = summary.title ?? id;
     const project = existing
-      ? projects.updateProject(dbHandle, projectId, {
+      ? await projects.updateProject(dbHandle, projectId, {
           name: projectName,
           designSystemId: id,
           metadata: { ...(existing.metadata ?? {}), ...metadata },
           updatedAt: now,
         })
-      : projects.insertProject(dbHandle, {
+      : await projects.insertProject(dbHandle, {
           id: projectId,
           name: projectName,
           skillId: null,
@@ -346,12 +346,12 @@ export function createDesignSystemServerServices({
   }
 
   async function readDesignSystemWorkspaceTextFile(
-    dbHandle: Database.Database,
+    dbHandle: AsyncDb,
     summary: DesignSystemSummary | null | undefined,
     filePath: string,
   ) {
     if (!summary?.projectId || !projects.isSafeId(summary.projectId)) return null;
-    const project = projects.getProject(dbHandle, summary.projectId);
+    const project = await projects.getProject(dbHandle, summary.projectId);
     if (!project) return null;
     try {
       const file = await projects.readProjectFile(

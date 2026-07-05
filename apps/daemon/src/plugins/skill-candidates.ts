@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import type {
   SkillPluginCandidate,
   SkillPluginCandidateSourceRef,
@@ -9,7 +9,7 @@ import type {
 import { OPEN_DESIGN_PLUGIN_SPEC_VERSION } from '@open-design/contracts';
 import { validatePluginFolder, flattenValidationDiagnostics } from './validate.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 type DbRow = Record<string, unknown>;
 
 const MAX_SOURCE_BYTES = 96_000;

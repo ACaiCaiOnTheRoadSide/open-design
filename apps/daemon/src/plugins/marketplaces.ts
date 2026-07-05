@@ -14,7 +14,7 @@
 // unless `--trust` is passed.
 
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../storage/pg-async.js';
 import {
   parseMarketplace,
   type MarketplaceParseResult,
@@ -28,7 +28,7 @@ import {
   resolveMarketplaceEntryVersion,
 } from '../registry/versioning.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export type MarketplaceTrustTier = 'official' | 'trusted' | 'restricted';
 
@@ -377,7 +377,7 @@ export async function refreshMarketplace(
     return { ok: false, status: 422, message: 'marketplace manifest failed validation', errors: parsed.errors };
   }
   const now = Date.now();
-  db.prepare(`UPDATE plugin_marketplaces SET url = ?, spec_version = ?, version = ?, manifest_json = ?, refreshed_at = ? WHERE id = ?`)
+  await db.prepare(`UPDATE plugin_marketplaces SET url = ?, spec_version = ?, version = ?, manifest_json = ?, refreshed_at = ? WHERE id = ?`)
     .run(url, parsed.manifest.specVersion, parsed.manifest.version, text, now, id);
   return {
     ok: true,

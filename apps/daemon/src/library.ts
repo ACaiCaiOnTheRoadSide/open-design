@@ -12,7 +12,7 @@
 // slice: the recorded enrichment task marks those stages `skipped` so the UI
 // can later offer a reindex once a model is configured.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from './storage/pg-async.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -31,7 +31,7 @@ import {
   type LibraryAssetRecord,
 } from './library-store.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export function libraryObjectsDir(libraryDir: string): string {
   return path.join(libraryDir, 'objects');
@@ -312,14 +312,14 @@ export async function registerLibraryAsset(
   const contentHash = createHash('sha256').update(bytes).digest('hex');
 
   // Dedup: same bytes already indexed → append source, union tags.
-  const existing = findLibraryAssetByHash(db, contentHash);
+  const existing = await findLibraryAssetByHash(db, contentHash);
   if (existing) {
-    addLibraryAssetSource(db, { assetId: existing.id, ...input.source });
+    await addLibraryAssetSource(db, { assetId: existing.id, ...input.source });
     if (input.tags && input.tags.length) {
       const merged = dedupeTags([...existing.tags, ...input.tags]);
-      updateLibraryAsset(db, existing.id, { tags: merged });
+      await updateLibraryAsset(db, existing.id, { tags: merged });
     }
-    const refreshed = getLibraryAsset(db, existing.id) ?? existing;
+    const refreshed = (await getLibraryAsset(db, existing.id)) ?? existing;
     return { asset: refreshed, deduped: true };
   }
 
@@ -346,7 +346,7 @@ export async function registerLibraryAsset(
   const domain = domainFromUrl(input.sourceUrl);
   const tags = dedupeTags([...(input.tags ?? []), domain]);
 
-  insertLibraryAsset(db, {
+  await insertLibraryAsset(db, {
     id,
     kind,
     storage: input.storage,
@@ -366,11 +366,11 @@ export async function registerLibraryAsset(
     tags,
     metadata: input.metadata,
   });
-  addLibraryAssetSource(db, { assetId: id, ...input.source });
+  await addLibraryAssetSource(db, { assetId: id, ...input.source });
 
-  const taskId = recordEnrichmentTask(db, id, kind);
+  const taskId = await recordEnrichmentTask(db, id, kind);
 
-  const asset = getLibraryAsset(db, id);
+  const asset = await getLibraryAsset(db, id);
   if (!asset) throw new Error(`library asset vanished after insert: ${id}`);
   return { asset, deduped: false, taskId };
 }
@@ -381,7 +381,7 @@ export async function registerLibraryAsset(
  * OCR / embedding) is recorded `skipped` until a model is configured — a
  * future `od library reindex` can re-run it.
  */
-function recordEnrichmentTask(db: SqliteDb, assetId: string, kind: LibraryAssetKind): string {
+async function recordEnrichmentTask(db: SqliteDb, assetId: string, kind: LibraryAssetKind): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
   const progress = [
@@ -389,7 +389,7 @@ function recordEnrichmentTask(db: SqliteDb, assetId: string, kind: LibraryAssetK
     kind === 'image' ? 'programmatic: image dimensions read' : 'programmatic: text/metadata captured',
     'ai: caption/ocr/embedding skipped (no model configured)',
   ];
-  insertLibraryTask(db, {
+  await insertLibraryTask(db, {
     id,
     assetId,
     status: 'skipped',

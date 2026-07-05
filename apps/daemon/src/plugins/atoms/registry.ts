@@ -21,14 +21,14 @@
 //     iteration when no atom contradicts them — matches v1 stub
 //     behaviour for backwards compatibility.
 
-import type Database from 'better-sqlite3';
+import type { AsyncDb } from '../../storage/pg-async.js';
 import type {
   AppliedPluginSnapshot,
   PipelineStage,
 } from '@open-design/contracts';
 import type { UntilSignals } from '../until.js';
 
-type SqliteDb = Database.Database;
+type SqliteDb = AsyncDb;
 
 export interface AtomWorkerContext {
   db:             SqliteDb;
