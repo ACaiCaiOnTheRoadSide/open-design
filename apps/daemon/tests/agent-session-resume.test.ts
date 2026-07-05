@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -26,23 +27,35 @@ import {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// 本 fork 的 openDatabase 连的是共享 PG 测试库(忽略传入路径),不是每测一个
+// 临时 sqlite 文件。projects.id / conversations.id / messages.id 都是全局主键,
+// 上游那种 'proj-1'/'conv-1'/'asst-1' 固定字面量会跨测试主键冲突、串数据——
+// 所以每个测试用 randomUUID 前缀铸唯一 id,消息 id 统一经 mid() 命名空间化。
+
 describe('resolveAgentResumeContext', () => {
   let tempDir: string;
+  let projId: string;
+  let convId: string;
+
+  const mid = (name: string) => `${convId}-${name}`;
 
   beforeEach(() => {
     tempDir = mkdtempSync(path.join(os.tmpdir(), 'od-resume-ctx-'));
+    const run = randomUUID().slice(0, 8);
+    projId = `proj-${run}`;
+    convId = `conv-${run}`;
   });
-  afterEach(() => {
-    closeDatabase();
+  afterEach(async () => {
+    await closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  function seed() {
-    const db = openDatabase(tempDir, { dataDir: tempDir });
+  async function seed() {
+    const db = await openDatabase(tempDir, { dataDir: tempDir });
     const now = Date.now();
-    insertProject(db, { id: 'proj-1', name: 'P', createdAt: now, updatedAt: now });
-    insertConversation(db, {
-      id: 'conv-1', projectId: 'proj-1', title: 'C', createdAt: now, updatedAt: now,
+    await insertProject(db, { id: projId, name: 'P', createdAt: now, updatedAt: now });
+    await insertConversation(db, {
+      id: convId, projectId: projId, title: 'C', createdAt: now, updatedAt: now,
     });
     return db;
   }
@@ -51,166 +64,166 @@ describe('resolveAgentResumeContext', () => {
   // finish (server.ts). The resume cursor only counts succeeded assistant turns,
   // so completed turns default to 'succeeded'; pass runStatus=null for an
   // in-flight placeholder (the current run's own not-yet-finished message).
-  function seedMessage(
-    db: ReturnType<typeof seed>,
+  async function seedMessage(
+    db: Awaited<ReturnType<typeof seed>>,
     id: string,
     role: 'user' | 'assistant',
     runStatus: string | null = role === 'assistant' ? 'succeeded' : null,
   ) {
-    upsertMessage(db, 'conv-1', { id, role, content: `${role} ${id}`, runStatus });
+    await upsertMessage(db, convId, { id, role, content: `${role} ${id}`, runStatus });
   }
 
   // A session row whose identity (model/cwd/last assistant id) matches what the
   // next resolve will present, so the guard allows the resume.
-  function storeInSyncSession(
-    db: ReturnType<typeof seed>,
+  async function storeInSyncSession(
+    db: Awaited<ReturnType<typeof seed>>,
     over: { stablePromptHash?: string | null; model?: string | null; cwd?: string | null } = {},
   ) {
-    upsertAgentSession(db, {
-      conversationId: 'conv-1',
+    await upsertAgentSession(db, {
+      conversationId: convId,
       agentId: 'claude',
       sessionId: 'sess-A',
-      lastMessageId: 'asst-1',
+      lastMessageId: mid('asst-1'),
       model: over.model ?? null,
       cwd: over.cwd ?? null,
       stablePromptHash: over.stablePromptHash ?? null,
     });
   }
 
-  it('creates a new session (minted uuid, not resuming) when none stored', () => {
-    const db = seed();
-    const ctx = resolveAgentResumeContext(db, { conversationId: 'conv-1', agentId: 'claude' });
+  it('creates a new session (minted uuid, not resuming) when none stored', async () => {
+    const db = await seed();
+    const ctx = await resolveAgentResumeContext(db, { conversationId: convId, agentId: 'claude' });
     expect(ctx.isResuming).toBe(false);
     expect(ctx.resumeSessionId).toBeNull();
     expect(ctx.newSessionId).toMatch(UUID_RE);
     expect(ctx.invalidationReason).toBeNull();
   });
 
-  it('resumes the stored session when the identity still matches', () => {
-    const db = seed();
-    seedMessage(db, 'asst-1', 'assistant');
-    storeInSyncSession(db);
-    const ctx = resolveAgentResumeContext(db, { conversationId: 'conv-1', agentId: 'claude' });
+  it('resumes the stored session when the identity still matches', async () => {
+    const db = await seed();
+    await seedMessage(db, mid('asst-1'), 'assistant');
+    await storeInSyncSession(db);
+    const ctx = await resolveAgentResumeContext(db, { conversationId: convId, agentId: 'claude' });
     expect(ctx.isResuming).toBe(true);
     expect(ctx.resumeSessionId).toBe('sess-A');
     expect(ctx.invalidationReason).toBeNull();
   });
 
-  it('still resumes when only the current run placeholder is newer (normal follow-up)', () => {
-    const db = seed();
-    seedMessage(db, 'asst-1', 'assistant');
-    storeInSyncSession(db);
+  it('still resumes when only the current run placeholder is newer (normal follow-up)', async () => {
+    const db = await seed();
+    await seedMessage(db, mid('asst-1'), 'assistant');
+    await storeInSyncSession(db);
     // The next turn's user message + assistant placeholder are already inserted.
-    seedMessage(db, 'user-2', 'user');
-    seedMessage(db, 'asst-2', 'assistant', null); // in-flight placeholder
-    const ctx = resolveAgentResumeContext(db, {
-      conversationId: 'conv-1',
+    await seedMessage(db, mid('user-2'), 'user');
+    await seedMessage(db, mid('asst-2'), 'assistant', null); // in-flight placeholder
+    const ctx = await resolveAgentResumeContext(db, {
+      conversationId: convId,
       agentId: 'claude',
-      currentAssistantMessageId: 'asst-2',
+      currentAssistantMessageId: mid('asst-2'),
     });
     expect(ctx.isResuming).toBe(true);
     expect(ctx.resumeSessionId).toBe('sess-A');
   });
 
-  it('returns the stored stable hash when resuming', () => {
-    const db = seed();
-    seedMessage(db, 'asst-1', 'assistant');
-    storeInSyncSession(db, { stablePromptHash: 'h-1' });
-    const resumed = resolveAgentResumeContext(db, { conversationId: 'conv-1', agentId: 'claude' });
+  it('returns the stored stable hash when resuming', async () => {
+    const db = await seed();
+    await seedMessage(db, mid('asst-1'), 'assistant');
+    await storeInSyncSession(db, { stablePromptHash: 'h-1' });
+    const resumed = await resolveAgentResumeContext(db, { conversationId: convId, agentId: 'claude' });
     expect(resumed.isResuming).toBe(true);
     expect(resumed.storedStablePromptHash).toBe('h-1');
   });
 
-  it('reseeds (model_changed) when the model differs from the stored session', () => {
-    const db = seed();
-    seedMessage(db, 'asst-1', 'assistant');
-    storeInSyncSession(db, { model: 'gpt-5.1' });
-    const ctx = resolveAgentResumeContext(db, {
-      conversationId: 'conv-1', agentId: 'claude', currentModel: 'gpt-5-codex',
+  it('reseeds (model_changed) when the model differs from the stored session', async () => {
+    const db = await seed();
+    await seedMessage(db, mid('asst-1'), 'assistant');
+    await storeInSyncSession(db, { model: 'gpt-5.1' });
+    const ctx = await resolveAgentResumeContext(db, {
+      conversationId: convId, agentId: 'claude', currentModel: 'gpt-5-codex',
     });
     expect(ctx.isResuming).toBe(false);
     expect(ctx.resumeSessionId).toBeNull();
     expect(ctx.invalidationReason).toBe('model_changed');
   });
 
-  it('reseeds (cwd_changed) when the cwd differs from the stored session', () => {
-    const db = seed();
-    seedMessage(db, 'asst-1', 'assistant');
-    storeInSyncSession(db, { cwd: '/work/a' });
-    const ctx = resolveAgentResumeContext(db, {
-      conversationId: 'conv-1', agentId: 'claude', currentCwd: '/work/b',
+  it('reseeds (cwd_changed) when the cwd differs from the stored session', async () => {
+    const db = await seed();
+    await seedMessage(db, mid('asst-1'), 'assistant');
+    await storeInSyncSession(db, { cwd: '/work/a' });
+    const ctx = await resolveAgentResumeContext(db, {
+      conversationId: convId, agentId: 'claude', currentCwd: '/work/b',
     });
     expect(ctx.isResuming).toBe(false);
     expect(ctx.invalidationReason).toBe('cwd_changed');
   });
 
-  it('reseeds (conversation_advanced) when another agent completed a turn in between', () => {
-    const db = seed();
-    seedMessage(db, 'asst-1', 'assistant');
-    storeInSyncSession(db);
+  it('reseeds (conversation_advanced) when another agent completed a turn in between', async () => {
+    const db = await seed();
+    await seedMessage(db, mid('asst-1'), 'assistant');
+    await storeInSyncSession(db);
     // A different agent ran: a newer completed assistant turn now exists.
-    seedMessage(db, 'user-2', 'user');
-    seedMessage(db, 'asst-other', 'assistant');
+    await seedMessage(db, mid('user-2'), 'user');
+    await seedMessage(db, mid('asst-other'), 'assistant');
     // This agent comes back; its placeholder is asst-3.
-    seedMessage(db, 'user-3', 'user');
-    seedMessage(db, 'asst-3', 'assistant', null); // in-flight placeholder
-    const ctx = resolveAgentResumeContext(db, {
-      conversationId: 'conv-1', agentId: 'claude', currentAssistantMessageId: 'asst-3',
+    await seedMessage(db, mid('user-3'), 'user');
+    await seedMessage(db, mid('asst-3'), 'assistant', null); // in-flight placeholder
+    const ctx = await resolveAgentResumeContext(db, {
+      conversationId: convId, agentId: 'claude', currentAssistantMessageId: mid('asst-3'),
     });
     expect(ctx.isResuming).toBe(false);
     expect(ctx.resumeSessionId).toBeNull();
     expect(ctx.invalidationReason).toBe('conversation_advanced');
   });
 
-  it('still resumes when the stored cursor is the session own failed turn (resume-on-failure)', () => {
-    const db = seed();
+  it('still resumes when the stored cursor is the session own failed turn (resume-on-failure)', async () => {
+    const db = await seed();
     // Turn 1 committed work then FAILED transiently; the resume-on-failure path
     // persisted the session pointing at that failed assistant turn.
-    seedMessage(db, 'asst-1', 'assistant', 'failed');
-    upsertAgentSession(db, {
-      conversationId: 'conv-1',
+    await seedMessage(db, mid('asst-1'), 'assistant', 'failed');
+    await upsertAgentSession(db, {
+      conversationId: convId,
       agentId: 'claude',
       sessionId: 'sess-A',
-      lastMessageId: 'asst-1',
+      lastMessageId: mid('asst-1'),
       model: null,
       cwd: null,
       stablePromptHash: null,
     });
     // Turn 2 must continue the same session — the failed turn it owns is a valid
     // resume cursor, not conversation advancement.
-    const ctx = resolveAgentResumeContext(db, { conversationId: 'conv-1', agentId: 'claude' });
+    const ctx = await resolveAgentResumeContext(db, { conversationId: convId, agentId: 'claude' });
     expect(ctx.isResuming).toBe(true);
     expect(ctx.resumeSessionId).toBe('sess-A');
     expect(ctx.invalidationReason).toBeNull();
   });
 
-  it('reseeds (conversation_advanced) when a later succeeded turn follows the stored failed turn', () => {
-    const db = seed();
+  it('reseeds (conversation_advanced) when a later succeeded turn follows the stored failed turn', async () => {
+    const db = await seed();
     // Stored session owns a failed turn (asst-1)...
-    seedMessage(db, 'asst-1', 'assistant', 'failed');
-    upsertAgentSession(db, {
-      conversationId: 'conv-1',
+    await seedMessage(db, mid('asst-1'), 'assistant', 'failed');
+    await upsertAgentSession(db, {
+      conversationId: convId,
       agentId: 'claude',
       sessionId: 'sess-A',
-      lastMessageId: 'asst-1',
+      lastMessageId: mid('asst-1'),
       model: null,
       cwd: null,
       stablePromptHash: null,
     });
     // ...but a different agent then COMPLETED a turn (asst-2 succeeded). That is
     // genuine advancement the session never saw — must reseed, not resume.
-    seedMessage(db, 'asst-2', 'assistant'); // succeeded
-    const ctx = resolveAgentResumeContext(db, { conversationId: 'conv-1', agentId: 'claude' });
+    await seedMessage(db, mid('asst-2'), 'assistant'); // succeeded
+    const ctx = await resolveAgentResumeContext(db, { conversationId: convId, agentId: 'claude' });
     expect(ctx.isResuming).toBe(false);
     expect(ctx.invalidationReason).toBe('conversation_advanced');
   });
 
-  it('reseeds (missing_cursor) for a legacy row written without an identity', () => {
-    const db = seed();
-    seedMessage(db, 'asst-1', 'assistant');
+  it('reseeds (missing_cursor) for a legacy row written without an identity', async () => {
+    const db = await seed();
+    await seedMessage(db, mid('asst-1'), 'assistant');
     // Old-style upsert: no model/cwd/lastMessageId.
-    upsertAgentSession(db, { conversationId: 'conv-1', agentId: 'claude', sessionId: 'sess-A' });
-    const ctx = resolveAgentResumeContext(db, { conversationId: 'conv-1', agentId: 'claude' });
+    await upsertAgentSession(db, { conversationId: convId, agentId: 'claude', sessionId: 'sess-A' });
+    const ctx = await resolveAgentResumeContext(db, { conversationId: convId, agentId: 'claude' });
     expect(ctx.isResuming).toBe(false);
     expect(ctx.invalidationReason).toBe('missing_cursor');
   });
@@ -233,83 +246,92 @@ describe('computeIncludeStable', () => {
 
 describe('persistCapturedAgentSession', () => {
   let tempDir: string;
+  let projId: string;
+  let convId: string;
+
+  const mid = (name: string) => `${convId}-${name}`;
 
   beforeEach(() => {
     tempDir = mkdtempSync(path.join(os.tmpdir(), 'od-captured-session-'));
+    const run = randomUUID().slice(0, 8);
+    projId = `proj-${run}`;
+    convId = `conv-${run}`;
   });
-  afterEach(() => {
-    closeDatabase();
+  afterEach(async () => {
+    await closeDatabase();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  function seed() {
-    const db = openDatabase(tempDir, { dataDir: tempDir });
+  async function seed() {
+    const db = await openDatabase(tempDir, { dataDir: tempDir });
     const now = Date.now();
-    insertProject(db, { id: 'proj-1', name: 'P', createdAt: now, updatedAt: now });
-    insertConversation(db, {
-      id: 'conv-1', projectId: 'proj-1', title: 'C', createdAt: now, updatedAt: now,
+    await insertProject(db, { id: projId, name: 'P', createdAt: now, updatedAt: now });
+    await insertConversation(db, {
+      id: convId, projectId: projId, title: 'C', createdAt: now, updatedAt: now,
     });
     return db;
   }
 
-  it('stores the captured session path for the conversation and agent', () => {
-    const db = seed();
-    const result = persistCapturedAgentSession(db, {
-      conversationId: 'conv-1',
+  it('stores the captured session path for the conversation and agent', async () => {
+    const db = await seed();
+    const result = await persistCapturedAgentSession(db, {
+      conversationId: convId,
       agentId: 'pi',
       sessionId: '/tmp/current.jsonl',
       stablePromptHash: 'hash-1',
     });
     expect(result).toBe('stored');
-    expect(getAgentSessionRecord(db, 'conv-1', 'pi')).toMatchObject({
+    expect(await getAgentSessionRecord(db, convId, 'pi')).toMatchObject({
       sessionId: '/tmp/current.jsonl',
       stablePromptHash: 'hash-1',
     });
   });
 
-  it('clears stale session state when a successful run has no safe captured session', () => {
-    const db = seed();
-    upsertAgentSession(db, {
-      conversationId: 'conv-1',
+  it('clears stale session state when a successful run has no safe captured session', async () => {
+    const db = await seed();
+    await upsertAgentSession(db, {
+      conversationId: convId,
       agentId: 'pi',
       sessionId: '/tmp/stale.jsonl',
       stablePromptHash: 'old-hash',
     });
 
-    const result = persistCapturedAgentSession(db, {
-      conversationId: 'conv-1',
+    const result = await persistCapturedAgentSession(db, {
+      conversationId: convId,
       agentId: 'pi',
       sessionId: null,
       stablePromptHash: 'new-hash',
     });
 
     expect(result).toBe('cleared');
-    expect(getAgentSessionRecord(db, 'conv-1', 'pi')).toBeNull();
-    expect(resolveAgentResumeContext(db, { conversationId: 'conv-1', agentId: 'pi' }).isResuming)
-      .toBe(false);
+    expect(await getAgentSessionRecord(db, convId, 'pi')).toBeNull();
+    const ctx = await resolveAgentResumeContext(db, { conversationId: convId, agentId: 'pi' });
+    expect(ctx.isResuming).toBe(false);
   });
 
   // Regression for the resume identity guard: pi-rpc persists via this capture
   // path, so it must store model/cwd/lastMessageId too — otherwise the next pi
   // turn sees a null cursor (`missing_cursor`) and reseeds forever, silently
   // disabling pi's existing follow-up-session path (reported by @nettee).
-  it('persists the resume identity so a successful pi turn still resumes next turn', () => {
-    const db = seed();
-    upsertMessage(db, 'conv-1', { id: 'asst-1', role: 'assistant', content: 'pi reply', runStatus: 'succeeded' });
+  it('persists the resume identity so a successful pi turn still resumes next turn', async () => {
+    const db = await seed();
+    await upsertMessage(db, convId, {
+      id: mid('asst-1'), role: 'assistant', content: 'pi reply', runStatus: 'succeeded',
+    });
 
-    const result = persistCapturedAgentSession(db, {
-      conversationId: 'conv-1',
+    const result = await persistCapturedAgentSession(db, {
+      conversationId: convId,
       agentId: 'pi',
       sessionId: '/tmp/current.jsonl',
       stablePromptHash: 'hash-1',
       model: null,
       cwd: '/work/proj',
-      lastMessageId: 'asst-1',
+      lastMessageId: mid('asst-1'),
     });
     expect(result).toBe('stored');
 
-    const ctx = resolveAgentResumeContext(db, {
-      conversationId: 'conv-1',
+    const ctx = await resolveAgentResumeContext(db, {
+      conversationId: convId,
       agentId: 'pi',
       currentModel: null,
       currentCwd: '/work/proj',
