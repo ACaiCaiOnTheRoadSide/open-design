@@ -8567,7 +8567,7 @@ export async function startServer({
         // the session row is now cleared, the re-spawn resolves isResuming=false
         // (fresh session, full transcript), so it CANNOT resume-fail again — the
         // `resumeAutoReseeded` guard is belt-and-suspenders against any loop.
-        clearAgentSession(db, run.conversationId, def.id);
+        await clearAgentSession(db, run.conversationId, def.id);
         if (!run.resumeAutoReseeded) {
           run.resumeAutoReseeded = true;
           run.resumeAutoReseededFrom = agentResumeCtx.resumeSessionId ?? null;
@@ -8955,7 +8955,7 @@ export async function startServer({
         acpSession &&
         typeof acpSession.getDurableSessionId === 'function'
       ) {
-        persistCapturedAgentSession(db, {
+        await persistCapturedAgentSession(db, {
           conversationId: run.conversationId,
           agentId: def.id,
           sessionId: acpSession.getDurableSessionId(),
