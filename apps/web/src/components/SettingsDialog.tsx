@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 import { Button, VisuallyHidden } from '@open-design/components';
+import type { AmrWalletSnapshot } from '@open-design/contracts';
 import { validateBaseUrl } from '@open-design/contracts/api/connectionTest';
 import {
   agentIdToTracking,
@@ -9,7 +10,13 @@ import {
   settingsSectionToTracking,
 } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
-import { recordAmrEntry } from '../analytics/amr-attribution';
+import {
+  amrHandoffDeviceId,
+  attributedAmrUrl,
+  recordAmrEntry,
+  type TrackingAmrEntrySource,
+} from '../analytics/amr-attribution';
+import { getResolvedDeviceId } from '../analytics/client';
 import {
   trackSettingsAppearanceClick,
   trackSettingsByokModelsFetchResult,
@@ -33,15 +40,23 @@ import type { Dict } from '../i18n/types';
 import { AgentIcon } from './AgentIcon';
 import { AgentDiagnosticRow } from './AgentDiagnosticRow';
 import { AmrLoginPill } from './AmrLoginPill';
+import { orderAgentsWithOpenDesignFirst } from './agentOrdering';
+import { PlanBadge } from './PlanBadge';
 import {
   AMR_LOGIN_STATUS_EVENT,
   amrLoginStatusEventReason,
 } from './amrLoginPolling';
 import {
+  canUpgradeVelaPlan,
+  fetchAmrWalletSnapshot,
   fetchVelaLoginStatus,
+  formatVelaBalanceUsd,
   type VelaLoginStatus,
 } from '../providers/daemon';
-import { amrProfileBadgeLabel } from '../runtime/amr-guidance';
+import {
+  amrPlansUrlForProfile,
+  amrProfileBadgeLabel,
+} from '../runtime/amr-guidance';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
 import {
@@ -56,6 +71,7 @@ import {
   KNOWN_PROVIDERS,
   hasAnyConfiguredProvider,
   mergeDaemonMediaProviders,
+  saveConfig,
   syncComposioConfigToDaemon,
   syncConfigToDaemon,
   syncMediaProvidersToDaemon,
@@ -63,8 +79,9 @@ import {
 import type { KnownProvider } from '../state/config';
 import { navigate as navigateRoute, useRoute } from '../router';
 import {
-  API_PROTOCOL_LABELS,
   API_PROTOCOL_TABS,
+  DEFAULT_BASE_URL_BY_PROTOCOL,
+  API_PROTOCOL_LABELS,
   isFixedOriginGateway,
   resolveFixedOriginBaseUrl,
   SUGGESTED_MODELS_BY_PROTOCOL,
@@ -109,6 +126,7 @@ import {
 } from '../providers/registry';
 import { MEDIA_PROVIDERS } from '../media/models';
 import { useByokImageModelOptions, useByokVideoModelOptions, useByokSpeechModelOptions } from '../media/aihubmix-image-models';
+import { isVisualStabilityMode } from '../utils/visualStability';
 import { XaiOAuthControl } from './XaiOAuthControl';
 import type { MediaProvider } from '../media/models';
 import { PetSettings } from './pet/PetSettings';
@@ -184,10 +202,163 @@ export type SettingsSection =
   | 'library'
   | 'about';
 
+interface ByokProviderPreset {
+  id: string;
+  title: string;
+  protocol: ApiProtocol;
+  baseUrl: string;
+  model: string;
+  custom?: boolean;
+}
+
 // One-shot focus hint when opening the dialog. `'amr'` scrolls the AMR agent
 // card into view on the execution section and plays a highlight (plus a
 // sign-in coachmark when the user has not authorized AMR yet).
 export type SettingsHighlight = 'amr' | null;
+
+// 白标:v13 的桌面自更新 UI(检查/下载/安装按钮、updater 订阅)未引入 —— SaaS 无自更新。
+// deriveAboutUpdateControl 仅保留为可测试的纯函数(上游测试引用),UI 不渲染它。
+import type { UpdaterModel } from '../lib/updater';
+export const OPEN_DESIGN_RELEASES_URL = 'https://github.com/nexu-io/open-design/releases';
+
+type AboutUpdatePrimaryAction = 'check' | 'download' | 'install' | 'quit';
+type AboutUpdateTone = 'neutral' | 'success' | 'warning' | 'error';
+
+export interface AboutUpdateControl {
+  primaryAction: AboutUpdatePrimaryAction | null;
+  primaryLabelKey: keyof Dict | null;
+  showReleaseLink: boolean;
+  statusKey: keyof Dict;
+  statusTone: AboutUpdateTone;
+  statusVars?: Record<string, string | number>;
+}
+
+export function deriveAboutUpdateControl(
+  model: UpdaterModel,
+  appVersionInfo: AppVersionInfo | null,
+): AboutUpdateControl {
+  if (appVersionInfo?.packaged === false) {
+    return {
+      primaryAction: null,
+      primaryLabelKey: null,
+      showReleaseLink: true,
+      statusKey: 'settings.updateStatusDevelopment',
+      statusTone: 'neutral',
+    };
+  }
+
+  if (model.environment !== 'desktop' || !model.enabled || !model.supported) {
+    return {
+      primaryAction: null,
+      primaryLabelKey: null,
+      showReleaseLink: true,
+      statusKey: 'settings.updateStatusUnsupported',
+      statusTone: 'warning',
+    };
+  }
+
+  switch (model.status?.state) {
+    case 'checking':
+      return {
+        primaryAction: null,
+        primaryLabelKey: 'updater.checking',
+        showReleaseLink: true,
+        statusKey: 'settings.updateStatusChecking',
+        statusTone: 'neutral',
+      };
+    case 'not-available':
+      return {
+        primaryAction: 'check',
+        primaryLabelKey: 'settings.updateRecheck',
+        showReleaseLink: true,
+        statusKey: 'settings.updateStatusUpToDate',
+        statusTone: 'success',
+      };
+    case 'available':
+      return {
+        primaryAction: model.canDownload ? 'download' : null,
+        primaryLabelKey: model.canDownload ? 'updater.download' : null,
+        showReleaseLink: true,
+        statusKey: model.availableVersion
+          ? 'settings.updateStatusAvailable'
+          : 'settings.updateStatusAvailableUnknown',
+        statusTone: 'warning',
+        ...(model.availableVersion ? { statusVars: { version: model.availableVersion } } : {}),
+      };
+    case 'downloading': {
+      const percent = model.downloadProgress?.percent;
+      return {
+        primaryAction: null,
+        primaryLabelKey: 'updater.downloading',
+        showReleaseLink: true,
+        statusKey: typeof percent === 'number'
+          ? 'settings.updateStatusDownloadingPercent'
+          : 'settings.updateStatusDownloading',
+        statusTone: 'neutral',
+        ...(typeof percent === 'number' ? { statusVars: { percent } } : {}),
+      };
+    }
+    case 'downloaded': {
+      if (model.installerOpened && model.canQuitAfterInstallerOpen) {
+        return {
+          primaryAction: 'quit',
+          primaryLabelKey: 'updater.quitButton',
+          showReleaseLink: false,
+          statusKey: 'settings.updateQuitFailed',
+          statusTone: 'warning',
+        };
+      }
+      const canInstallUpdate = model.canOpenInstaller || model.canApplyInPlace;
+      return {
+        primaryAction: canInstallUpdate ? 'install' : null,
+        primaryLabelKey: canInstallUpdate
+          ? model.updateKind === 'payload'
+            ? 'updater.installRestart'
+            : 'settings.updateNow'
+          : null,
+        showReleaseLink: true,
+        statusKey: model.availableVersion
+          ? 'settings.updateStatusReady'
+          : 'settings.updateStatusReadyUnknown',
+        statusTone: 'success',
+        ...(model.availableVersion ? { statusVars: { version: model.availableVersion } } : {}),
+      };
+    }
+    case 'installing':
+      return {
+        primaryAction: null,
+        primaryLabelKey: 'updater.installingRestart',
+        showReleaseLink: false,
+        statusKey: 'settings.updateStatusInstalling',
+        statusTone: 'neutral',
+      };
+    case 'error':
+      return {
+        primaryAction: 'check',
+        primaryLabelKey: 'settings.updateRetry',
+        showReleaseLink: true,
+        statusKey: 'settings.updateStatusFailed',
+        statusTone: 'error',
+      };
+    case 'unsupported':
+      return {
+        primaryAction: null,
+        primaryLabelKey: null,
+        showReleaseLink: true,
+        statusKey: 'settings.updateStatusUnsupported',
+        statusTone: 'warning',
+      };
+    case 'idle':
+    default:
+      return {
+        primaryAction: 'check',
+        primaryLabelKey: 'settings.updateCheck',
+        showReleaseLink: true,
+        statusKey: 'settings.updateStatusNotChecked',
+        statusTone: 'neutral',
+      };
+  }
+}
 
 interface Props {
   initial: AppConfig;
@@ -332,12 +503,6 @@ type TestState =
   | { status: 'running' }
   | { status: 'done'; result: ConnectionTestResponse };
 
-const GATEWAY_API_PROTOCOLS = new Set<ApiProtocol>([
-  'ollama',
-  'senseaudio',
-  'aihubmix',
-]);
-
 // Providers whose live model fetch IS their full account catalogue, so the
 // per-option "from your account" badge and the "Loaded N from your account"
 // hint are noise — every option carries the same badge and distinguishes
@@ -345,6 +510,7 @@ const GATEWAY_API_PROTOCOLS = new Set<ApiProtocol>([
 // Add a protocol here when the same applies to another provider.
 const ACCOUNT_MODEL_SOURCE_LABEL_HIDDEN = new Set<ApiProtocol>([
   'aihubmix',
+  'bedrock',
 ]);
 
 function hidesAccountModelSourceLabel(protocol: ApiProtocol): boolean {
@@ -359,6 +525,17 @@ type ProviderModelsState =
   | { status: 'idle' }
   | { status: 'running'; cacheKey: string }
   | { status: 'done'; cacheKey: string; result: ProviderModelsResponse };
+
+interface ByokProviderFormDraft {
+  apiConfig: ApiProtocolConfig;
+  maxTokensInput: string;
+  maxTokens: AppConfig['maxTokens'];
+  providerModelsCommittedKey: string | null;
+  providerModelsState: ProviderModelsState;
+  showApiKey: boolean;
+  apiModelCustomEditing: boolean;
+  apiModelUserSelected: boolean;
+}
 
 type ByokRequiredField = ByokDraftField;
 type ByokPreconditionAction = 'test';
@@ -428,12 +605,26 @@ export function canFetchProviderModels(
   protocol: ApiProtocol,
 ): boolean {
   return (
+    !isProviderModelDiscoveryUnsupported(protocol, config.baseUrl) &&
     protocol !== 'azure' &&
     protocol !== 'ollama' &&
-    Boolean(config.apiKey.trim()) &&
+    (protocol === 'bedrock' || Boolean(config.apiKey.trim())) &&
     Boolean(config.baseUrl.trim()) &&
     isValidApiBaseUrl(config.baseUrl)
   );
+}
+
+export function isProviderModelDiscoveryUnsupported(
+  protocol: ApiProtocol,
+  baseUrl: string,
+): boolean {
+  if (protocol === 'azure' || protocol === 'ollama') return true;
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return host === 'token-plan-cn.xiaomimimo.com';
+  } catch {
+    return false;
+  }
 }
 
 function missingByokConnectionFields(
@@ -455,8 +646,9 @@ function missingByokModelFetchFields(
   const missing: ByokRequiredField[] = [];
   // AIHubMix publishes its catalogue on a public endpoint, so its model list
   // loads without a key (the user shouldn't need to paste a key just to browse
-  // models). Every other protocol fetches /v1/models behind the key.
-  if (protocol !== 'aihubmix' && !config.apiKey.trim()) missing.push('api_key');
+  // models). Bedrock uses a static model seed until AWS auth lands in BYOK.
+  // Every other protocol fetches /v1/models behind the key.
+  if (protocol !== 'aihubmix' && protocol !== 'bedrock' && !config.apiKey.trim()) missing.push('api_key');
   if (!config.baseUrl.trim()) missing.push('base_url');
   return missing;
 }
@@ -572,6 +764,10 @@ const API_KEY_CONSOLE_LINKS: Record<ApiProtocol, { host: string; url: string }> 
     host: 'aihubmix.com',
     url: 'https://aihubmix.com/?aff=JA1e',
   },
+  bedrock: {
+    host: 'aws.amazon.com',
+    url: 'https://aws.amazon.com/bedrock/',
+  },
 };
 
 const AGENT_SHORT_DESCRIPTIONS: Record<string, string> = {
@@ -608,7 +804,7 @@ function cleanAgentVersionLabel(
 }
 
 function displayAgentName(agent: Pick<AgentInfo, 'id' | 'name'>): string {
-  return agent.id === 'amr' ? 'Open Design AMR' : agent.name;
+  return agent.id === 'amr' ? 'Open Design' : agent.name;
 }
 
 const AGENT_CLI_ENV_FIELDS = [
@@ -628,7 +824,7 @@ const AGENT_CLI_ENV_FIELDS = [
     agentId: 'claude',
     envKey: 'ANTHROPIC_API_KEY',
     labelKey: 'settings.cliEnvClaudeApiKey',
-    placeholder: 'Paste proxy API key',
+    placeholder: 'Paste CLI API key',
     secret: true,
   },
   {
@@ -661,7 +857,7 @@ const AGENT_CLI_ENV_FIELDS = [
     agentId: 'codex',
     envKey: 'OPENAI_API_KEY',
     labelKey: 'settings.cliEnvCodexApiKey',
-    labelSuffix: 'OPENAI_API_KEY · proxy/legacy',
+    labelSuffix: 'OPENAI_API_KEY',
     placeholder: 'Paste OPENAI_API_KEY',
     secret: true,
   },
@@ -749,6 +945,40 @@ function currentApiProtocolConfig(config: AppConfig): ApiProtocolConfig {
   };
 }
 
+function persistByokProviderConfigDraft(
+  config: AppConfig,
+  draftKey: string,
+  apiConfig: ApiProtocolConfig,
+): AppConfig {
+  return {
+    ...config,
+    byokProviderConfigDrafts: {
+      ...(config.byokProviderConfigDrafts ?? {}),
+      [draftKey]: {
+        apiConfig,
+        maxTokens: config.maxTokens,
+      },
+    },
+  };
+}
+
+function byokProviderDraftKey(
+  protocol: ApiProtocol,
+  apiProviderBaseUrl: string | null | undefined,
+  baseUrl: string,
+): string {
+  return `${protocol}:${apiProviderBaseUrl ?? `custom:${baseUrl}`}`;
+}
+
+function byokProviderKeyForConfig(config: AppConfig): string {
+  const apiConfig = currentApiProtocolConfig(config);
+  return byokProviderDraftKey(
+    config.apiProtocol ?? 'anthropic',
+    apiConfig.apiProviderBaseUrl,
+    apiConfig.baseUrl,
+  );
+}
+
 function applyApiProtocolConfig(
   config: AppConfig,
   protocol: ApiProtocol,
@@ -789,14 +1019,30 @@ export function isValidApiBaseUrl(value: string): boolean {
   return Boolean(result.parsed && !result.error);
 }
 
+const AGENT_CLI_AUTH_ENV_KEYS = new Set([
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CODEX_API_KEY',
+  'OPENAI_API_KEY',
+]);
+const AGENT_CLI_BASE_URL_ENV_KEYS = new Set(['ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL']);
+
 export function updateCurrentApiProtocolConfig(
   config: AppConfig,
   patch: Partial<ApiProtocolConfig>,
 ): AppConfig {
   const protocol = config.apiProtocol ?? 'anthropic';
+  const clearedApiKey =
+    patch.apiKey !== undefined &&
+    !patch.apiKey.trim() &&
+    Boolean(currentApiProtocolConfig(config).apiKey.trim());
+  const defaultModel = defaultApiProtocolConfig(protocol).model;
   const nextApiConfig: ApiProtocolConfig = {
     ...currentApiProtocolConfig(config),
     ...patch,
+    ...(clearedApiKey && defaultModel && patch.model === undefined
+      ? { model: defaultModel }
+      : {}),
   };
   return applyApiProtocolConfig(
     {
@@ -819,11 +1065,23 @@ export function updateAgentCliEnvValue(
 ): AppConfig {
   const value = rawValue.trim();
   const agentCliEnv = { ...(config.agentCliEnv ?? {}) };
+  const agentCliEnvIntent = { ...(config.agentCliEnvIntent ?? {}) };
   const nextAgentEnv = { ...(agentCliEnv[agentId] ?? {}) };
+  const nextAgentIntent = { ...(agentCliEnvIntent[agentId] ?? {}) };
   if (value) {
     nextAgentEnv[envKey] = value;
   } else {
     delete nextAgentEnv[envKey];
+  }
+
+  const hasAuthKey = Object.keys(nextAgentEnv).some((key) => AGENT_CLI_AUTH_ENV_KEYS.has(key));
+  if (
+    (AGENT_CLI_AUTH_ENV_KEYS.has(envKey) && value) ||
+    (AGENT_CLI_BASE_URL_ENV_KEYS.has(envKey) && hasAuthKey)
+  ) {
+    nextAgentIntent.apiKeyOverride = true;
+  } else if (AGENT_CLI_AUTH_ENV_KEYS.has(envKey) && !hasAuthKey) {
+    delete nextAgentIntent.apiKeyOverride;
   }
 
   if (Object.keys(nextAgentEnv).length > 0) {
@@ -832,9 +1090,16 @@ export function updateAgentCliEnvValue(
     delete agentCliEnv[agentId];
   }
 
+  if (Object.keys(nextAgentEnv).length > 0 && Object.keys(nextAgentIntent).length > 0) {
+    agentCliEnvIntent[agentId] = nextAgentIntent;
+  } else {
+    delete agentCliEnvIntent[agentId];
+  }
+
   return {
     ...config,
     agentCliEnv: Object.keys(agentCliEnv).length > 0 ? agentCliEnv : {},
+    agentCliEnvIntent: Object.keys(agentCliEnvIntent).length > 0 ? agentCliEnvIntent : {},
   };
 }
 
@@ -907,6 +1172,23 @@ export function agentRefreshOptionsForConfig(cfg: AppConfig): AgentRefreshOption
     throwOnError: true,
     agentCliEnv: cfg.agentCliEnv ?? {},
   };
+}
+
+export function amrWalletValueLabel(input: {
+  balance: string | null;
+  loadingLabel: string;
+  ready: boolean;
+  snapshot: AmrWalletSnapshot | null;
+  unavailableLabel: string;
+}): string {
+  if (input.balance) return input.balance;
+  if (!input.ready) return input.loadingLabel;
+  const code = input.snapshot?.error?.code;
+  if (code === 'missing_control_key' || code === 'unauthorized') {
+    const message = input.snapshot?.error?.message?.trim();
+    if (message) return message;
+  }
+  return input.unavailableLabel;
 }
 
 function apiModelOptionLabel(
@@ -1000,6 +1282,7 @@ export function sanitizeSettingsSavePayload(
     apiProtocol: initial.apiProtocol,
     apiVersion: initial.apiVersion,
     apiProtocolConfigs: initial.apiProtocolConfigs,
+    byokProviderConfigDrafts: initial.byokProviderConfigDrafts,
     apiProviderBaseUrl: initial.apiProviderBaseUrl,
     baseUrl: initial.baseUrl,
     model: initial.model,
@@ -1138,7 +1421,15 @@ export function SettingsDialog({
     };
   }, []);
   const [showApiKey, setShowApiKey] = useState(false);
+  const byokProviderFormDraftsRef = useRef<Record<string, ByokProviderFormDraft>>({});
+  const lastCustomByokProviderDraftKeysRef = useRef<Partial<Record<ApiProtocol, string>>>(
+    (initial.apiProviderBaseUrl ?? null) === null
+      ? { [initial.apiProtocol ?? 'anthropic']: byokProviderKeyForConfig(initial) }
+      : {},
+  );
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
+  const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(false);
+  const [settingsFullscreen, setSettingsFullscreen] = useState(false);
   // Scroll the right-hand content pane back to the top whenever the user
   // picks a different settings section. Without this, switching from a
   // long section the user had scrolled (e.g. Library) into a short one
@@ -1164,6 +1455,8 @@ export function SettingsDialog({
   });
   const [amrCardStatus, setAmrCardStatus] = useState<VelaLoginStatus | null>(null);
   const [amrCardStatusReady, setAmrCardStatusReady] = useState(false);
+  const [amrWalletSnapshot, setAmrWalletSnapshot] = useState<AmrWalletSnapshot | null>(null);
+  const [amrWalletReady, setAmrWalletReady] = useState(false);
   const [hoveredAgentCardId, setHoveredAgentCardId] = useState<string | null>(null);
   const [providerTestState, setProviderTestState] = useState<TestState>({
     status: 'idle',
@@ -1172,6 +1465,25 @@ export function SettingsDialog({
   useEffect(() => {
     onAmrLoginStatusChange?.(amrCardStatus);
   }, [amrCardStatus, onAmrLoginStatusChange]);
+
+  const formatAmrWalletBalance = useCallback((balanceUsd: string | null | undefined) => {
+    if (!balanceUsd) return null;
+    const amount = Number(balanceUsd);
+    if (!Number.isFinite(amount)) return `$${balanceUsd}`;
+    return new Intl.NumberFormat(locale, {
+      currency: 'USD',
+      maximumFractionDigits: 2,
+      minimumFractionDigits: 2,
+      style: 'currency',
+    }).format(amount);
+  }, [locale]);
+
+  const refreshAmrWalletSnapshot = useCallback(async (options: { refresh?: boolean } = {}) => {
+    setAmrWalletReady(false);
+    const next = await fetchAmrWalletSnapshot(options);
+    setAmrWalletSnapshot(next);
+    setAmrWalletReady(true);
+  }, []);
 
   useEffect(() => {
     const hasAmrAgent = agents.some((agent) => agent.id === 'amr' && agent.available);
@@ -1200,6 +1512,31 @@ export function SettingsDialog({
     };
   }, [agents]);
 
+  useEffect(() => {
+    const hasAmrAgent = agents.some((agent) => agent.id === 'amr' && agent.available);
+    if (!hasAmrAgent || amrCardStatus?.loggedIn !== true) {
+      setAmrWalletSnapshot(null);
+      setAmrWalletReady(false);
+      return;
+    }
+    let cancelled = false;
+    setAmrWalletReady(false);
+    void fetchAmrWalletSnapshot().then((next) => {
+      if (cancelled) return;
+      setAmrWalletSnapshot(next);
+      setAmrWalletReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    agents,
+    amrCardStatus?.loggedIn,
+    amrCardStatus?.profile,
+    amrCardStatus?.user?.id,
+    amrCardStatus?.user?.email,
+  ]);
+
   // Reconcile AMR sign-in state whenever the user returns to the window. The
   // vela device-login flow completes in an external browser / AMR console; if
   // the in-pill poll has already timed out (or the login finished fully
@@ -1221,6 +1558,7 @@ export function SettingsDialog({
       void fetchVelaLoginStatus().then((next) => {
         if (cancelled || !next) return;
         setAmrCardStatus(next);
+        if (next.loggedIn) void refreshAmrWalletSnapshot({ refresh: true });
       });
     };
     window.addEventListener('focus', resyncAmrStatus);
@@ -1230,7 +1568,7 @@ export function SettingsDialog({
       window.removeEventListener('focus', resyncAmrStatus);
       document.removeEventListener('visibilitychange', resyncAmrStatus);
     };
-  }, [agents]);
+  }, [agents, refreshAmrWalletSnapshot]);
 
   useEffect(() => {
     const hasAmrAgent = agents.some((agent) => agent.id === 'amr' && agent.available);
@@ -1301,6 +1639,7 @@ export function SettingsDialog({
   const providerModelsRevisionRef = useRef(0);
   const providerTestFirstResetRef = useRef(true);
   const providerModelsFirstResetRef = useRef(true);
+  const providerModelsSkipNextResetRef = useRef(false);
   const deferAfterKeyCleanRef = useRef(false);
   const providerAutoTestKeyRef = useRef<string | null>(null);
   const byokLastUnsuccessfulTestKeyRef = useRef<string | null>(null);
@@ -1309,6 +1648,7 @@ export function SettingsDialog({
   const modelSelectRef = useRef<HTMLButtonElement | null>(null);
   const customModelInputRef = useRef<HTMLInputElement | null>(null);
   const focusByokRequiredFieldAfterProtocolSwitchRef = useRef(false);
+  const visualStabilityMode = isVisualStabilityMode();
   // Tracks whether the current BYOK model value came from an explicit user
   // pick (combobox selection or custom entry) rather than an auto-populated
   // provider preset. The account-model auto-switch must never overwrite a
@@ -1318,6 +1658,21 @@ export function SettingsDialog({
   const [agentCustomModelIds, setAgentCustomModelIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  // 白标:上游此处还有「检查更新」(fetchLatestGithubReleaseInfo + 打开 GitHub
+  // releases 页)。SaaS 前端不请求 github.com,About 区不渲染更新入口,故不引入。
+  // Precise inverse of App.handleCompleteOnboarding: flip
+  // onboardingCompleted back to false, mirror it to localStorage and the
+  // daemon through the same config-persist path, then route the user into
+  // the first-run flow so they can replay setup (including brand extraction).
+  const handleResetOnboarding = useCallback(() => {
+    const next: AppConfig = { ...cfg, onboardingCompleted: false };
+    setCfg(next);
+    saveConfig(next);
+    void syncConfigToDaemon(next);
+    onClose();
+    navigateRoute({ kind: 'home', view: 'onboarding' });
+  }, [cfg, onClose]);
+
   // Imperative handle for the External MCP section. The dialog footer Save
   // routes through this when the MCP tab is active so the user can press the
   // single Save button at the bottom instead of hunting for the inner one.
@@ -1430,6 +1785,10 @@ export function SettingsDialog({
       providerModelsFirstResetRef.current = false;
       return;
     }
+    if (providerModelsSkipNextResetRef.current) {
+      providerModelsSkipNextResetRef.current = false;
+      return;
+    }
     providerModelsRevisionRef.current += 1;
     providerModelsAbortRef.current?.abort();
     providerModelsAbortRef.current = null;
@@ -1474,11 +1833,115 @@ export function SettingsDialog({
       return { ...c, mode };
     });
   };
-  const setApiProtocol = (protocol: ApiProtocol) => {
-    setApiModelCustomEditing(false);
-    apiModelUserSelectedRef.current = false;
-    focusByokRequiredFieldAfterProtocolSwitchRef.current = true;
-    setCfg((c) => switchApiProtocolConfig(c, protocol));
+  const setByokProvider = (provider: ByokProviderPreset) => {
+    const currentDraftKey = byokProviderKeyForConfig(cfg);
+    const currentApiConfig = currentApiProtocolConfig(cfg);
+    if ((cfg.apiProviderBaseUrl ?? null) === null) {
+      lastCustomByokProviderDraftKeysRef.current[cfg.apiProtocol ?? 'anthropic'] =
+        currentDraftKey;
+    }
+    byokProviderFormDraftsRef.current[currentDraftKey] = {
+      apiConfig: currentApiConfig,
+      maxTokens: cfg.maxTokens,
+      maxTokensInput,
+      providerModelsCommittedKey,
+      providerModelsState,
+      showApiKey,
+      apiModelCustomEditing,
+      apiModelUserSelected: apiModelUserSelectedRef.current,
+    };
+    const nextProviderBaseUrlForCurrent = provider.custom ? null : provider.baseUrl;
+    const providerChangedBeforeSwitch = provider.custom
+      ? (cfg.apiProviderBaseUrl ?? null) !== null
+      : (cfg.apiProtocol ?? 'anthropic') !== provider.protocol ||
+        (cfg.apiProviderBaseUrl ?? null) !== nextProviderBaseUrlForCurrent;
+    focusByokRequiredFieldAfterProtocolSwitchRef.current = !provider.custom;
+    providerModelsSkipNextResetRef.current = providerChangedBeforeSwitch;
+    setCfg((current) => {
+      const currentProtocol = current.apiProtocol ?? 'anthropic';
+      const nextProviderBaseUrl = provider.custom ? null : provider.baseUrl;
+      const providerChanged = provider.custom
+        ? (current.apiProviderBaseUrl ?? null) !== null
+        : currentProtocol !== provider.protocol ||
+          (current.apiProviderBaseUrl ?? null) !== nextProviderBaseUrl;
+      const switched = switchApiProtocolConfig(current, provider.protocol);
+      const fallbackApiConfig = currentApiProtocolConfig(switched);
+      const customDraftKey = provider.custom
+        ? lastCustomByokProviderDraftKeysRef.current[provider.protocol]
+        : null;
+      const nextProviderDraftKey = customDraftKey ?? byokProviderDraftKey(
+        provider.protocol,
+        nextProviderBaseUrl,
+        provider.custom ? fallbackApiConfig.baseUrl : provider.baseUrl,
+      );
+      const savedDraft = nextProviderDraftKey
+        ? byokProviderFormDraftsRef.current[nextProviderDraftKey]
+        : undefined;
+      const persistedDraft = nextProviderDraftKey
+        ? current.byokProviderConfigDrafts?.[nextProviderDraftKey]
+        : undefined;
+      const applyDraftUiState = (draft: ByokProviderFormDraft | undefined) => {
+        setShowApiKey(draft?.showApiKey ?? false);
+        setApiModelCustomEditing(draft?.apiModelCustomEditing ?? false);
+        apiModelUserSelectedRef.current = draft?.apiModelUserSelected ?? false;
+        setMaxTokensInput(
+          draft
+            ? draft.maxTokensInput
+            : switched.maxTokens == null ? '' : String(switched.maxTokens),
+        );
+        setProviderModelsCommittedKey(draft?.providerModelsCommittedKey ?? null);
+        setProviderModelsState(draft?.providerModelsState ?? { status: 'idle' });
+      };
+      if (savedDraft) {
+        applyDraftUiState(savedDraft);
+        return applyApiProtocolConfig(
+          persistByokProviderConfigDraft(
+            {
+              ...switched,
+              maxTokens: savedDraft.maxTokens,
+            },
+            currentDraftKey,
+            currentApiProtocolConfig(current),
+          ),
+          provider.protocol,
+          savedDraft.apiConfig,
+        );
+      }
+      if (persistedDraft) {
+        applyDraftUiState(undefined);
+        return applyApiProtocolConfig(
+          persistByokProviderConfigDraft(
+            {
+              ...switched,
+              maxTokens: persistedDraft.maxTokens,
+            },
+            currentDraftKey,
+            currentApiProtocolConfig(current),
+          ),
+          provider.protocol,
+          persistedDraft.apiConfig,
+        );
+      }
+      const switchedWithCurrentDraft = persistByokProviderConfigDraft(
+        switched,
+        currentDraftKey,
+        currentApiProtocolConfig(current),
+      );
+      if (provider.custom) {
+        applyDraftUiState(undefined);
+        return updateCurrentApiProtocolConfig(switchedWithCurrentDraft, {
+          apiProviderBaseUrl: null,
+          ...(providerChanged ? { model: '' } : {}),
+        });
+      }
+      applyDraftUiState(undefined);
+      return updateCurrentApiProtocolConfig(switchedWithCurrentDraft, {
+        ...(providerChanged ? { apiKey: '' } : {}),
+        baseUrl: provider.baseUrl,
+        model: provider.model,
+        apiProviderBaseUrl: provider.baseUrl,
+      });
+    });
   };
   const updateApiConfig = (patch: Partial<ApiProtocolConfig>) =>
     setCfg((c) => updateCurrentApiProtocolConfig(c, patch));
@@ -1518,11 +1981,32 @@ export function SettingsDialog({
       setAgentRescanRunning(false);
     }
   };
-  const openAgentFixUrl = (url: string | undefined) => {
+  const attributedAmrSettingsUrl = (
+    url: string,
+    sourceDetail: TrackingAmrEntrySource,
+  ) => {
+    const attribution = recordAmrEntry(analytics.track, sourceDetail, new Date(), {
+      metricsConsent: cfg.telemetry?.metrics === true,
+    });
+    const deviceId = amrHandoffDeviceId({
+      metricsConsent: cfg.telemetry?.metrics === true,
+      resolvedDeviceId: getResolvedDeviceId(),
+      installationId: cfg.installationId,
+    });
+    return attributedAmrUrl(url, attribution, deviceId);
+  };
+  const openAgentFixUrl = (
+    url: string | undefined,
+    amrEntrySourceDetail?: TrackingAmrEntrySource,
+  ) => {
     const href = sanitizeHttpsUrl(url);
     if (!href) return;
     markAgentInstallIntent();
-    void openExternalUrl(href);
+    void openExternalUrl(
+      amrEntrySourceDetail
+        ? attributedAmrSettingsUrl(href, amrEntrySourceDetail)
+        : href,
+    );
   };
   const diagnosticHandlersForAgent = (agent: AgentInfo) => {
     const docsUrl = sanitizeHttpsUrl(agent.docsUrl);
@@ -1530,7 +2014,15 @@ export function SettingsDialog({
     return {
       onRescan: () => void handleRefreshAgents(),
       ...(docsUrl ? { onOpenDocs: () => openAgentFixUrl(docsUrl) } : {}),
-      ...(installUrl ? { onOpenInstall: () => openAgentFixUrl(installUrl) } : {}),
+      ...(installUrl
+        ? {
+            onOpenInstall: () =>
+              openAgentFixUrl(
+                installUrl,
+                agent.id === 'amr' ? 'settings_amr_install' : undefined,
+              ),
+          }
+        : {}),
     };
   };
   useEffect(() => {
@@ -1895,6 +2387,21 @@ export function SettingsDialog({
       }
       return;
     }
+    if (isProviderModelDiscoveryUnsupported(apiProtocol, cfg.baseUrl)) {
+      trackModelsFetchResult({
+        result: 'failed',
+        error_code: 'unsupported_provider_models',
+        error_kind: 'unsupported_provider_models',
+        duration_ms: 0,
+      });
+      if (!options.silent) {
+        setByokPreconditionNotice({
+          action: 'test',
+          message: t('settings.fetchModelsUnsupported'),
+        });
+      }
+      return;
+    }
     const modelFetchBlockingIssues = blockingByokDraftIssues(
       byokModelFetchDraftValidation,
     );
@@ -2104,18 +2611,213 @@ export function SettingsDialog({
 
   const apiProtocol = cfg.apiProtocol ?? 'anthropic';
   const apiKeyConsoleLink = API_KEY_CONSOLE_LINKS[apiProtocol];
-  const apiProtocolTabGroups = [
+  const byokProviderPresets: ReadonlyArray<ByokProviderPreset> = [
     {
-      id: 'protocols',
-      label: t('settings.protocolGroupProtocols'),
-      tabs: API_PROTOCOL_TABS.filter((tab) => !GATEWAY_API_PROTOCOLS.has(tab.id)),
+      id: 'anthropic',
+      title: 'Anthropic',
+      protocol: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-sonnet-4-5',
     },
     {
-      id: 'gateways',
-      label: t('settings.protocolGroupGateways'),
-      tabs: API_PROTOCOL_TABS.filter((tab) => GATEWAY_API_PROTOCOLS.has(tab.id)),
+      id: 'openai',
+      title: 'OpenAI',
+      protocol: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o',
+    },
+    {
+      id: 'google-ai-studio',
+      title: 'Google Gemini',
+      protocol: 'google',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-3.5-flash',
+    },
+    {
+      id: 'ollama',
+      title: 'Ollama Cloud',
+      protocol: 'ollama',
+      baseUrl: 'https://ollama.com',
+      model: 'gpt-oss:120b',
+    },
+    {
+      id: 'azure',
+      title: 'Azure OpenAI',
+      protocol: 'azure',
+      baseUrl: '',
+      model: '',
+    },
+    {
+      id: 'siliconflow',
+      title: '硅基流动',
+      protocol: 'openai',
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      model: 'deepseek-ai/DeepSeek-V3.1',
+    },
+    {
+      id: 'ppio',
+      title: 'PPIO',
+      protocol: 'openai',
+      baseUrl: 'https://api.ppinfra.com/v3/openai',
+      model: 'deepseek/deepseek-v3.1',
+    },
+    {
+      id: 'nvidia',
+      title: 'NVIDIA',
+      protocol: 'openai',
+      baseUrl: 'https://integrate.api.nvidia.com/v1',
+      model: 'openai/gpt-oss-120b',
+    },
+    {
+      id: 'stepfun',
+      title: 'StepFun',
+      protocol: 'openai',
+      baseUrl: 'https://api.stepfun.ai/v1',
+      model: 'step-2-mini',
+    },
+    {
+      id: 'deepseek',
+      title: 'DeepSeek',
+      protocol: 'openai',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+    },
+    {
+      id: 'openrouter',
+      title: 'OpenRouter',
+      protocol: 'openai',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'anthropic/claude-3.7-sonnet',
+    },
+    {
+      id: 'mistral',
+      title: 'Mistral AI',
+      protocol: 'openai',
+      baseUrl: 'https://api.mistral.ai/v1',
+      model: 'mistral-large-latest',
+    },
+    {
+      id: 'xai',
+      title: 'xAI',
+      protocol: 'openai',
+      baseUrl: 'https://api.x.ai/v1',
+      model: 'grok-4',
+    },
+    {
+      id: 'together',
+      title: 'Together AI',
+      protocol: 'openai',
+      baseUrl: 'https://api.together.xyz/v1',
+      model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+    },
+    {
+      id: 'huggingface',
+      title: 'Hugging Face',
+      protocol: 'openai',
+      baseUrl: 'https://router.huggingface.co/v1',
+      model: 'openai/gpt-oss-120b',
+    },
+    {
+      id: 'qwen',
+      title: '千问',
+      protocol: 'openai',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus',
+    },
+    {
+      id: 'volcengine',
+      title: '火山引擎',
+      protocol: 'openai',
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      model: 'doubao-seed-1-6',
+    },
+    {
+      id: 'qianfan',
+      title: '百度千帆',
+      protocol: 'openai',
+      baseUrl: 'https://qianfan.baidubce.com/v2',
+      model: 'ernie-4.5-turbo-128k',
+    },
+    {
+      id: 'vllm',
+      title: 'vLLM',
+      protocol: 'openai',
+      baseUrl: 'http://127.0.0.1:8000/v1',
+      model: 'model',
+    },
+    {
+      id: 'mimo',
+      title: '小米 MiMo',
+      protocol: 'openai',
+      baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+      model: 'mimo-v2.5-pro',
+    },
+    {
+      id: 'minimax',
+      title: 'MiniMax',
+      protocol: 'anthropic',
+      baseUrl: 'https://api.minimaxi.com/anthropic',
+      model: 'MiniMax-M2.7-highspeed',
+    },
+    {
+      id: 'moonshot',
+      title: 'Moonshot',
+      protocol: 'openai',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k2-0711-preview',
+    },
+    {
+      id: 'zhipu',
+      title: '智谱',
+      protocol: 'openai',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-4.6',
+    },
+    {
+      id: 'custom',
+      title: t('settings.customProvider'),
+      protocol: apiProtocol,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
+      custom: true,
     },
   ];
+  const customByokProvider = byokProviderPresets.find((provider) => provider.custom) ?? {
+    id: 'custom',
+    title: t('settings.customProvider'),
+    protocol: apiProtocol,
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    custom: true,
+  };
+  const byokPresetProtocols = new Set(
+    byokProviderPresets
+      .filter((provider) => !provider.custom)
+      .map((provider) => provider.protocol),
+  );
+  const byokProviderOptions: ReadonlyArray<ByokProviderPreset> = [
+    ...byokProviderPresets.filter((provider) => !provider.custom),
+    ...API_PROTOCOL_TABS.filter((tab) => !byokPresetProtocols.has(tab.id)).map((tab) => {
+      const fallback = defaultApiProtocolConfig(tab.id);
+      return {
+        id: `protocol-${tab.id}`,
+        title: tab.title,
+        protocol: tab.id,
+        baseUrl: fallback.baseUrl || DEFAULT_BASE_URL_BY_PROTOCOL[tab.id],
+        model: fallback.model || SUGGESTED_MODELS_BY_PROTOCOL[tab.id][0] || '',
+      };
+    }),
+    customByokProvider,
+  ];
+  const selectedByokProvider =
+    cfg.apiProviderBaseUrl === null
+      ? customByokProvider
+      : byokProviderOptions.find(
+        (provider) =>
+          !provider.custom &&
+          provider.protocol === apiProtocol &&
+          provider.baseUrl === cfg.apiProviderBaseUrl,
+      ) ?? customByokProvider;
   const baseUrlValid = isValidApiBaseUrl(cfg.baseUrl);
   const baseUrlInvalid = Boolean(cfg.baseUrl.trim() && !baseUrlValid);
   const byokRequiredLabel = (field: ByokRequiredField): string => {
@@ -2403,6 +3105,33 @@ export function SettingsDialog({
     selectedProvider,
     cfg.baseUrl,
   );
+  const byokProviderConfigured = (provider: ByokProviderPreset): boolean => {
+    if (provider.custom) {
+      return canRunProviderConnectionTest(currentApiProtocolConfig(cfg), {
+        requiresApiKey: byokRequiresApiKey,
+      }) && isValidApiBaseUrl(cfg.baseUrl);
+    }
+    const providerDraft = cfg.byokProviderConfigDrafts?.[
+      byokProviderDraftKey(provider.protocol, provider.baseUrl, provider.baseUrl)
+    ]?.apiConfig;
+    const activeProvider = selectedByokProvider?.id === provider.id;
+    const entry = activeProvider
+      ? currentApiProtocolConfig(cfg)
+      : providerDraft ?? (
+        provider.protocol === apiProtocol
+          ? undefined
+          : cfg.apiProtocolConfigs?.[provider.protocol]
+      );
+    if (!entry || entry.baseUrl !== provider.baseUrl) return false;
+    const knownProvider = KNOWN_PROVIDERS.find((item) => item.baseUrl === provider.baseUrl);
+    return canRunProviderConnectionTest(entry, {
+      requiresApiKey: byokProviderRequiresApiKey(
+        provider.protocol,
+        knownProvider,
+        entry.baseUrl,
+      ),
+    }) && isValidApiBaseUrl(entry.baseUrl);
+  };
   const byokFirstPartyBaseUrl = useMemo(
     () => byokFirstPartyBaseUrlHint(
       apiProtocol,
@@ -2531,6 +3260,7 @@ export function SettingsDialog({
   ]);
   useEffect(() => {
     if (cfg.mode !== 'api') return;
+    if (visualStabilityMode) return;
     if (providerTestState.status === 'running') return;
     if (byokFirstPartyBaseUrl?.hostTypo) return;
     if (blockingByokDraftIssues(byokDraftValidation).length > 0) return;
@@ -2550,10 +3280,12 @@ export function SettingsDialog({
     cfg.mode,
     cfg.model,
     providerTestState.status,
+    visualStabilityMode,
   ]);
   useEffect(() => {
     if (cfg.mode !== 'api') return;
-    if (apiProtocol === 'azure' || apiProtocol === 'ollama') return;
+    if (visualStabilityMode) return;
+    if (isProviderModelDiscoveryUnsupported(apiProtocol, cfg.baseUrl)) return;
     if (byokFirstPartyBaseUrl?.hostTypo) return;
     if (blockingByokDraftIssues(byokModelFetchDraftValidation).length > 0) return;
     // AIHubMix needs no key and prefills its base URL, so there's nothing to
@@ -2575,6 +3307,7 @@ export function SettingsDialog({
     byokModelFetchDraftValidation,
     providerModelsCommittedKey,
     providerModelsKey,
+    visualStabilityMode,
   ]);
   const currentProviderModelsResult =
     providerModelsState.status === 'done' &&
@@ -2747,7 +3480,9 @@ export function SettingsDialog({
     about: { title: t('settings.about'), subtitle: t('settings.aboutHint') },
   };
   const activeHeader = sectionHeader[activeSection];
-  const installedAgents = agents.filter((a) => a.available);
+  const installedAgents = orderAgentsWithOpenDesignFirst(
+    agents.filter((a) => a.available),
+  );
   const unavailableAgents = agents.filter((a) => !a.available);
   const initialAgentScanRunning = agentsLoading && agents.length === 0;
   const agentModelOptionLabel = (
@@ -2979,10 +3714,21 @@ export function SettingsDialog({
     );
   };
 
+  const settingsSidebarToggleLabel = settingsSidebarCollapsed
+    ? 'Expand settings sidebar'
+    : 'Collapse settings sidebar';
+  const settingsFullscreenLabel = settingsFullscreen
+    ? t('common.exitFullscreen')
+    : t('common.fullscreen');
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal modal-settings"
+        className={
+          'modal modal-settings' +
+          (settingsSidebarCollapsed ? ' settings-sidebar-collapsed' : '') +
+          (settingsFullscreen ? ' settings-fullscreen' : '')
+        }
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-dialog-title"
@@ -3028,7 +3774,21 @@ export function SettingsDialog({
           </div>
           <button
             type="button"
-            className="settings-close"
+            className="settings-chrome-btn settings-fullscreen-toggle"
+            onClick={() => setSettingsFullscreen((current) => !current)}
+            aria-label={settingsFullscreenLabel}
+            aria-pressed={settingsFullscreen}
+            title={settingsFullscreenLabel}
+          >
+            <Icon
+              name={settingsFullscreen ? 'minimize' : 'maximize'}
+              size={15}
+              strokeWidth={2}
+            />
+          </button>
+          <button
+            type="button"
+            className="settings-chrome-btn settings-close"
             onClick={onClose}
             aria-label={t('common.close')}
             title={t('common.close')}
@@ -3055,7 +3815,27 @@ export function SettingsDialog({
         </header>
 
         <div className="modal-body">
-          <aside className="settings-sidebar" aria-label="Settings sections">
+          <button
+            type="button"
+            className="settings-sidebar-toggle"
+            onClick={() => setSettingsSidebarCollapsed((current) => !current)}
+            aria-label={settingsSidebarToggleLabel}
+            aria-pressed={settingsSidebarCollapsed}
+            aria-controls="settings-sidebar"
+            title={settingsSidebarToggleLabel}
+          >
+            <Icon
+              name={settingsSidebarCollapsed ? 'chevron-right' : 'chevron-left'}
+              size={15}
+              strokeWidth={2}
+            />
+          </button>
+          <aside
+            id="settings-sidebar"
+            className="settings-sidebar"
+            aria-label="Settings sections"
+            aria-hidden={settingsSidebarCollapsed ? true : undefined}
+          >
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'execution' ? ' active' : ''}`}
@@ -3292,25 +4072,29 @@ export function SettingsDialog({
               </div>
               {cfg.mode === 'api' ? (
                 <div
-                  className="protocol-chips"
+                  className="protocol-chips protocol-chips--providers"
                   role="tablist"
                   aria-label={t('settings.protocolAria')}
                 >
-                  {apiProtocolTabGroups.map((group) => (
-                    <div className="protocol-chip-group" key={group.id}>
-                      <span className="protocol-chip-group-label">
-                        {group.label}
-                      </span>
-                      <div className="protocol-chip-group-options">
-                        {group.tabs.map((tab) => (
+                  <div className="protocol-chip-group protocol-chip-group--providers">
+                    <div className="protocol-chip-group-options">
+                      {byokProviderOptions.map((provider) => {
+                        const active = selectedByokProvider?.id === provider.id;
+                        const configured = byokProviderConfigured(provider);
+                        const statusLabel = configured
+                          ? t('settings.mediaProviderConfigured')
+                          : t('settings.mediaProviderUnset');
+                        return (
                           <button
-                            key={tab.id}
+                            key={provider.id}
                             type="button"
                             role="tab"
-                            aria-selected={apiProtocol === tab.id}
-                            className={'protocol-chip' + (apiProtocol === tab.id ? ' active' : '')}
+                            aria-selected={active}
+                            aria-label={provider.title}
+                            className={'protocol-chip protocol-chip--provider' + (active ? ' active' : '')}
+                            title={`${provider.title} - ${statusLabel}`}
                             onClick={() => {
-                              const byokProviderId = byokProtocolToTracking(tab.id);
+                              const byokProviderId = byokProtocolToTracking(provider.protocol);
                               if (byokProviderId) {
                                 trackSettingsByokProviderOptionClick(analytics.track, {
                                   page_name: 'settings',
@@ -3318,18 +4102,24 @@ export function SettingsDialog({
                                   element: 'byok_provider_option',
                                   action: 'select_byok_provider',
                                   provider_id: byokProviderId,
-                                  is_selected: apiProtocol === tab.id,
+                                  is_selected: active,
                                 });
                               }
-                              setApiProtocol(tab.id);
+                              if (!active) {
+                                setByokProvider(provider);
+                              }
                             }}
                           >
-                            {tab.title}
+                            <span
+                              className={`protocol-chip-status${configured ? ' is-configured' : ' is-unset'}`}
+                              aria-hidden
+                            />
+                            <span>{provider.title}</span>
                           </button>
-                        ))}
-                      </div>
+                        );
+                      })}
                     </div>
-                  ))}
+                  </div>
                 </div>
               ) : null}
           {cfg.mode === 'daemon' ? (
@@ -3426,7 +4216,6 @@ export function SettingsDialog({
                           const modelSummary = agentModelSummary(a);
                           const amrBenefits = [
                             t('settings.amrBenefitOfficial'),
-                            t('settings.amrBenefitLowerPrice'),
                             t('settings.amrBenefitManyModels'),
                           ];
                           const versionLabel =
@@ -3457,6 +4246,28 @@ export function SettingsDialog({
                             isAmrAgent && active && amrCardStatus?.loggedIn
                               ? amrProfileBadgeLabel(amrCardStatus.profile)
                               : null;
+                          const amrWalletVisible =
+                            isAmrAgent && active && amrCardStatus?.loggedIn === true;
+                          const amrStatusBalance =
+                            amrWalletVisible
+                              ? formatVelaBalanceUsd(amrCardStatus?.account?.balanceUsd)
+                              : null;
+                          const amrWalletBalance =
+                            amrWalletVisible && amrWalletSnapshot?.status === 'available'
+                              ? formatAmrWalletBalance(amrWalletSnapshot.balanceUsd)
+                              : null;
+                          const amrCardBalanceLabel =
+                            isAmrAgent && active && amrCardStatus?.loggedIn
+                              ? amrStatusBalance ?? amrWalletBalance
+                              : null;
+                          const amrCardPlanLabel =
+                            isAmrAgent && active && amrCardStatus?.loggedIn
+                              ? amrCardStatus.account?.plan?.trim() || null
+                              : null;
+                          const amrCardCanUpgrade =
+                            isAmrAgent && active && amrCardStatus?.loggedIn
+                              ? canUpgradeVelaPlan(amrCardStatus.account?.plan)
+                              : false;
                           const amrRevealPendingCancelAction =
                             isAmrAgent &&
                             active &&
@@ -3496,7 +4307,15 @@ export function SettingsDialog({
                                       install_status: 'installed',
                                     });
                                     if (isAmrAgent) {
-                                      recordAmrEntry(analytics.track, 'settings_amr_agent_card');
+                                      recordAmrEntry(
+                                        analytics.track,
+                                        'settings_amr_agent_card',
+                                        new Date(),
+                                        {
+                                          metricsConsent:
+                                            cfg.telemetry?.metrics === true,
+                                        },
+                                      );
                                     }
                                     setCfg((c) => ({ ...c, agentId: a.id }));
                                   }}
@@ -3542,6 +4361,11 @@ export function SettingsDialog({
                                             </span>
                                           </>
                                         ) : null}
+                                        {isAmrAgent && amrCardPlanLabel ? (
+                                          <VisuallyHidden>
+                                            {`, ${t('settings.amrPlan')} ${amrCardPlanLabel}`}
+                                          </VisuallyHidden>
+                                        ) : null}
                                       </div>
                                       {metaLabel ? (
                                         <div className="agent-card-meta">
@@ -3555,11 +4379,46 @@ export function SettingsDialog({
                                           <span className="agent-card-amr-email-text" title={amrCardEmail}>
                                             {amrCardEmail}
                                           </span>
+                                          {amrCardPlanLabel ? (
+                                            <span
+                                              className="agent-card-plan-badge-slot"
+                                              aria-hidden="true"
+                                            >
+                                              <PlanBadge
+                                                plan={amrCardPlanLabel}
+                                                size="sm"
+                                                className="agent-card-plan-badge"
+                                                title={
+                                                  amrCardPlanLabel
+                                                    ? `${t('settings.amrPlan')} ${amrCardPlanLabel}`
+                                                    : undefined
+                                                }
+                                              />
+                                            </span>
+                                          ) : null}
                                           {amrCardProfileBadge ? (
                                             <span className="agent-card-amr-profile-badge">
                                               {amrCardProfileBadge}
                                             </span>
                                           ) : null}
+                                        </div>
+                                      ) : null}
+                                      {amrWalletVisible ? (
+                                        <div className="agent-card-amr-meta-row">
+                                          <span className="agent-card-amr-balance">
+                                            <span className="agent-card-amr-balance-label">
+                                              {t('settings.amrBalance')}
+                                            </span>
+                                            <span className="agent-card-amr-balance-value">
+                                              {amrWalletValueLabel({
+                                                balance: amrCardBalanceLabel,
+                                                loadingLabel: t('common.loading'),
+                                                ready: amrWalletReady || Boolean(amrCardBalanceLabel),
+                                                snapshot: amrWalletSnapshot,
+                                                unavailableLabel: t('settings.amrWalletUnavailable'),
+                                              })}
+                                            </span>
+                                          </span>
                                         </div>
                                       ) : null}
                                       {!active && modelSummary ? (
@@ -3598,6 +4457,25 @@ export function SettingsDialog({
                                           </svg>
                                         </span>
                                       ) : null}
+                                      {amrCardCanUpgrade ? (
+                                        <button
+                                          type="button"
+                                          className="agent-card-amr-upgrade"
+                                          data-testid="settings-agent-card-amr-upgrade"
+                                          onClick={() =>
+                                            void openExternalUrl(
+                                              attributedAmrSettingsUrl(
+                                                amrPlansUrlForProfile(
+                                                  amrCardStatus?.profile,
+                                                ),
+                                                'settings_amr_upgrade',
+                                              ),
+                                            )
+                                          }
+                                        >
+                                          {t('settings.amrUpgrade')}
+                                        </button>
+                                      ) : null}
                                       <AmrLoginPill
                                         className="agent-card-amr-auth"
                                         hideSignedOutStatus
@@ -3606,7 +4484,10 @@ export function SettingsDialog({
                                         skipInitialRefresh
                                         signInLabel={t('settings.amrAuthorize')}
                                         showConsoleAction={amrCardStatus?.loggedIn === true}
+                                        iconOnlySignOut
                                         amrEntrySourceDetail="settings_amr_authorize"
+                                        metricsConsent={cfg.telemetry?.metrics === true}
+                                        installationId={cfg.installationId}
                                         revealPendingCancelAction={amrRevealPendingCancelAction}
                                         onStatusChange={setAmrCardStatus}
                                       />
@@ -3812,7 +4693,15 @@ export function SettingsDialog({
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="agent-card-link agent-card-link--ghost"
-                                        onClick={markAgentInstallIntent}
+                                        onClick={(event) => {
+                                          markAgentInstallIntent();
+                                          if (a.id === 'amr') {
+                                            event.currentTarget.href = attributedAmrSettingsUrl(
+                                              installUrl,
+                                              'settings_amr_install',
+                                            );
+                                          }
+                                        }}
                                       >
                                         {t('settings.agentInstall.install')}
                                       </a>
@@ -4222,13 +5111,18 @@ export function SettingsDialog({
                         hidesAccountModelSourceLabel(apiProtocol)
                           ? 'settings.modelsLoadedCount'
                           : 'settings.modelsLoadedFromAccount',
-                        { count: loadedAccountModelCount },
+                        {
+                          count: loadedAccountModelCount,
+                        },
                       )
                     : null
                 }
                 providerModelsFailureMessage={providerModelsFailureMessage}
                 showAzureModelFetchHint={apiProtocol === 'azure'}
-                showFetchModelsUnsupportedHint={apiProtocol === 'ollama'}
+                showFetchModelsUnsupportedHint={
+                  apiProtocol !== 'azure' &&
+                  isProviderModelDiscoveryUnsupported(apiProtocol, cfg.baseUrl)
+                }
                 showSuggestedModelsHint={apiProtocol !== 'azure' && !selectedProvider}
                 azureModelFetchHint={t('settings.azureModelFetchHint')}
                 onCustomModelChange={(value) => updateApiConfig({ model: value })}
@@ -4610,6 +5504,15 @@ export function SettingsDialog({
                 </div>
                 <ExportDiagnosticsRow />
               </div>
+              <div className="settings-about-diagnostics">
+                <div className="settings-about-diagnostics-text">
+                  <h4>{t('settings.resetOnboarding')}</h4>
+                  <p className="hint">{t('settings.resetOnboardingDesc')}</p>
+                </div>
+                <Button onClick={handleResetOnboarding}>
+                  {t('settings.resetOnboardingButton')}
+                </Button>
+              </div>
             </section>
           ) : null}
           </div>
@@ -4677,6 +5580,7 @@ export function ConnectorSection({
       | 'save_key'
       | 'clear'
       | 'get_api_key'
+      | 'gate_card'
       | 'provider_chip'
       | 'search_connectors',
   ) => void;
@@ -6156,6 +7060,7 @@ function MediaProvidersSection({
           // the "Coming soon" <details> below.
           const disabled = false;
           const supportsCustomModel = provider.supportsCustomModel === true;
+          const requiresCredentials = provider.credentialsRequired !== false;
           const clearable = isStoredMediaProviderEntryPresent(entry);
           const apiKeyVisible = visibleApiKeys.has(provider.id);
           return (
@@ -6197,107 +7102,109 @@ function MediaProvidersSection({
                 */}
               </div>
               {provider.id === 'grok' ? <XaiOAuthControl /> : null}
-              <div className="media-provider-body">
-                <div className="media-provider-secret-field">
+              {requiresCredentials ? (
+                <div className="media-provider-body">
+                  <div className="media-provider-secret-field">
+                    <input
+                      type={apiKeyVisible ? 'text' : 'password'}
+                      value={entry.apiKey}
+                      placeholder={isSavedState ? t('settings.connectorsReplaceKeyPlaceholder') : t('settings.mediaProviderPlaceholder')}
+                      aria-label={`${provider.label} ${t('settings.mediaProviderApiKey')}`}
+                      disabled={disabled}
+                      onFocus={() => {
+                        trackSettingsMediaProvidersClick(analytics.track, {
+                          page_name: 'settings',
+                          area: 'media_providers',
+                          element: 'key_input',
+                          providers_id: provider.id,
+                          is_configured: clearable,
+                        });
+                      }}
+                      onChange={(e) => updateProvider(provider, { apiKey: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="secret-visibility-button"
+                      disabled={disabled}
+                      aria-label={
+                        apiKeyVisible
+                          ? `${provider.label} ${t('settings.hideKey')}`
+                          : `${provider.label} ${t('settings.showKey')}`
+                      }
+                      aria-pressed={apiKeyVisible}
+                      onClick={() => toggleApiKeyVisibility(provider.id)}
+                    >
+                        <Icon name={apiKeyVisible ? 'eye' : 'eye-off'} size={15} />
+                      </button>
+                    </div>
                   <input
-                    type={apiKeyVisible ? 'text' : 'password'}
-                    value={entry.apiKey}
-                    placeholder={isSavedState ? t('settings.connectorsReplaceKeyPlaceholder') : t('settings.mediaProviderPlaceholder')}
-                    aria-label={`${provider.label} ${t('settings.mediaProviderApiKey')}`}
+                    value={entry.baseUrl}
+                    placeholder={provider.defaultBaseUrl || t('settings.mediaProviderBaseUrlPlaceholder')}
+                    aria-label={`${provider.label} ${t('settings.mediaProviderBaseUrl')}`}
                     disabled={disabled}
                     onFocus={() => {
                       trackSettingsMediaProvidersClick(analytics.track, {
                         page_name: 'settings',
                         area: 'media_providers',
-                        element: 'key_input',
+                        element: 'url_input',
                         providers_id: provider.id,
                         is_configured: clearable,
                       });
                     }}
-                    onChange={(e) => updateProvider(provider, { apiKey: e.target.value })}
+                    onChange={(e) => updateProvider(provider, { baseUrl: e.target.value })}
                   />
+                  {supportsCustomModel ? (
+                    <input
+                      value={entry.model ?? ''}
+                      placeholder="gemini-3.1-flash-image-preview"
+                      aria-label={`${provider.label} model`}
+                      disabled={disabled}
+                      onChange={(e) => updateProvider(provider, { model: e.target.value })}
+                    />
+                  ) : null}
                   <button
                     type="button"
-                    className="secret-visibility-button"
-                    disabled={disabled}
-                    aria-label={
-                      apiKeyVisible
-                        ? `${provider.label} ${t('settings.hideKey')}`
-                        : `${provider.label} ${t('settings.showKey')}`
-                    }
-                    aria-pressed={apiKeyVisible}
-                    onClick={() => toggleApiKeyVisibility(provider.id)}
+                    className="ghost"
+                    disabled={!clearable}
+                    onClick={() => {
+                      trackSettingsMediaProvidersClick(analytics.track, {
+                        page_name: 'settings',
+                        area: 'media_providers',
+                        element: 'clear',
+                        providers_id: provider.id,
+                        // The click reports the state at the moment the
+                        // user pressed Clear; the actual clear only lands
+                        // after they confirm the dialog below, but the
+                        // dashboard cares about the intent signal.
+                        is_configured: clearable,
+                      });
+                      // Match the existing window.confirm guard the rest of
+                      // the app uses for destructive actions (conversation
+                      // delete, design delete, file delete in FileWorkspace).
+                      // Without this a stray click on the row's Clear button
+                      // wipes the saved key with no recovery. Issue #737.
+                      if (
+                        !confirm(
+                          t('settings.mediaProviderClearConfirm', {
+                            name: provider.label,
+                          }),
+                        )
+                      ) {
+                        return;
+                      }
+                      updateProvider(provider, {
+                        apiKey: '',
+                        baseUrl: '',
+                        model: '',
+                        apiKeyConfigured: false,
+                        apiKeyTail: '',
+                      });
+                    }}
                   >
-                      <Icon name={apiKeyVisible ? 'eye' : 'eye-off'} size={15} />
-                    </button>
-                  </div>
-                <input
-                  value={entry.baseUrl}
-                  placeholder={provider.defaultBaseUrl || t('settings.mediaProviderBaseUrlPlaceholder')}
-                  aria-label={`${provider.label} ${t('settings.mediaProviderBaseUrl')}`}
-                  disabled={disabled}
-                  onFocus={() => {
-                    trackSettingsMediaProvidersClick(analytics.track, {
-                      page_name: 'settings',
-                      area: 'media_providers',
-                      element: 'url_input',
-                      providers_id: provider.id,
-                      is_configured: clearable,
-                    });
-                  }}
-                  onChange={(e) => updateProvider(provider, { baseUrl: e.target.value })}
-                />
-                {supportsCustomModel ? (
-                  <input
-                    value={entry.model ?? ''}
-                    placeholder="gemini-3.1-flash-image-preview"
-                    aria-label={`${provider.label} model`}
-                    disabled={disabled}
-                    onChange={(e) => updateProvider(provider, { model: e.target.value })}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={!clearable}
-                  onClick={() => {
-                    trackSettingsMediaProvidersClick(analytics.track, {
-                      page_name: 'settings',
-                      area: 'media_providers',
-                      element: 'clear',
-                      providers_id: provider.id,
-                      // The click reports the state at the moment the
-                      // user pressed Clear; the actual clear only lands
-                      // after they confirm the dialog below, but the
-                      // dashboard cares about the intent signal.
-                      is_configured: clearable,
-                    });
-                    // Match the existing window.confirm guard the rest of
-                    // the app uses for destructive actions (conversation
-                    // delete, design delete, file delete in FileWorkspace).
-                    // Without this a stray click on the row's Clear button
-                    // wipes the saved key with no recovery. Issue #737.
-                    if (
-                      !confirm(
-                        t('settings.mediaProviderClearConfirm', {
-                          name: provider.label,
-                        }),
-                      )
-                    ) {
-                      return;
-                    }
-                    updateProvider(provider, {
-                      apiKey: '',
-                      baseUrl: '',
-                      model: '',
-                      apiKeyConfigured: false,
-                      apiKeyTail: '',
-                    });
-                  }}
-                >
-                  {t('settings.mediaProviderClear')}
-                </button>
-              </div>
+                    {t('settings.mediaProviderClear')}
+                  </button>
+                </div>
+              ) : null}
             </div>
           );
         })}

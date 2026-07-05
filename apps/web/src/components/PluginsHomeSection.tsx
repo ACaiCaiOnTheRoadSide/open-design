@@ -14,6 +14,7 @@
 // override live in `./plugins-home/usePluginFacets.ts`. This file
 // owns layout only.
 
+import { Button, Input } from '@open-design/components';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InstalledPluginRecord } from '@open-design/contracts';
 import { useI18n, useT } from '../i18n';
@@ -37,11 +38,11 @@ interface Props {
   loading: boolean;
   activePluginId: string | null;
   pendingApplyId: string | null;
+  pendingDuplicateId?: string | null;
   pendingShareAction?: { pluginId: string; action: PluginShareAction } | null;
   onUse: (record: InstalledPluginRecord, action: PluginUseAction) => void;
+  onDuplicate?: (record: InstalledPluginRecord) => void;
   onOpenDetails: (record: InstalledPluginRecord) => void;
-  // Gallery only: ↗ opens the plugin's real example page in a new tab.
-  onOpenExternal?: (record: InstalledPluginRecord) => void;
   onPluginShareAction?: (
     record: InstalledPluginRecord,
     action: PluginShareAction,
@@ -61,10 +62,11 @@ export function PluginsHomeSection({
   loading,
   activePluginId,
   pendingApplyId,
+  pendingDuplicateId = null,
   pendingShareAction = null,
   onUse,
+  onDuplicate,
   onOpenDetails,
-  onOpenExternal,
   onPluginShareAction,
   onBrowseRegistry,
   preferDefaultFacet = true,
@@ -227,15 +229,17 @@ export function PluginsHomeSection({
                   isActive={activePluginId === p.id}
                   isPending={pendingApplyId === p.id}
                   pendingAny={pendingApplyId !== null}
+                  isDuplicatePending={pendingDuplicateId === p.id}
+                  pendingDuplicateAny={pendingDuplicateId !== null}
                   pendingShareAction={pendingShareAction}
                   isFeatured={isFeaturedPlugin(p)}
                   isSaved={savedPluginIds.has(p.id)}
                   onUse={onUse}
+                  onDuplicate={onDuplicate}
                   onOpenDetails={onOpenDetails}
                   onSave={handleSavePlugin}
                   onShareAction={onPluginShareAction}
                   layout={cardLayout}
-                  {...(onOpenExternal ? { onOpenExternal } : {})}
                 />
               ))}
               {hasMorePlugins ? (
@@ -485,7 +489,7 @@ function SearchInput({ value, onChange }: SearchInputProps) {
   return (
     <div className="plugins-home__search">
       <Icon name="search" size={12} className="plugins-home__search-icon" />
-      <input
+      <Input
         type="search"
         className="plugins-home__search-input"
         value={value}
@@ -497,15 +501,15 @@ function SearchInput({ value, onChange }: SearchInputProps) {
         autoComplete="off"
       />
       {value ? (
-        <button
-          type="button"
+        <Button
+          variant="subtle"
           className="plugins-home__search-clear"
           onClick={() => onChange('')}
           aria-label={t('pluginsHome.clearSearch')}
           data-testid="plugins-home-search-clear"
         >
           <Icon name="close" size={12} />
-        </button>
+        </Button>
       ) : null}
     </div>
   );

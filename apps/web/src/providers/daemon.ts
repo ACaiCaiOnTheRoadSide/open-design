@@ -23,6 +23,7 @@ import type {
   ChatSseStartPayload,
   DaemonAgentPayload,
   AmrModelsResponse,
+  AmrWalletSnapshot,
   MediaExecutionPolicy,
   ResearchOptions,
   RunContextSelection,
@@ -47,6 +48,10 @@ function detectClientType(): 'desktop' | 'web' | 'unknown' {
   return 'unknown';
 }
 import { parseSseFrame } from './sse';
+import {
+  summarizeArtifactsForTranscript,
+  type PersistedArtifactFileRef,
+} from '../artifacts/strip';
 import { trackRunProgress, trackRunStart, trackRunTerminal } from '../observability/stuck-run';
 
 const MAX_TRANSCRIPT_MESSAGE_CHARS = 12_000;
@@ -154,7 +159,10 @@ function scopeHistoryToAgent(history: ChatMessage[], targetAgentId?: string): Ch
 // User content is preserved verbatim — a user message that legitimately
 // quotes `<question-form>` (e.g. discussing the markup with the agent)
 // must not be mangled.
-export function sanitizePriorAssistantTurnForTranscript(content: string): string {
+export function sanitizePriorAssistantTurnForTranscript(
+  content: string,
+  persistedArtifactFiles: ReadonlyArray<PersistedArtifactFileRef> = [],
+): string {
   let sanitized = content.replace(
     // `\1` backreference keeps the open/close tag names matched so we never
     // splice across a `<question-form>…</ask-question>` mismatch.
@@ -174,7 +182,42 @@ export function sanitizePriorAssistantTurnForTranscript(content: string): string
       return match;
     },
   );
+  // Replace prior-turn `<artifact>` HTML with a one-line summary — but ONLY
+  // for artifacts whose save to the project files is confirmed by the
+  // message's producedFiles record. persistArtifact has refusal and
+  // write-failure branches; on those paths the transcript copy is the only
+  // surviving artifact body, so an unconfirmed block stays verbatim (the
+  // 12K truncation below still bounds it) and a follow-up turn can repair it.
+  // For confirmed saves the agent reads/edits the file from disk, never from
+  // this transcript copy, so re-sending the whole document each turn is pure
+  // waste — the summary keeps identifier/title/type plus the saved file name.
+  // Runs before truncateForTranscript so the summarized message no longer
+  // trips the 12K cap. Uses markdown-aware detection so a literal
+  // `<artifact>` recited in a code fence survives.
+  sanitized = summarizeArtifactsForTranscript(sanitized, persistedArtifactFiles);
   return sanitized;
+}
+
+// producedFiles → the persistence evidence summarizeArtifactsForTranscript
+// matches artifact blocks against. producedFiles is the whole per-turn file
+// diff — tool-written files included — so a name collision with an unrelated
+// same-turn file must not count as proof the <artifact> body was saved. Only
+// artifact-originated saves qualify: persistArtifact always writes an explicit
+// (non-inferred) manifest, whereas tool-written files surface with no manifest
+// or a daemon-inferred one (`metadata.inferred === true`). Within that
+// narrowed set, the manifest identifier is the strongest link (it survives
+// `-2`/`-3` collision renames); the file name is the fallback for artifact
+// saves whose manifest predates identifier metadata.
+function persistedArtifactFilesOf(message: ChatMessage): PersistedArtifactFileRef[] {
+  return (message.producedFiles ?? [])
+    .filter((file) => file.artifactManifest && file.artifactManifest.metadata?.inferred !== true)
+    .map((file) => {
+      const identifier = file.artifactManifest?.metadata?.identifier;
+      return {
+        name: file.name,
+        identifier: typeof identifier === 'string' && identifier ? identifier : undefined,
+      };
+    });
 }
 
 export function buildDaemonTranscript(history: ChatMessage[], targetAgentId?: string): string {
@@ -184,7 +227,7 @@ export function buildDaemonTranscript(history: ChatMessage[], targetAgentId?: st
       const trimmed = m.content.trim();
       const sanitized =
         m.role === 'assistant'
-          ? sanitizePriorAssistantTurnForTranscript(trimmed)
+          ? sanitizePriorAssistantTurnForTranscript(trimmed, persistedArtifactFilesOf(m))
           : trimmed;
       return `## ${m.role}\n${escapeTranscriptRoleDelimiters(truncateForTranscript(sanitized))}`;
     })
@@ -243,6 +286,7 @@ export interface DaemonStreamOptions {
   context?: RunContextSelection;
   appliedPluginSnapshotId?: string | null;
   mediaExecution?: MediaExecutionPolicy;
+  titleGeneration?: { enabled?: boolean };
   locale?: string;
   initialLastEventId?: string | null;
   onRunCreated?: (runId: string) => void;
@@ -317,7 +361,7 @@ function shouldSuppressLifecycleExitFallback(
 }
 
 const AMR_OPENCODE_INCOMPLETE_MESSAGE =
-  'AMR/OpenCode started, but the run did not complete. Please retry or check the run details for the session stream error.';
+  'Open Design started, but the run did not complete. Please retry or check the run details for the session stream error.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -401,10 +445,10 @@ function formatOpenCodeSessionError(value: unknown): string | null {
     return message;
   }
   if (statusCode === 404) {
-    return 'The model service returned 404 Not Found for the configured runtime endpoint. Check the AMR Link URL or model route.';
+    return 'The model service returned 404 Not Found for the configured runtime endpoint. Check the Open Design link URL or model route.';
   }
   if (statusCode === 401 || statusCode === 403) {
-    return 'AMR authentication failed. Please sign in again or refresh the runtime key.';
+    return 'Open Design authentication failed. Please sign in again or refresh the runtime key.';
   }
   if (statusCode === 429) {
     return 'The model service rejected the request due to quota or rate limits. Retry later or check quota and rate limits.';
@@ -536,6 +580,7 @@ export async function streamViaDaemon({
   context,
   appliedPluginSnapshotId,
   mediaExecution,
+  titleGeneration,
   locale,
   initialLastEventId,
   onRunCreated,
@@ -572,6 +617,7 @@ export async function streamViaDaemon({
     ...(context ? { context } : {}),
     ...(research ? { research } : {}),
     ...(mediaExecution ? { mediaExecution } : {}),
+    ...(titleGeneration?.enabled ? { titleGeneration: { enabled: true } } : {}),
     ...(analyticsHints ? { analyticsHints } : {}),
   };
   const body = JSON.stringify(request);
@@ -694,6 +740,47 @@ export interface VelaUser {
   name?: string;
   image?: string | null;
   plan?: string;
+  /** Wallet balance (USD, string) from the live `/api/v1/me` projection; `null` when unknown. */
+  balanceUsd?: string | null;
+}
+
+/**
+ * Format a raw wallet `balanceUsd` string (e.g. "12.3") into a display string
+ * (e.g. "$12.30"). Returns `null` when the balance is unknown/unparseable so
+ * callers can simply hide the balance area.
+ */
+export function formatVelaBalanceUsd(raw?: string | null): string | null {
+  if (raw == null || raw === '') return null;
+  const amount = Number(raw);
+  if (!Number.isFinite(amount)) return null;
+  return `$${amount.toFixed(2)}`;
+}
+
+/** Top subscription tier — no upgrade affordance is shown at/above this. */
+export const VELA_TOP_PLAN_TIER = 'max';
+
+/**
+ * Whether to surface an "Upgrade" affordance for the given plan tier. True for
+ * a KNOWN tier below the top (free/plus/pro); false at the top tier AND when
+ * the plan is unknown. The unknown case matters: a signed-in session whose live
+ * billing summary has not resolved yet has no plan, and treating that as
+ * upgradeable would flash an Upgrade CTA at top-tier users until billing loads.
+ */
+export function canUpgradeVelaPlan(plan?: string | null): boolean {
+  const normalized = plan?.trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized !== VELA_TOP_PLAN_TIER;
+}
+
+/**
+ * Live billing projection (plan tier + wallet balance) for the signed-in
+ * account, surfaced on its OWN field rather than on {@link VelaUser} so
+ * env-backed sessions (where `user` is null) can show plan/balance without a
+ * fabricated identity. Absent means unknown → hide the fields.
+ */
+export interface VelaLiveAccount {
+  plan?: string;
+  balanceUsd?: string | null;
 }
 
 export interface VelaLoginStatus {
@@ -701,7 +788,14 @@ export interface VelaLoginStatus {
   loginInFlight?: boolean;
   profile: string;
   user: VelaUser | null;
+  account?: VelaLiveAccount;
   configPath: string;
+  // Device-authorization details parsed from `vela login` output while a login
+  // is in flight, so the UI can offer a manual sign-in link when the browser
+  // did not auto-open. See parseVelaLoginActivation in the daemon's vela.ts.
+  activationUrl?: string;
+  userCode?: string;
+  browserOpenFailed?: boolean;
 }
 
 // AMR (vela) login surfaces three thin endpoints on the daemon:
@@ -715,6 +809,17 @@ export async function fetchVelaLoginStatus(): Promise<VelaLoginStatus | null> {
     const resp = await fetch('/api/integrations/vela/status');
     if (!resp.ok) return null;
     return (await resp.json()) as VelaLoginStatus;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAmrWalletSnapshot(options: { refresh?: boolean } = {}): Promise<AmrWalletSnapshot | null> {
+  try {
+    const query = options.refresh ? '?refresh=1' : '';
+    const resp = await fetch(`/api/integrations/vela/wallet${query}`, { cache: 'no-store' });
+    if (!resp.ok) return null;
+    return (await resp.json()) as AmrWalletSnapshot;
   } catch {
     return null;
   }
@@ -740,12 +845,15 @@ export interface StartVelaLoginResult {
 
 export async function startVelaLogin(
   attribution?: AmrEntryAttribution | null,
+  odDeviceId?: string | null,
 ): Promise<StartVelaLoginResult> {
   try {
+    const loginAttribution =
+      attribution && odDeviceId ? { ...attribution, odDeviceId } : attribution;
     const resp = await fetch('/api/integrations/vela/login', {
       method: 'POST',
-      headers: attribution ? { 'Content-Type': 'application/json' } : undefined,
-      body: attribution ? JSON.stringify({ attribution }) : undefined,
+      headers: loginAttribution ? { 'Content-Type': 'application/json' } : undefined,
+      body: loginAttribution ? JSON.stringify({ attribution: loginAttribution }) : undefined,
     });
     if (resp.ok) {
       const body = (await resp.json()) as { pid?: number };
@@ -1156,6 +1264,9 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   if (t === 'text_delta' && typeof data.delta === 'string') {
     return { kind: 'text', text: data.delta };
   }
+  if (t === 'conversation_title' && typeof data.title === 'string') {
+    return { kind: 'conversation_title', title: data.title };
+  }
   if (t === 'thinking_delta' && typeof data.delta === 'string') {
     return { kind: 'thinking', text: data.delta };
   }
@@ -1211,6 +1322,15 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
       label: 'warning',
       detail: `Model emitted fabricated role marker ("${data.marker}"). Response was truncated to prevent unauthorized instruction injection.`,
     };
+  }
+  if (t === 'tool_loop' && typeof data.toolName === 'string') {
+    const toolName = data.toolName;
+    const count = typeof data.count === 'number' ? data.count : 0;
+    const detail =
+      data.action === 'halt'
+        ? `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
+        : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
+    return { kind: 'status', label: 'warning', detail };
   }
   if (t === 'raw' && typeof data.line === 'string') {
     return { kind: 'raw', line: data.line };

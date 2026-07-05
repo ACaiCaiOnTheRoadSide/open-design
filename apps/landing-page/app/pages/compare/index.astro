@@ -40,7 +40,7 @@ const limitsFaq = page.limitsFaq.map(({ name, text }) => ({ q: name, a: text }))
 // comparison pages and is localized for free. Add a slug here when a new
 // alternatives page lands. `cta` reuses the localized "read the full
 // comparison" label from the compare copy block.
-const COMPARE_SLUGS = ['claude-design', 'figma', 'lovable', 'bolt', 'v0', 'framer'];
+const COMPARE_SLUGS = ['claude-design', 'figma', 'lovable', 'bolt', 'v0', 'framer', 'stitch', 'genspark', 'figma-make', 'qoder', 'trae'];
 const NAMES: Record<string, string> = {
   'claude-design': 'Claude Design',
   figma: 'Figma',
@@ -48,6 +48,11 @@ const NAMES: Record<string, string> = {
   bolt: 'Bolt',
   v0: 'v0',
   framer: 'Framer',
+  stitch: 'Google Stitch',
+  genspark: 'Genspark',
+  'figma-make': 'Figma Make',
+  qoder: 'Qoder',
+  trae: 'Trae',
 };
 const ctaLabel = page.comparisons[0]?.cta ?? 'Read the full comparison ->';
 const comparisons = COMPARE_SLUGS.map((slug) => {
@@ -91,15 +96,15 @@ const jsonLd = [
 ];
 ---
 
-<Layout title={title} description={description} active="home" jsonLd={jsonLd}>
+<Layout title={title} description={description} active="resources" jsonLd={jsonLd}>
   <nav class="breadcrumb" aria-label={common.breadcrumbAria}>
     <a href={href('/')}>Open Design</a>
     <span>/</span>
     <span aria-current="page">{page.breadcrumb}</span>
   </nav>
 
-  <article class="info-page">
-    <header class="catalog-head">
+  <article class="info-page info-page-centered">
+    <header class="catalog-head compare-head">
       <span class="label">{page.label}</span>
       <h1 class="display">{page.heading}</h1>
       <p class="lead">{page.lead}</p>
