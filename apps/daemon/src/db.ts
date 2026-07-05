@@ -49,8 +49,15 @@ export async function openDatabase(projectRoot: string, { dataDir }: { dataDir?:
   return dbInstance;
 }
 
-// Applies migrations/*.sql through the async adapter (PG mode). The .sql files
-// own their BEGIN/COMMIT. Tracked in schema_migrations to run each once.
+// Applies migrations/*.sql through the async adapter (PG mode). Tracked in
+// schema_migrations to run each once.
+//
+// 并发守卫:vitest 多 worker、k8s 多副本首启会同时走到这里,裸跑会竞态
+// (双方都看到未应用 → 双双执行 DDL,schema_migrations 主键冲突 / PG 的
+// IF NOT EXISTS 在真并发下也可能撞 pg_class 唯一键)。每个文件在
+// pg_advisory_xact_lock 串行的事务里「复查 + 应用 + 记账」;文件自带的
+// BEGIN/COMMIT 在外层事务内剥掉,整个文件成为一个原子单元,事务结束自动放锁。
+const PG_MIGRATION_LOCK_KEY = 881230042;
 async function runPgMigrations(adapter: AsyncDb): Promise<void> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const dir = path.resolve(here, '../migrations');
@@ -59,8 +66,17 @@ async function runPgMigrations(adapter: AsyncDb): Promise<void> {
   for (const f of files) {
     const done = await adapter.prepare(`SELECT 1 FROM schema_migrations WHERE filename = ?`).get(f);
     if (done) continue;
-    await adapter.exec(fs.readFileSync(path.join(dir, f), 'utf8'));
-    await adapter.prepare(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`).run(f, Date.now());
+    await adapter.transaction(async () => {
+      await adapter.exec(`SELECT pg_advisory_xact_lock(${PG_MIGRATION_LOCK_KEY})`);
+      const applied = await adapter.prepare(`SELECT 1 FROM schema_migrations WHERE filename = ?`).get(f);
+      if (applied) return;
+      const sql = fs
+        .readFileSync(path.join(dir, f), 'utf8')
+        .replace(/^\s*BEGIN;\s*/i, '')
+        .replace(/\bCOMMIT;\s*$/i, '');
+      await adapter.exec(sql);
+      await adapter.prepare(`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`).run(f, Date.now());
+    })();
   }
 }
 
