@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -762,7 +761,6 @@ export async function resolveSafeProjectAttachments(
   opts: {
     pathImpl?: typeof path;
     existsSync?: (path: string) => boolean;
-    projectId?: string;
   } = {},
 ) {
   if (!cwd || !Array.isArray(attachments)) return [];
@@ -782,47 +780,16 @@ export async function resolveSafeProjectAttachments(
           !relativePath.startsWith('..') &&
           !pathImpl.isAbsolute(relativePath));
       if (!withinRoot) continue;
-      if (existsSync(abs)) {
-        out.push(attachment);
-        continue;
-      }
-      // Local file missing — try downloading from OSS via backend.
-      const downloaded = await fetchAttachmentFromBackend(
-        abs, attachment, opts.projectId,
-      );
-      if (downloaded) out.push(attachment);
+      // Uploads land on the daemon disk directly (multer), so a missing file
+      // means the reference is stale — there is no other place to look. The
+      // pre-run archive push ships this disk to the sandbox wholesale.
+      if (existsSync(abs)) out.push(attachment);
     } catch {
       // Drop malformed paths; attachments are advisory prompt context.
     }
   }
 
   return out;
-}
-
-async function fetchAttachmentFromBackend(
-  abs: string,
-  relativePath: string,
-  projectId: string | undefined,
-): Promise<boolean> {
-  const backendUrl = process.env.OD_BACKEND_URL;
-  const daemonToken = process.env.OD_API_TOKEN;
-  if (!backendUrl || !daemonToken || !projectId) return false;
-  const key = `projects/${projectId}/files/${relativePath}`;
-  const fetchUrl = `${backendUrl.replace(/\/$/, '')}/api/internal/media/fetch?key=${encodeURIComponent(key)}`;
-  try {
-    const resp = await fetch(fetchUrl, {
-      headers: { authorization: `Bearer ${daemonToken}` },
-    });
-    if (!resp.ok) return false;
-    const bytes = Buffer.from(await resp.arrayBuffer());
-    await mkdir(path.dirname(abs), { recursive: true });
-    await writeFile(abs, bytes);
-    console.error(`[attachments] fetched "${relativePath}" from OSS (${bytes.length} bytes)`);
-    return true;
-  } catch (err: any) {
-    console.error(`[attachments] fetch from backend failed: ${err?.message || err}`);
-    return false;
-  }
 }
 
 export function formatProjectAttachmentHint(attachments: readonly string[] | null | undefined) {

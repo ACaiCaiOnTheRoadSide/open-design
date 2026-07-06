@@ -2718,7 +2718,6 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
         // stashed by the multer destination resolver. Prepend it so callers
         // get the file's true project-relative path, not just its basename.
         const relDir = typeof (req as any)._uploadRelDir === 'string' ? (req as any)._uploadRelDir : '';
-        const projectId = req.params.id;
         const out = [];
         for (const f of incoming) {
           try {
@@ -2731,25 +2730,9 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
               mtime: stat.mtimeMs,
               originalName: f.originalname,
             });
-            // Push to OSS so huskbox agents can access user-uploaded files.
-            const backendUrl = process.env.OD_BACKEND_URL;
-            const daemonToken = process.env.OD_API_TOKEN;
-            if (backendUrl && daemonToken && projectId) {
-              const fileBytes = await fs.promises.readFile(f.path);
-              const form = new FormData();
-              form.append('projectId', projectId);
-              form.append('filename', rel);
-              form.append('file', new Blob([fileBytes]), rel);
-              fetch(
-                `${backendUrl.replace(/\/$/, '')}/api/internal/media/store`,
-                { method: 'POST', headers: { authorization: `Bearer ${daemonToken}` }, body: form },
-              ).then(r => {
-                if (r.ok) console.error(`[upload] pushed "${rel}" to OSS for project ${projectId}`);
-                else console.error(`[upload] OSS push failed for "${rel}": ${r.status}`);
-              }).catch(err => {
-                console.error(`[upload] OSS push error for "${rel}": ${err?.message || err}`);
-              });
-            }
+            // No per-file OSS push here: the pre-run archive sync
+            // (syncProjectToOSS) ships the whole project — uploads included —
+            // right before the agent round that needs them.
           } catch {
             // skip files that vanished mid-flight
           }

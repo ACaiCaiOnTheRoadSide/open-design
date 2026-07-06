@@ -340,7 +340,7 @@ import {
   snapshotProjectArtifacts,
 } from './run-artifact-fs.js';
 import { reportRunCompletedFromDaemon } from './langfuse-bridge.js';
-import { syncProjectToOSS, syncProjectFromOSS } from './project-sync.js';
+import { syncProjectToOSS } from './project-sync.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { readAnalyticsContext } from './analytics.js';
 import {
@@ -1828,18 +1828,6 @@ function reconcileAssistantMessageOnRunEnd(db, runs, run) {
       console.warn('[runs] message reconciliation failed', err);
     });
 }
-
-function syncProjectFromOSSOnRunEnd(runs, run, projectDir: string, projectId: string) {
-  void runs
-    .wait(run)
-    .then(async () => {
-      await syncProjectFromOSS(projectDir, projectId);
-    })
-    .catch((err) => {
-      console.error(`[project-sync] post-run download failed: ${err?.message || err}`);
-    });
-}
-
 
 async function isPluginAuthoringRun(db, run) {
   if (run?.pluginId === 'od-plugin-authoring') return true;
@@ -5827,10 +5815,12 @@ export async function startServer({
         : safeImages;
 
     // Sync local project files to OSS before the agent starts, so the
-    // agent (possibly in a separate container) can download them.
+    // Push the whole project as one archive so the sandbox restore at round
+    // start sees exactly what's on this daemon's disk — including attachments
+    // uploaded moments ago. One tar PUT, not N per-file uploads.
     if (cwd && typeof projectId === 'string' && projectId) {
       try { await syncProjectToOSS(cwd, projectId); } catch (err: any) {
-        console.error(`[project-sync] pre-run upload failed: ${err?.message || err}`);
+        console.error(`[project-sync] pre-run archive push failed: ${err?.message || err}`);
       }
     }
 
@@ -5840,7 +5830,7 @@ export async function startServer({
     // explicit list at the bottom of the user message so the agent knows
     // to Read it.
     const safeAttachments = cwd
-      ? await resolveSafeProjectAttachments(cwd, attachments, { projectId: projectId || undefined })
+      ? await resolveSafeProjectAttachments(cwd, attachments)
       : [];
     run.projectAttachmentPaths = safeAttachments;
 
@@ -6070,11 +6060,10 @@ export async function startServer({
         // Snapshotting is best-effort; finish falls back to the tool-stream count.
       }
     }
-    // Pull agent-produced files from OSS after the run finishes so the
-    // daemon's local project directory stays up-to-date.
-    if (cwd && typeof projectId === 'string' && projectId) {
-      syncProjectFromOSSOnRunEnd(design.runs, run, cwd, projectId);
-    }
+    // Agent-produced files come back through the archive channel: the sandbox
+    // merge-saves files.tar.gz before exiting and the dispatcher tells this
+    // daemon to restore-archive it (POST /api/projects/:id/restore-archive)
+    // before the exit code is delivered — no per-file OSS pull needed here.
     let codexGeneratedImagesDir = resolveCodexGeneratedImagesDir(
       agentId,
       projectRecord?.metadata,

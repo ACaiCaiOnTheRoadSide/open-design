@@ -1,47 +1,24 @@
-import * as fs from 'node:fs';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import * as path from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { c as tarCreate } from 'tar';
 
-interface OSSObjectMeta {
-  key: string;
-  size: number;
-  etag: string;
-}
-
-async function listOSSObjects(
-  backendUrl: string,
-  daemonToken: string,
-  projectId: string,
-): Promise<OSSObjectMeta[]> {
-  const prefix = `projects/${projectId}/files/`;
-  const url = `${backendUrl.replace(/\/$/, '')}/api/internal/media/list?prefix=${encodeURIComponent(prefix)}`;
-  const resp = await fetch(url, {
-    headers: { authorization: `Bearer ${daemonToken}` },
-  });
-  if (!resp.ok) return [];
-  const body = (await resp.json()) as { objects?: OSSObjectMeta[] };
-  return body.objects ?? [];
-}
-
-async function walkProjectFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-  let entries: fs.Dirent[];
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return files;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await walkProjectFiles(full)));
-    } else if (entry.isFile()) {
-      files.push(full);
-    }
-  }
-  return files;
-}
-
+/**
+ * syncProjectToOSS packs the whole project directory into a tar.gz (archive
+ * root = `<projectId>/`, matching what the sandbox restore step and the
+ * daemon's own restore-archive endpoint expect) and pushes it to the backend's
+ * store-archive endpoint, which overwrites `projects/<id>/files.tar.gz` on OSS.
+ *
+ * This runs before every agent round and is the ONLY daemon → sandbox file
+ * sync channel: the sandbox restores this exact key at round start, so the
+ * archive must already contain everything on the daemon's disk — including
+ * attachments the user uploaded seconds ago. Per-file OSS objects
+ * (`projects/<id>/files/<name>`) are the media-generation store and take no
+ * part in project sync.
+ *
+ * Returns 1 when an archive was pushed, 0 when skipped (no backend configured
+ * or the project directory is missing/empty). An empty directory is skipped
+ * on purpose: the daemon disk may not have been rehydrated from the archive
+ * yet (fresh pod), and pushing an empty tar would wipe a still-valid archive.
+ */
 export async function syncProjectToOSS(
   projectDir: string,
   projectId: string,
@@ -50,87 +27,36 @@ export async function syncProjectToOSS(
   const daemonToken = process.env.OD_API_TOKEN;
   if (!backendUrl || !daemonToken) return 0;
 
-  const ossObjects = await listOSSObjects(backendUrl, daemonToken, projectId);
-  const ossByName = new Map<string, OSSObjectMeta>();
-  const prefix = `projects/${projectId}/files/`;
-  for (const obj of ossObjects) {
-    const name = obj.key.startsWith(prefix) ? obj.key.slice(prefix.length) : obj.key;
-    ossByName.set(name, obj);
+  let entries: string[];
+  try {
+    entries = await readdir(projectDir);
+  } catch {
+    return 0;
   }
+  if (entries.length === 0) return 0;
 
-  const localFiles = await walkProjectFiles(projectDir);
-  let uploaded = 0;
+  const chunks: Buffer[] = [];
+  const stream = tarCreate(
+    { gzip: true, cwd: projectDir, prefix: projectId, portable: true },
+    entries,
+  );
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  const body = Buffer.concat(chunks);
 
-  for (const absPath of localFiles) {
-    const relativePath = path.relative(projectDir, absPath);
-    const fileStat = await stat(absPath);
-    const ossObj = ossByName.get(relativePath);
-    if (ossObj && ossObj.size === fileStat.size) continue;
-
-    try {
-      const fileBytes = await readFile(absPath);
-      const filename = relativePath;
-      const form = new FormData();
-      form.append('projectId', projectId);
-      form.append('filename', filename);
-      form.append('file', new Blob([fileBytes]), filename);
-      const resp = await fetch(
-        `${backendUrl.replace(/\/$/, '')}/api/internal/media/store`,
-        { method: 'POST', headers: { authorization: `Bearer ${daemonToken}` }, body: form },
-      );
-      if (resp.ok) uploaded++;
-    } catch (err: any) {
-      console.error(`[project-sync] upload "${relativePath}" failed: ${err?.message || err}`);
-    }
+  const url = `${backendUrl.replace(/\/$/, '')}/api/internal/media/store-archive?projectId=${encodeURIComponent(projectId)}`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${daemonToken}`,
+      'content-type': 'application/gzip',
+    },
+    body,
+  });
+  if (!resp.ok) {
+    throw new Error(`store-archive: HTTP ${resp.status}`);
   }
-
-  if (uploaded > 0) {
-    console.error(`[project-sync] uploaded ${uploaded} file(s) for project ${projectId}`);
-  }
-  return uploaded;
-}
-
-export async function syncProjectFromOSS(
-  projectDir: string,
-  projectId: string,
-): Promise<number> {
-  const backendUrl = process.env.OD_BACKEND_URL;
-  const daemonToken = process.env.OD_API_TOKEN;
-  if (!backendUrl || !daemonToken) return 0;
-
-  const ossObjects = await listOSSObjects(backendUrl, daemonToken, projectId);
-  const prefix = `projects/${projectId}/files/`;
-  let downloaded = 0;
-
-  for (const obj of ossObjects) {
-    const relativePath = obj.key.startsWith(prefix) ? obj.key.slice(prefix.length) : obj.key;
-    if (!relativePath || relativePath.includes('..')) continue;
-
-    const absPath = path.join(projectDir, relativePath);
-    try {
-      const fileStat = await stat(absPath);
-      if (fileStat.size === obj.size) continue;
-    } catch {
-      // File doesn't exist locally — need to download.
-    }
-
-    try {
-      const fetchUrl = `${backendUrl.replace(/\/$/, '')}/api/internal/media/fetch?key=${encodeURIComponent(obj.key)}`;
-      const resp = await fetch(fetchUrl, {
-        headers: { authorization: `Bearer ${daemonToken}` },
-      });
-      if (!resp.ok) continue;
-      const bytes = Buffer.from(await resp.arrayBuffer());
-      await mkdir(path.dirname(absPath), { recursive: true });
-      await writeFile(absPath, bytes);
-      downloaded++;
-    } catch (err: any) {
-      console.error(`[project-sync] download "${relativePath}" failed: ${err?.message || err}`);
-    }
-  }
-
-  if (downloaded > 0) {
-    console.error(`[project-sync] downloaded ${downloaded} file(s) for project ${projectId}`);
-  }
-  return downloaded;
+  console.error(
+    `[project-sync] pushed archive for project ${projectId} (${body.length} bytes, ${entries.length} top-level entries)`,
+  );
+  return 1;
 }
