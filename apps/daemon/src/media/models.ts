@@ -99,7 +99,7 @@ export const IMAGE_MODELS: MediaModel[] = [
 
   { id: 'senseaudio-image-2.0-260319', label: 'senseaudio-image-2.0', hint: 'SenseAudio · multi-aspect, latest', provider: 'senseaudio', caps: ['t2i', 'i2i'] },
   { id: 'senseaudio-image-1.0-260319', label: 'senseaudio-image-1.0', hint: 'SenseAudio · standard', provider: 'senseaudio', caps: ['t2i', 'i2i'] },
-  { id: 'doubao-seedream-5-0-260128', label: 'seedream-5.0', hint: 'SenseAudio · ByteDance Seedream 5.0 hi-res', provider: 'senseaudio', caps: ['t2i', 'i2i'] },
+  { id: 'doubao-seedream-5-0-260128', label: 'seedream-5.0', hint: 'ByteDance · Doubao Seedream 5.0 hi-res', provider: 'volcengine', caps: ['t2i', 'i2i'] },
 
   // AIHubMix routes these to OpenAI's images/generations endpoint. Ids are
   // prefixed to stay unique against the openai-provider entries above; the

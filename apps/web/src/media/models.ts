@@ -419,8 +419,8 @@ export const IMAGE_MODELS: MediaModel[] = [
   {
     id: 'doubao-seedream-5-0-260128',
     label: 'seedream-5.0',
-    hint: 'SenseAudio · ByteDance Seedream 5.0 hi-res',
-    provider: 'senseaudio',
+    hint: 'ByteDance · Doubao Seedream 5.0 hi-res',
+    provider: 'volcengine',
     caps: ['t2i', 'i2i'],
   },
 
