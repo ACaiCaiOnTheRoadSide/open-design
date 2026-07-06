@@ -807,8 +807,7 @@ async function fetchAttachmentFromBackend(
   const backendUrl = process.env.OD_BACKEND_URL;
   const daemonToken = process.env.OD_API_TOKEN;
   if (!backendUrl || !daemonToken || !projectId) return false;
-  const filename = path.basename(relativePath);
-  const key = `projects/${projectId}/files/${filename}`;
+  const key = `projects/${projectId}/files/${relativePath}`;
   const fetchUrl = `${backendUrl.replace(/\/$/, '')}/api/internal/media/fetch?key=${encodeURIComponent(key)}`;
   try {
     const resp = await fetch(fetchUrl, {

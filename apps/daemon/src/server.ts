@@ -340,6 +340,7 @@ import {
   snapshotProjectArtifacts,
 } from './run-artifact-fs.js';
 import { reportRunCompletedFromDaemon } from './langfuse-bridge.js';
+import { syncProjectToOSS, syncProjectFromOSS } from './project-sync.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { readAnalyticsContext } from './analytics.js';
 import {
@@ -1825,6 +1826,17 @@ function reconcileAssistantMessageOnRunEnd(db, runs, run) {
     })
     .catch((err) => {
       console.warn('[runs] message reconciliation failed', err);
+    });
+}
+
+function syncProjectFromOSSOnRunEnd(runs, run, projectDir: string, projectId: string) {
+  void runs
+    .wait(run)
+    .then(async () => {
+      await syncProjectFromOSS(projectDir, projectId);
+    })
+    .catch((err) => {
+      console.error(`[project-sync] post-run download failed: ${err?.message || err}`);
     });
 }
 
@@ -5814,6 +5826,14 @@ export async function startServer({
         ? await stageAmrImagePaths(cwd ?? PROJECT_ROOT, safeImages, UPLOAD_DIR)
         : safeImages;
 
+    // Sync local project files to OSS before the agent starts, so the
+    // agent (possibly in a separate container) can download them.
+    if (cwd && typeof projectId === 'string' && projectId) {
+      try { await syncProjectToOSS(cwd, projectId); } catch (err: any) {
+        console.error(`[project-sync] pre-run upload failed: ${err?.message || err}`);
+      }
+    }
+
     // Project-scoped attachments: project-relative paths inside cwd. Each
     // is run through the same path-traversal guard the file CRUD endpoints
     // use, then existence-checked. Whatever survives shows up as an
@@ -6049,6 +6069,11 @@ export async function startServer({
       } catch {
         // Snapshotting is best-effort; finish falls back to the tool-stream count.
       }
+    }
+    // Pull agent-produced files from OSS after the run finishes so the
+    // daemon's local project directory stays up-to-date.
+    if (cwd && typeof projectId === 'string' && projectId) {
+      syncProjectFromOSSOnRunEnd(design.runs, run, cwd, projectId);
     }
     let codexGeneratedImagesDir = resolveCodexGeneratedImagesDir(
       agentId,
