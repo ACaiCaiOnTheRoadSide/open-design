@@ -452,6 +452,24 @@ export async function generateMedia(args: {
                 ? ['tts']
                 : [],
       };
+    } else if (args.providerOverride) {
+      // Admin-configured model not in the static registry: trust the backend
+      // config and synthesize a def on the fly, same as fal/aihubmix bypass.
+      isCatalogBypass = true;
+      def = {
+        id: model,
+        label: model,
+        hint: `Admin-configured (${args.providerOverride})`,
+        provider: args.providerOverride,
+        caps:
+          surface === 'image'
+            ? ['t2i', 'i2i']
+            : surface === 'video'
+              ? ['t2v', 'i2v']
+              : surface === 'audio'
+                ? ['tts']
+                : [],
+      };
     } else {
       throw new Error(
         `unknown model: ${model}. Pass --model from the registered list (see /api/media/models), ` +
