@@ -375,7 +375,7 @@ export async function generateMedia(args: {
   projectRoot: string; projectsRoot: string; projectId: string; surface: MediaSurface; model: string;
   prompt?: string; output?: string; aspect?: string; length?: number; duration?: number; voice?: string;
   audioKind?: AudioKind; language?: string; loop?: boolean; promptInfluence?: number;
-  compositionDir?: string; image?: string; images?: string[]; onProgress?: ProgressFn; requestInit?: MediaRequestInit;
+  compositionDir?: string; image?: string; images?: string[]; providerOverride?: string; onProgress?: ProgressFn; requestInit?: MediaRequestInit;
 }) {
   const {
     projectRoot,
@@ -536,7 +536,7 @@ export async function generateMedia(args: {
     model,
     wireModel,
     modelDef: def,
-    provider: findProvider(def.provider),
+    provider: findProvider(args.providerOverride || def.provider),
     prompt: prompt || '',
     aspect: aspect || defaultAspectFor(surface),
     length: clampedLength,
@@ -560,16 +560,20 @@ export async function generateMedia(args: {
     projectRoot,
   };
 
-  const credentials = await resolveProviderConfig(projectRoot, def.provider);
+  // Admin-configured provider override takes precedence over the hardcoded
+  // model registry — the backend admin panel is the source of truth for
+  // which provider a model should use.
+  const effectiveProvider = args.providerOverride || def.provider;
+  const credentials = await resolveProviderConfig(projectRoot, effectiveProvider);
   const customImageCredentials =
-    surface === 'image' && def.provider === 'openai'
+    surface === 'image' && effectiveProvider === 'openai'
       ? await resolveProviderConfig(projectRoot, 'custom-image')
       : null;
 
   let bytes: Buffer;
   let providerNote: string;
   let suggestedExt: string | undefined;
-  let providerId = def.provider;
+  let providerId = effectiveProvider;
   // 渲染器上报的计量增强(可选,见 RenderResult.usage)。目前只有火山视频
   // 分支填;其他 provider 由收口处的容器实测兜底,无需逐分支接线。
   let rendererUsage: RenderResult['usage'];

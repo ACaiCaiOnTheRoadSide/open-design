@@ -47,8 +47,11 @@ export const MEDIA_DEFAULTS_HEADER = 'x-od-media-defaults';
 // "no global default for that surface" and the contract's built-in fallback wins.
 export interface MediaDefaults {
   imageModel?: string;
+  imageProvider?: string;
   videoModel?: string;
+  videoProvider?: string;
   videoI2vModel?: string;
+  videoI2vProvider?: string;
 }
 
 interface TenantStore {
@@ -164,13 +167,19 @@ function parseMediaDefaultsHeader(raw: string | undefined): MediaDefaults | unde
   const pick = (value: unknown): string | undefined =>
     typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
   const imageModel = pick(record.imageModel);
+  const imageProvider = pick(record.imageProvider);
   const videoModel = pick(record.videoModel);
+  const videoProvider = pick(record.videoProvider);
   const videoI2vModel = pick(record.videoI2vModel);
+  const videoI2vProvider = pick(record.videoI2vProvider);
   if (imageModel === undefined && videoModel === undefined && videoI2vModel === undefined) return undefined;
   return {
     ...(imageModel !== undefined ? { imageModel } : {}),
+    ...(imageProvider !== undefined ? { imageProvider } : {}),
     ...(videoModel !== undefined ? { videoModel } : {}),
+    ...(videoProvider !== undefined ? { videoProvider } : {}),
     ...(videoI2vModel !== undefined ? { videoI2vModel } : {}),
+    ...(videoI2vProvider !== undefined ? { videoI2vProvider } : {}),
   };
 }
 

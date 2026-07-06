@@ -12,6 +12,7 @@ import {
 } from '../integrations/aihubmix.js';
 import { isSandboxModeEnabled } from '../sandbox-mode.js';
 import { isMediaModelServable, storeMediaToBackend } from '../media/index.js';
+import { resolveProviderConfig } from '../media/config.js';
 import { findMediaModel } from '../media/models.js';
 import { recordMediaUsage } from '../media-usage.js';
 import { currentUserId } from '../multitenant.js';
@@ -120,21 +121,36 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     // admin default stashed on the grant at mint time. Makes generation work
     // regardless of what a weak agent picks (fal, bare "seedream", etc.).
     let model = requestedModel;
+    let providerOverride: string | undefined;
     const hasImage = typeof req.body?.image === 'string' && req.body.image.trim() !== '';
+    const grantDefaults = options.grant?.mediaDefaults;
     const grantDefaultModel = surface === 'image'
-      ? options.grant?.mediaDefaults?.imageModel
+      ? grantDefaults?.imageModel
       : surface === 'video'
         ? (hasImage
-            ? (options.grant?.mediaDefaults?.videoI2vModel || options.grant?.mediaDefaults?.videoModel)
-            : options.grant?.mediaDefaults?.videoModel)
+            ? (grantDefaults?.videoI2vModel || grantDefaults?.videoModel)
+            : grantDefaults?.videoModel)
+        : undefined;
+    const grantDefaultProvider = surface === 'image'
+      ? grantDefaults?.imageProvider
+      : surface === 'video'
+        ? (hasImage
+            ? (grantDefaults?.videoI2vProvider || grantDefaults?.videoProvider)
+            : grantDefaults?.videoProvider)
         : undefined;
     if (grantDefaultModel && !(await isMediaModelServable(PROJECT_ROOT, requestedModel))) {
-      if (await isMediaModelServable(PROJECT_ROOT, grantDefaultModel)) {
+      // Admin-configured provider override: trust the backend config directly
+      // instead of checking servability against the hardcoded model registry.
+      const defaultServable = grantDefaultProvider
+        ? !!(await resolveProviderConfig(PROJECT_ROOT, grantDefaultProvider)).apiKey
+        : await isMediaModelServable(PROJECT_ROOT, grantDefaultModel);
+      if (defaultServable) {
         console.error(
           `[media] requested model "${requestedModel || '(none)'}" not servable; ` +
-            `using admin default "${grantDefaultModel}"`,
+            `using admin default "${grantDefaultModel}" (provider: ${grantDefaultProvider || 'auto'})`,
         );
         model = grantDefaultModel;
+        providerOverride = grantDefaultProvider;
       }
     }
     if (!model) {
@@ -199,6 +215,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         compositionDir: req.body?.compositionDir,
         image: req.body?.image,
         images: Array.isArray(req.body?.images) ? req.body.images : undefined,
+        providerOverride,
         onProgress: (line: any) => {
           void appendTaskProgress(task!, line).catch((e: any) =>
             console.error('[media] progress persist failed:', e));
