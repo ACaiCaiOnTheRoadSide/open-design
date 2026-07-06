@@ -7639,6 +7639,7 @@ export async function startServer({
         writePromptToChildStdin = true;
       }
     } catch (err) {
+      console.error('[startChatRun] spawn failed', { runId: run.id, agentId: run.agentId, error: err?.message, stack: err?.stack });
       cleanupPromptFile();
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();

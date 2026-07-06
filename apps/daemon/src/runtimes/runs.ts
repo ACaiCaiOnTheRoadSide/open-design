@@ -224,7 +224,15 @@ export function createChatRunService({
   const start = (run, starter) => {
     createRunLifecycleTracer(run).mark('start_requested');
     void starter(run).catch((err) => {
-      fail(run, 'AGENT_EXECUTION_FAILED', err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error('[runs] startChatRun failed — AGENT_EXECUTION_FAILED', {
+        runId: run.id,
+        agentId: run.agentId,
+        error: msg,
+        stack,
+      });
+      fail(run, 'AGENT_EXECUTION_FAILED', msg);
     });
     return run;
   };
