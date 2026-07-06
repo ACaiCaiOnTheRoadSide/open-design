@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-nocheck
-import { readFileSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { runDaemonCliStartup, startDaemonRuntime } from './daemon-startup.js';
 import { runLiveArtifactsMcpServer } from './mcp-live-artifacts-server.js';
 import { runArtifactsCli } from './artifacts-cli.js';
@@ -818,39 +818,36 @@ async function runMediaGenerate(rawArgs) {
     process.exit(2);
   }
 
-  // When the agent has the image locally but the daemon may not (different
-  // container), upload it to the daemon first. The daemon persists it to the
-  // project directory + MinIO so `resolveProjectImage` can find it later.
-  if (flags.image) {
-    const imagePath = path.resolve(flags.image);
-    try {
-      const info = await stat(imagePath);
-      if (info.isFile()) {
-        const imageBytes = await readFile(imagePath);
-        const filename = path.basename(flags.image);
-        const uploadUrl = token
-          ? `${daemonUrl.replace(/\/$/, '')}/api/tools/media/upload`
-          : `${daemonUrl.replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/media/upload`;
+  // --image: pre-upload to OSS via backend so the daemon can fetch it.
+  // In SaaS mode agent and daemon run in separate containers; the daemon
+  // can't read the agent's local filesystem directly.
+  if (flags.image && projectId) {
+    const cwd = process.env.OD_PROJECT_CWD || process.cwd();
+    const absImage = resolve(cwd, flags.image);
+    if (existsSync(absImage)) {
+      const backendUrl = process.env.OD_BACKEND_URL;
+      const daemonToken = process.env.OD_API_TOKEN;
+      if (backendUrl && daemonToken) {
         try {
-          const uploadResp = await fetch(uploadUrl, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              ...(token ? { authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ filename, data: imageBytes.toString('base64') }),
-          });
-          if (uploadResp.ok) {
-            console.error(`[media] uploaded --image "${filename}" to daemon/MinIO`);
+          const imageBytes = readFileSync(absImage);
+          const filename = basename(flags.image);
+          const form = new FormData();
+          form.append('projectId', projectId);
+          form.append('filename', filename);
+          form.append('file', new Blob([imageBytes]), filename);
+          const storeResp = await fetch(
+            `${backendUrl.replace(/\/$/, '')}/api/internal/media/store`,
+            { method: 'POST', headers: { authorization: `Bearer ${daemonToken}` }, body: form },
+          );
+          if (storeResp.ok) {
+            console.error(`[cli] pre-uploaded --image "${flags.image}" to OSS`);
           } else {
-            console.error(`[media] image upload failed (${uploadResp.status}); generate will likely fail if daemon cannot access the file`);
+            console.error(`[cli] pre-upload --image failed: ${storeResp.status} ${storeResp.statusText}`);
           }
         } catch (uploadErr) {
-          console.error(`[media] image upload failed: ${uploadErr?.message || uploadErr}; generate will likely fail if daemon cannot access the file`);
+          console.error(`[cli] pre-upload --image error: ${uploadErr?.message || uploadErr}`);
         }
       }
-    } catch (localErr) {
-      if (localErr?.code !== 'ENOENT') throw localErr;
     }
   }
 
