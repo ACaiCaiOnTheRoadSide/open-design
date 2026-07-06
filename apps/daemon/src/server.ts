@@ -5820,7 +5820,7 @@ export async function startServer({
     // explicit list at the bottom of the user message so the agent knows
     // to Read it.
     const safeAttachments = cwd
-      ? resolveSafeProjectAttachments(cwd, attachments)
+      ? await resolveSafeProjectAttachments(cwd, attachments, { projectId: projectId || undefined })
       : [];
     run.projectAttachmentPaths = safeAttachments;
 
