@@ -26,7 +26,7 @@ import { mimoAgentDef } from './defs/mimo.js';
 import { readLocalAgentProfileDefs as readLocalAgentProfileDefsFromFile } from './local-profiles.js';
 import type { RuntimeAgentDef } from './types.js';
 
-const BASE_AGENT_DEFS: RuntimeAgentDef[] = [
+const ALL_AGENT_DEFS: RuntimeAgentDef[] = [
   amrAgentDef,
   claudeAgentDef,
   codexAgentDef,
@@ -53,6 +53,15 @@ const BASE_AGENT_DEFS: RuntimeAgentDef[] = [
   codebuddyAgentDef,
   mimoAgentDef,
 ];
+
+// OD_ALLOWED_AGENTS=opencode,claude 只启用指定 agent；未设或空 = 全部启用。
+const allowedRaw = (process.env.OD_ALLOWED_AGENTS ?? '').trim();
+const allowedSet = allowedRaw
+  ? new Set(allowedRaw.split(',').map((s) => s.trim()).filter(Boolean))
+  : null;
+const BASE_AGENT_DEFS: RuntimeAgentDef[] = allowedSet
+  ? ALL_AGENT_DEFS.filter((d) => allowedSet.has(d.id))
+  : ALL_AGENT_DEFS;
 
 export function readLocalAgentProfileDefs(
   baseDefs: RuntimeAgentDef[] = BASE_AGENT_DEFS,
