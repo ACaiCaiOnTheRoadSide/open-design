@@ -850,39 +850,6 @@ export function NewProjectPanel({
           />
         </div>
 
-        <div className="newproj-working-dir-row">
-          <button
-            type="button"
-            className={`ghost newproj-working-dir od-tooltip${workingDir ? ' picked' : ''}`}
-            onClick={() => void handlePickWorkingDir()}
-            disabled={workingDirPicking}
-            title={workingDir ?? t('workingDirPicker.homeTitle')}
-            data-tooltip={workingDir ?? t('workingDirPicker.homeTitle')}
-          >
-            <Icon name="folder" size={13} />
-            <span>
-              {workingDirPicking
-                ? t('workingDirPicker.processing')
-                : workingDir
-                  ? displayFolderName(workingDir)
-                  : t('workingDirPicker.select')}
-            </span>
-          </button>
-          {workingDir ? (
-            <button
-              type="button"
-              className="newproj-working-dir-clear"
-              onClick={() => {
-                setWorkingDir(null);
-                setWorkingDirToken(null);
-              }}
-              aria-label={t('workingDirPicker.clearAria')}
-            >
-              <Icon name="close" size={10} />
-            </button>
-          ) : null}
-        </div>
-
         {showDesignSystemPicker ? (
           <DesignSystemPicker
             designSystems={selectableDesignSystems}
