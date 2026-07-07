@@ -13,8 +13,8 @@ import {
 import { isSandboxModeEnabled } from '../sandbox-mode.js';
 import { isMediaModelServable, storeMediaToBackend } from '../media/index.js';
 import { markDirty } from '../sync/engine.js';
-import { resolveProviderConfig } from '../media/config.js';
-import { findMediaModel } from '../media/models.js';
+import { resolveProviderConfig, listConfiguredModels } from '../media/config.js';
+import { findMediaModel, type MediaModel } from '../media/models.js';
 import { recordMediaUsage } from '../media-usage.js';
 import { currentUserId } from '../multitenant.js';
 import type { ToolTokenGrant } from '../tool-tokens.js';
@@ -328,11 +328,20 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       throw err;
     }
   };
-  app.get('/api/media/models', (_req, res) => {
+  app.get('/api/media/models', async (_req, res) => {
+    // 后台管理员配置的模型合并进静态列表:以配置为主,同 id 覆盖静态条目。
+    const configured = await listConfiguredModels(PROJECT_ROOT).catch(() => []);
+    const configuredIds = new Set(configured.map((m) => m.id));
+    const configuredImageModels = configured
+      .filter((m: { mediaType: string }) => m.mediaType === 'image')
+      .map((m: { id: string; provider: string }) => ({ id: m.id, label: m.id, hint: `Admin-configured (${m.provider})`, provider: m.provider, caps: ['t2i', 'i2i'] as string[] }));
+    const configuredVideoModels = configured
+      .filter((m: { mediaType: string }) => m.mediaType === 'video')
+      .map((m: { id: string; provider: string }) => ({ id: m.id, label: m.id, hint: `Admin-configured (${m.provider})`, provider: m.provider, caps: ['t2v', 'i2v'] as string[] }));
     res.json({
       providers: MEDIA_PROVIDERS,
-      image: IMAGE_MODELS,
-      video: VIDEO_MODELS,
+      image: [...configuredImageModels, ...IMAGE_MODELS.filter((m: MediaModel) => !configuredIds.has(m.id))],
+      video: [...configuredVideoModels, ...VIDEO_MODELS.filter((m: MediaModel) => !configuredIds.has(m.id))],
       audio: AUDIO_MODELS_BY_KIND,
       aspects: MEDIA_ASPECTS,
       videoLengthsSec: VIDEO_LENGTHS_SEC,

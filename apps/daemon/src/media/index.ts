@@ -71,6 +71,8 @@ import {
   resolveCodexSubscriptionStatus,
   resolveModelAlias,
   resolveProviderConfig,
+  resolveConfiguredModel,
+  listConfiguredModels,
 } from './config.js';
 import { codexNeedsDangerFullAccessSandbox } from '../runtimes/defs/codex.js';
 import { probeMp4DurationSec, type MediaUsageMeasures } from '../media-usage.js';
@@ -101,15 +103,19 @@ type ProviderConfig = { apiKey?: string; baseUrl?: string; model?: string };
 export async function isMediaModelServable(projectRoot: string, model: string): Promise<boolean> {
   const m = typeof model === 'string' ? model.trim() : '';
   if (!m) return false;
-  const def = findMediaModel(m);
-  const provider = def
-    ? def.provider
-    : /^fal-ai\//.test(m)
-      ? 'fal'
-      : /^aihubmix-/.test(m)
-        ? 'aihubmix'
-        : '';
-  if (!provider) return false; // not a registered model id
+  // 后台管理员配置优先
+  const configured = await resolveConfiguredModel(projectRoot, m);
+  let provider = configured?.provider ?? '';
+  if (!provider) {
+    const def = findMediaModel(m);
+    provider = def
+      ? def.provider
+      : /^fal-ai\//.test(m)
+        ? 'fal'
+        : /^aihubmix-/.test(m)
+          ? 'aihubmix'
+          : '';
+  }
   try {
     const creds = await resolveProviderConfig(projectRoot, provider);
     return !!creds.apiKey;
@@ -418,9 +424,25 @@ export async function generateMedia(args: {
   // catalog so users can reach any model on fal without waiting for a
   // catalog entry. Surface comes from the caller; no cross-surface guard
   // is needed because the fal renderer reads ctx.surface directly.
-  let def = findMediaModel(model);
+  // 后台管理员配置优先:先查 media-config.json 的 models 数组,有就直接用,
+  // 不再被静态 catalog 覆盖。没有才 fallback 到 models.ts 静态注册表。
+  const adminConfigured = await resolveConfiguredModel(projectRoot, model);
+  let def = adminConfigured
+    ? {
+        id: adminConfigured.id,
+        label: adminConfigured.id,
+        hint: `Admin-configured (${adminConfigured.provider})`,
+        provider: adminConfigured.provider,
+        caps:
+          adminConfigured.mediaType === 'image'
+            ? ['t2i', 'i2i']
+            : adminConfigured.mediaType === 'video'
+              ? ['t2v', 'i2v']
+              : ['tts'],
+      }
+    : findMediaModel(model);
   let isFalCustomPath = false;
-  let isCatalogBypass = false;
+  let isCatalogBypass = !!adminConfigured;
   if (!def) {
     if (/^fal-ai\//.test(model)) {
       isFalCustomPath = true;

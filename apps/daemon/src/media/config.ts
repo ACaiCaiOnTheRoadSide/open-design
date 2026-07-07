@@ -51,6 +51,14 @@ type ProviderMap = Record<string, ProviderEntry>;
 type ModelAliasMap = Record<string, string>;
 type JsonRecord = Record<string, unknown>;
 type OAuthCredential = { apiKey: string; source: string };
+
+/** 后台管理员配置的媒体模型定义(由 backend PUT /api/media/config 写入)。 */
+export type ConfiguredModel = {
+  id: string;
+  provider: string;
+  wireModel: string;
+  mediaType: string;
+};
 export type CodexSubscriptionStatus = { available: boolean };
 
 // Single env var carries the full alias map as JSON so we don't have
@@ -196,22 +204,54 @@ async function readStoredAliases(projectRoot: string): Promise<ModelAliasMap> {
   return coerceAliasMap(parsed.aliases);
 }
 
+function isValidConfiguredModel(m: unknown): m is ConfiguredModel {
+  return (
+    isRecord(m) &&
+    typeof m.id === 'string' && (m.id as string).trim().length > 0 &&
+    typeof m.provider === 'string' && (m.provider as string).trim().length > 0 &&
+    typeof m.wireModel === 'string' && (m.wireModel as string).trim().length > 0 &&
+    typeof m.mediaType === 'string' && (m.mediaType as string).trim().length > 0
+  );
+}
+
+async function readStoredModels(projectRoot: string): Promise<ConfiguredModel[]> {
+  const parsed = await readStoredFile(projectRoot);
+  if (!Array.isArray(parsed.models)) return [];
+  return (parsed.models as unknown[]).filter(isValidConfiguredModel);
+}
+
+/** 按 id 查后台配置的模型;未找到返回 null。 */
+export async function resolveConfiguredModel(
+  projectRoot: string,
+  modelId: string,
+): Promise<ConfiguredModel | null> {
+  const models = await readStoredModels(projectRoot);
+  return models.find((m) => m.id === modelId) ?? null;
+}
+
+/** 返回所有后台配置的模型(供 /api/media/models 合并)。 */
+export async function listConfiguredModels(projectRoot: string): Promise<ConfiguredModel[]> {
+  return readStoredModels(projectRoot);
+}
+
 async function writeStored(
   projectRoot: string,
   providers: ProviderMap,
   aliases?: ModelAliasMap,
+  models?: ConfiguredModel[],
 ): Promise<void> {
   const file = configFile(projectRoot);
   await mkdir(path.dirname(file), { recursive: true });
   // Preserve any existing aliases when the caller doesn't pass them.
-  // The Settings UI writes providers only; without this, every
-  // provider edit would silently wipe the user's model aliases (issue
-  // #1277 introduces aliases but the Settings UI surface for editing
-  // them lands in a follow-up PR).
   const resolvedAliases = aliases ?? (await readStoredAliases(projectRoot));
+  // Preserve any existing models when the caller doesn't pass them.
+  const resolvedModels = models ?? (await readStoredModels(projectRoot));
   const body: JsonRecord = { providers };
   if (Object.keys(resolvedAliases).length > 0) {
     body.aliases = resolvedAliases;
+  }
+  if (resolvedModels.length > 0) {
+    body.models = resolvedModels;
   }
   await writeFile(file, JSON.stringify(body, null, 2), 'utf8');
 }
@@ -526,7 +566,10 @@ export async function writeConfig(projectRoot: string, body: unknown) {
       }
     }
   }
-  await writeStored(projectRoot, next);
+  const incomingModels: ConfiguredModel[] = Array.isArray((body as JsonRecord).models)
+    ? ((body as JsonRecord).models as unknown[]).filter(isValidConfiguredModel)
+    : [];
+  await writeStored(projectRoot, next, undefined, incomingModels.length > 0 ? incomingModels : undefined);
   return readMaskedConfig(projectRoot);
 }
 
