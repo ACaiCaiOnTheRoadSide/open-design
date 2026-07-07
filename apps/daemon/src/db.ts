@@ -476,8 +476,8 @@ export async function insertProject(db: SqliteDb, p: DbRow) {
   await db.prepare(
     `INSERT INTO projects
        (id, name, skill_id, design_system_id, pending_prompt,
-        metadata_json, custom_instructions, created_at, updated_at, tenant_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        metadata_json, custom_instructions, created_at, updated_at, tenant_id, creator_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     p.id,
     p.name,
@@ -489,6 +489,7 @@ export async function insertProject(db: SqliteDb, p: DbRow) {
     p.createdAt,
     p.updatedAt,
     tenantId,
+    currentUserId() ?? null,
   );
   return getProject(db, p.id);
 }
@@ -534,8 +535,8 @@ export async function deleteProject(db: SqliteDb, id: string, opts?: { tombstone
   if (opts?.tombstone !== false) {
     await db
       .prepare(
-        `INSERT INTO deleted_projects (id, tenant_id, name, created_at, deleted_at)
-           SELECT id, tenant_id, name, created_at, ? FROM projects WHERE id = ? AND tenant_id = ?
+        `INSERT INTO deleted_projects (id, tenant_id, name, created_at, deleted_at, creator_id)
+           SELECT id, tenant_id, name, created_at, ?, creator_id FROM projects WHERE id = ? AND tenant_id = ?
            ON CONFLICT (id) DO NOTHING`,
       )
       .run(Date.now(), id, tenantId);
