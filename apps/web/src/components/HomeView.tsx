@@ -341,6 +341,7 @@ export function HomeView({
   // Composer in-flight guard: disables the send button, shows Sending…, and
   // swallows repeat clicks across the whole async create tail.
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const [elevenLabsVoices, setElevenLabsVoices] = useState<AudioVoiceOption[]>([]);
   const [elevenLabsVoicesLoading, setElevenLabsVoicesLoading] = useState(false);
   // Live AIHubMix image catalogue merged into the home media composer's model
@@ -1662,7 +1663,8 @@ export function HomeView({
   async function submit() {
     // The send button disables itself while sending, but the Enter-to-send
     // path lands here directly — swallow re-entry during the in-flight window.
-    if (sending) return;
+    if (sending || sendingRef.current) return;
+    sendingRef.current = true;
     const trimmed = prompt.trim();
     if (!trimmed && stagedFiles.length === 0) return;
     // P0 ui_click area=chat_composer element=send_button. Fires before the
@@ -1828,6 +1830,7 @@ export function HomeView({
       setError('Failed to start the run. Make sure the daemon is reachable, then try again.');
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   }
 
