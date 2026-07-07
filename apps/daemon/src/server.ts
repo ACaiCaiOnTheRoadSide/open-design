@@ -340,7 +340,15 @@ import {
   snapshotProjectArtifacts,
 } from './run-artifact-fs.js';
 import { reportRunCompletedFromDaemon } from './langfuse-bridge.js';
-import { syncProjectToOSS } from './project-sync.js';
+import {
+  initArchiveSyncState,
+  isSyncIgnoredRelPath,
+  recordSyncedArchiveEtag,
+  rememberRunStartBaseline,
+  snapshotProjectFilePaths,
+  syncProjectToOSS,
+  takeRunStartBaseline,
+} from './project-sync.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { readAnalyticsContext } from './analytics.js';
 import {
@@ -841,6 +849,10 @@ const ARTIFACTS_DIR = path.join(RUNTIME_DATA_DIR, 'artifacts');
 // read path so project-membership, size, and CSP guards cannot be bypassed.
 const CRITIQUE_ARTIFACTS_DIR = path.join(RUNTIME_DATA_DIR, 'critique-artifacts');
 const PROJECTS_DIR = path.join(RUNTIME_DATA_DIR, 'projects');
+// Archive-sync etag ledger: which files.tar.gz version this daemon's disk
+// reflects, per project. Guards the pre-run archive push against clobbering
+// a round-end save that was never restored (see project-sync.ts docblock).
+initArchiveSyncState(path.join(RUNTIME_DATA_DIR, 'project-archive-sync.json'));
 const USER_SKILLS_DIR = path.join(RUNTIME_DATA_DIR, 'skills');
 const USER_DESIGN_SYSTEMS_DIR = path.join(RUNTIME_DATA_DIR, 'design-systems');
 // Brand metadata (brand.json + meta.json per brand) lives here; each brand
@@ -3902,6 +3914,13 @@ export async function startServer({
           throw fetchError;
         }
         const prefix = `${projectId}/`;
+        // Round-end restores (ifMissing=false) honor mid-round deletions: a
+        // file that was on disk at round start (baseline) and is gone now was
+        // deleted by the user while the agent ran — skip it instead of
+        // resurrecting the sandbox's copy. ifMissing rehydration must NOT
+        // filter: there the local dir is empty by definition and the archive
+        // is the authority.
+        const runBaseline = ifMissing ? null : takeRunStartBaseline(projectId);
         await pipeline(
           Readable.fromWeb(response.body),
           tarExtract({
@@ -3910,10 +3929,27 @@ export async function startServer({
             // 绝对路径与 `..` 逃逸由 tar 库默认拒绝。
             filter: (p) => {
               const entry = p.replace(/^\.\//, '');
-              return entry === projectId || entry.startsWith(prefix);
+              if (entry !== projectId && !entry.startsWith(prefix)) return false;
+              const rel = entry === projectId
+                ? ''
+                : entry.slice(prefix.length).replace(/\/+$/, '');
+              // 依赖/VCS 树两个方向都不同步(与 pre-run 打包过滤对称)。
+              if (rel && isSyncIgnoredRelPath(rel)) return false;
+              if (
+                runBaseline &&
+                rel &&
+                runBaseline.has(rel) &&
+                !fs.existsSync(path.join(PROJECTS_DIR, projectId, rel))
+              ) {
+                return false; // user deleted it mid-round — stay deleted
+              }
+              return true;
             },
           }),
         );
+        // 本地盘已反映这一版存档——记入 etag 台账,pre-run 推送据此判断
+        // 「OSS 上是否还有未回填的轮末存档」。
+        recordSyncedArchiveEtag(projectId, response.headers.get('etag'));
         return { restored: true };
       });
       return res.json(result);
@@ -5817,10 +5853,28 @@ export async function startServer({
     // Sync local project files to OSS before the agent starts, so the
     // Push the whole project as one archive so the sandbox restore at round
     // start sees exactly what's on this daemon's disk — including attachments
-    // uploaded moments ago. One tar PUT, not N per-file uploads.
+    // uploaded moments ago. One tar PUT, not N per-file uploads. The file
+    // baseline recorded alongside lets the round-end restore-archive tell
+    // "user deleted this mid-round" apart from "agent created this" — see
+    // rememberRunStartBaseline in project-sync.ts.
+    //
+    // A push failure FAILS the round: running the agent against a stale
+    // archive silently corrupts state (the round-end merge-save would carry
+    // resurrected files back), which is strictly worse than a retriable
+    // error. Local deployments without OD_BACKEND_URL never throw here.
     if (cwd && typeof projectId === 'string' && projectId) {
+      try {
+        rememberRunStartBaseline(projectId, await snapshotProjectFilePaths(cwd));
+      } catch (err: any) {
+        console.error(`[project-sync] baseline snapshot failed: ${err?.message || err}`);
+      }
       try { await syncProjectToOSS(cwd, projectId); } catch (err: any) {
         console.error(`[project-sync] pre-run archive push failed: ${err?.message || err}`);
+        return design.runs.fail(
+          run,
+          'PROJECT_SYNC_FAILED',
+          `project file sync failed, please retry: ${err?.message || err}`,
+        );
       }
     }
 
