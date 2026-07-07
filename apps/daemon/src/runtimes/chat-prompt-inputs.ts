@@ -804,6 +804,26 @@ export function formatProjectAttachmentHint(attachments: readonly string[] | nul
   ].join('\n');
 }
 
+/**
+ * Sandbox restores (`od sync pull`) skip files at or above the prefetch
+ * threshold; they exist in the manifest but not on the sandbox disk. Tell
+ * the agent which ones and how to fetch them, or a Read on a listed video
+ * just fails with ENOENT.
+ */
+export function formatLazyHydrationHint(
+  largeFiles: ReadonlyArray<{ path: string; size: number }> | null | undefined,
+) {
+  if (!Array.isArray(largeFiles) || largeFiles.length === 0) return '';
+  return [
+    '',
+    '',
+    'Large project files NOT pre-downloaded into this workspace (fetch on demand before reading):',
+    ...largeFiles.map((f) => `- \`${f.path}\` (${formatProjectEntrySize(f.size)})`),
+    '',
+    'Fetch one with: `"$OD_NODE_BIN" "$OD_BIN" file get <path>`. Skip fetching files you do not actually need.',
+  ].join('\n');
+}
+
 function formatProjectEntrySize(size: number) {
   if (!Number.isFinite(size) || size <= 0) return '';
   if (size < 1024) return `${Math.round(size)} B`;

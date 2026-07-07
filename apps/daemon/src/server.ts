@@ -20,7 +20,6 @@ import os from 'node:os';
 import net from 'node:net';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { x as tarExtract } from 'tar';
 import { executionProfileFromStreamFormat, PLUGIN_SHARE_ACTION_PLUGIN_IDS } from '@open-design/contracts';
 import {
   composeSystemPrompt,
@@ -76,6 +75,7 @@ import {
   UPLOAD_DIR,
   composeLiveInstructionPrompt,
   formatDesignFilesWorkspaceHint,
+  formatLazyHydrationHint,
   formatProjectAttachmentHint,
   normalizeCommentAttachments,
   renderCommentAttachmentHint,
@@ -341,14 +341,12 @@ import {
 } from './run-artifact-fs.js';
 import { reportRunCompletedFromDaemon } from './langfuse-bridge.js';
 import {
-  initArchiveSyncState,
-  isSyncIgnoredRelPath,
-  recordSyncedArchiveEtag,
-  rememberRunStartBaseline,
-  snapshotProjectFilePaths,
-  syncProjectToOSS,
-  takeRunStartBaseline,
-} from './project-sync.js';
+  evictColdProjects,
+  flush as syncEngineFlush,
+  hydrate as hydrateProjectFromManifest,
+  initSyncEngine,
+  syncEnabled as manifestSyncEnabled,
+} from './sync/engine.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { readAnalyticsContext } from './analytics.js';
 import {
@@ -849,10 +847,6 @@ const ARTIFACTS_DIR = path.join(RUNTIME_DATA_DIR, 'artifacts');
 // read path so project-membership, size, and CSP guards cannot be bypassed.
 const CRITIQUE_ARTIFACTS_DIR = path.join(RUNTIME_DATA_DIR, 'critique-artifacts');
 const PROJECTS_DIR = path.join(RUNTIME_DATA_DIR, 'projects');
-// Archive-sync etag ledger: which files.tar.gz version this daemon's disk
-// reflects, per project. Guards the pre-run archive push against clobbering
-// a round-end save that was never restored (see project-sync.ts docblock).
-initArchiveSyncState(path.join(RUNTIME_DATA_DIR, 'project-archive-sync.json'));
 const USER_SKILLS_DIR = path.join(RUNTIME_DATA_DIR, 'skills');
 const USER_DESIGN_SYSTEMS_DIR = path.join(RUNTIME_DATA_DIR, 'design-systems');
 // Brand metadata (brand.json + meta.json per brand) lives here; each brand
@@ -3862,103 +3856,21 @@ export async function startServer({
     res.sendFile(bundlePath);
   });
 
-  // 项目文件还原:从预签名 URL 拉整项目 tar.gz(根为 <projectId>/,与 backend
-  // state_oss.go 的打包约定一致)解到 PROJECTS_DIR。split/huskbox 模式下 agent 在
-  // 集群外沙箱跑活、产物只存对象存储;每轮结束 backend 调此端点把最新文件铺回
-  // daemon 本地盘,前端预览 / raw 服务才有内容。挂 /api 下受 OD_API_TOKEN bearer
-  // 守卫;url 由可信的 backend 铸造(短时预签名),不是终端用户输入。
-  //
-  // body.ifMissing=true:仅当本地盘上没有该项目文件时才真的拉存档——打开项目
-  // 的懒恢复用(k8s 上数据盘是 emptyDir,pod 重建即空,而铺回文件原本只挂在
-  // 「跑完一轮 agent」的钩子上);盘上已有文件时只是一次目录探测,可高频调用。
-  //
-  // 同一项目的恢复按到达顺序串行:前端打开项目时详情与文件树两路并发触发,
-  // 不串行会有两个 tar 同时往同一目录解压。
-  const restoreArchiveChains = new Map();
-  const withProjectRestoreLock = (projectId, fn) => {
-    const prev = restoreArchiveChains.get(projectId) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    const tail = next.catch(() => {});
-    restoreArchiveChains.set(projectId, tail);
-    void tail.then(() => {
-      if (restoreArchiveChains.get(projectId) === tail) restoreArchiveChains.delete(projectId);
-    });
-    return next;
-  };
-  app.post('/api/projects/:id/restore-archive', async (req, res) => {
-    const projectId = req.params.id;
-    const url = typeof req.body?.url === 'string' ? req.body.url : '';
+
+  // Manifest-based reconcile: pull remote manifest diffs into the daemon
+  // disk. No presigned URL needed — the daemon reaches the backend blob
+  // endpoints itself and downloads only files whose hash differs.
+  // ifMissing=true is the open-a-project rehydration fast path (cheap
+  // directory probe when content is already present); ifMissing=false is
+  // the round-end backfill after a sandbox pushed its save.
+  app.post('/api/projects/:id/sync/pull', async (req, res) => {
     const ifMissing = req.body?.ifMissing === true;
-    if (!/^https?:\/\//.test(url)) {
-      return res.status(400).json({ error: 'url (http/https) is required' });
-    }
     try {
-      const result = await withProjectRestoreLock(projectId, async () => {
-        if (ifMissing) {
-          let entries = [];
-          try {
-            entries = await fs.promises.readdir(path.join(PROJECTS_DIR, projectId));
-          } catch {
-            // ENOENT → 目录不存在,视为缺失
-          }
-          if (entries.length > 0) return { restored: false, reason: 'already present' };
-        }
-        const response = await fetch(url);
-        if (response.status === 404) {
-          // 对象存储里还没有该项目的存档(全新项目),不算错误。
-          return { restored: false, reason: 'archive not found' };
-        }
-        if (!response.ok || !response.body) {
-          const fetchError = new Error(`archive fetch failed: HTTP ${response.status}`);
-          fetchError.upstreamFetchFailed = true;
-          throw fetchError;
-        }
-        const prefix = `${projectId}/`;
-        // Round-end restores (ifMissing=false) honor mid-round deletions: a
-        // file that was on disk at round start (baseline) and is gone now was
-        // deleted by the user while the agent ran — skip it instead of
-        // resurrecting the sandbox's copy. ifMissing rehydration must NOT
-        // filter: there the local dir is empty by definition and the archive
-        // is the authority.
-        const runBaseline = ifMissing ? null : takeRunStartBaseline(projectId);
-        await pipeline(
-          Readable.fromWeb(response.body),
-          tarExtract({
-            cwd: PROJECTS_DIR,
-            // 只接受本项目前缀的条目(防止一份存档覆写其他项目);
-            // 绝对路径与 `..` 逃逸由 tar 库默认拒绝。
-            filter: (p) => {
-              const entry = p.replace(/^\.\//, '');
-              if (entry !== projectId && !entry.startsWith(prefix)) return false;
-              const rel = entry === projectId
-                ? ''
-                : entry.slice(prefix.length).replace(/\/+$/, '');
-              // 依赖/VCS 树两个方向都不同步(与 pre-run 打包过滤对称)。
-              if (rel && isSyncIgnoredRelPath(rel)) return false;
-              if (
-                runBaseline &&
-                rel &&
-                runBaseline.has(rel) &&
-                !fs.existsSync(path.join(PROJECTS_DIR, projectId, rel))
-              ) {
-                return false; // user deleted it mid-round — stay deleted
-              }
-              return true;
-            },
-          }),
-        );
-        // 本地盘已反映这一版存档——记入 etag 台账,pre-run 推送据此判断
-        // 「OSS 上是否还有未回填的轮末存档」。
-        recordSyncedArchiveEtag(projectId, response.headers.get('etag'));
-        return { restored: true };
-      });
+      const result = await hydrateProjectFromManifest(req.params.id, { ifMissing });
       return res.json(result);
     } catch (error) {
-      if (error instanceof Error && error.upstreamFetchFailed === true) {
-        return res.status(502).json({ error: error.message });
-      }
       const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ error: `restore failed: ${message}` });
+      return res.status(502).json({ error: `sync pull failed: ${message}` });
     }
   });
 
@@ -4001,6 +3913,22 @@ export async function startServer({
     getAppVersion: () => telemetry.getCachedAppVersion()?.version ?? '0.0.0',
     readAnalyticsContext,
   };
+
+  // Manifest + blob sync engine: keeps managed project dirs reconciled with
+  // the backend store and evicts cold ones (the daemon disk is a cache over
+  // OSS). No-op without OD_BACKEND_URL — see sync/engine.ts.
+  initSyncEngine({
+    runtimeDataDir: RUNTIME_DATA_DIR,
+    projectsDir: PROJECTS_DIR,
+    hasActiveRun: (projectId) =>
+      design.runs.list({ projectId, status: 'active' }).length > 0,
+  });
+  if (manifestSyncEnabled()) {
+    const cacheTtlHours = Number(process.env.OD_PROJECT_CACHE_TTL_HOURS || '72') || 72;
+    setInterval(() => {
+      void evictColdProjects(cacheTtlHours);
+    }, 60 * 60 * 1000).unref?.();
+  }
 
   // Interactive Terminal sessions (node-pty). In-memory, process-local, and
   // killed on daemon shutdown — see shutdownDaemonRuns below.
@@ -5850,26 +5778,33 @@ export async function startServer({
         ? await stageAmrImagePaths(cwd ?? PROJECT_ROOT, safeImages, UPLOAD_DIR)
         : safeImages;
 
-    // Sync local project files to OSS before the agent starts, so the
-    // Push the whole project as one archive so the sandbox restore at round
-    // start sees exactly what's on this daemon's disk — including attachments
-    // uploaded moments ago. One tar PUT, not N per-file uploads. The file
-    // baseline recorded alongside lets the round-end restore-archive tell
-    // "user deleted this mid-round" apart from "agent created this" — see
-    // rememberRunStartBaseline in project-sync.ts.
+    // Pre-run sync barrier: make the backend manifest reflect this daemon's
+    // disk before the sandbox restores from it — including attachments
+    // uploaded moments ago. Content is event-driven in the background (blob
+    // uploads start when files change); this flush is normally a stat-walk
+    // plus a no-op commit, so starting a round does not wait on big files.
     //
-    // A push failure FAILS the round: running the agent against a stale
-    // archive silently corrupts state (the round-end merge-save would carry
-    // resurrected files back), which is strictly worse than a retriable
-    // error. Local deployments without OD_BACKEND_URL never throw here.
+    // A flush failure FAILS the round: running the agent against a stale
+    // manifest silently corrupts state, which is strictly worse than a
+    // retriable error. Local deployments without OD_BACKEND_URL never throw
+    // here. `largeManifestFiles` feeds the lazy-hydration hint below — the
+    // sandbox pull skips files at/above the prefetch threshold and the agent
+    // fetches them on demand via `od file get`.
+    let largeManifestFiles: Array<{ path: string; size: number }> = [];
     if (cwd && typeof projectId === 'string' && projectId) {
       try {
-        rememberRunStartBaseline(projectId, await snapshotProjectFilePaths(cwd));
+        const flushed = await syncEngineFlush(projectId);
+        if (flushed.enabled && flushed.manifest) {
+          const prefetchMax =
+            Number(process.env.OD_SYNC_PREFETCH_MAX_BYTES) > 0
+              ? Number(process.env.OD_SYNC_PREFETCH_MAX_BYTES)
+              : 8 * 1024 * 1024;
+          largeManifestFiles = Object.entries(flushed.manifest.files)
+            .filter(([, entry]) => entry.size >= prefetchMax)
+            .map(([relPath, entry]) => ({ path: relPath, size: entry.size }));
+        }
       } catch (err: any) {
-        console.error(`[project-sync] baseline snapshot failed: ${err?.message || err}`);
-      }
-      try { await syncProjectToOSS(cwd, projectId); } catch (err: any) {
-        console.error(`[project-sync] pre-run archive push failed: ${err?.message || err}`);
+        console.error(`[sync] pre-run flush failed: ${err?.message || err}`);
         return design.runs.fail(
           run,
           'PROJECT_SYNC_FAILED',
@@ -5912,7 +5847,8 @@ export async function startServer({
           linkedDirs.map((d) => `- \`${d}\``).join('\n')
         }`
       : '';
-    const attachmentHint = formatProjectAttachmentHint(safeAttachments);
+    const attachmentHint =
+      formatProjectAttachmentHint(safeAttachments) + formatLazyHydrationHint(largeManifestFiles);
     // Plan §3.A3 / spec §9: thread plugin context onto every tool token
     // so the connector execute route can re-validate the §5.3
     // capability gate without re-reading the SQLite snapshot row.
@@ -6114,10 +6050,10 @@ export async function startServer({
         // Snapshotting is best-effort; finish falls back to the tool-stream count.
       }
     }
-    // Agent-produced files come back through the archive channel: the sandbox
-    // merge-saves files.tar.gz before exiting and the dispatcher tells this
-    // daemon to restore-archive it (POST /api/projects/:id/restore-archive)
-    // before the exit code is delivered — no per-file OSS pull needed here.
+    // Agent-produced files come back through the manifest channel: the
+    // sandbox `od sync push`-es its diff before exiting and the dispatcher
+    // tells this daemon to pull it (POST /api/projects/:id/sync/pull) before
+    // the exit code is delivered — no per-file handling needed here.
     let codexGeneratedImagesDir = resolveCodexGeneratedImagesDir(
       agentId,
       projectRecord?.metadata,

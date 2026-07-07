@@ -20,6 +20,7 @@ import {
   resolvePluginSnapshot,
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
+import { markDirty } from '../../sync/engine.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
@@ -2730,12 +2731,14 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
               mtime: stat.mtimeMs,
               originalName: f.originalname,
             });
-            // No per-file OSS push here: the pre-run archive sync
-            // (syncProjectToOSS) ships the whole project — uploads included —
-            // right before the agent round that needs them.
           } catch {
             // skip files that vanished mid-flight
           }
+        }
+        if (out.length > 0) {
+          // Multer wrote straight to disk, bypassing writeProjectFile — mark
+          // the project so the background sync ships the new files.
+          markDirty(req.params.id);
         }
         /** @type {import('@open-design/contracts').UploadProjectFilesResponse} */
         const body = { files: out };

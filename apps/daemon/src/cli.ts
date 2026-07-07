@@ -14,6 +14,7 @@ import { parseDesignSystemRenameArgs } from './design-systems/rename-args.js';
 import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
+import { runFile, runSync } from './sync/cli-run.js';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { requestJsonIpc } from '@open-design/sidecar';
@@ -321,6 +322,8 @@ const SUBCOMMAND_MAP = {
   memory: runMemory,
   run: runRun,
   files: runFiles,
+  sync: runSync,
+  file: runFile,
   templates: runTemplates,
   conversation: runConversation,
   chat: runChat,

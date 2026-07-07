@@ -12,6 +12,7 @@ import {
 } from '../integrations/aihubmix.js';
 import { isSandboxModeEnabled } from '../sandbox-mode.js';
 import { isMediaModelServable, storeMediaToBackend } from '../media/index.js';
+import { markDirty } from '../sync/engine.js';
 import { resolveProviderConfig } from '../media/config.js';
 import { findMediaModel } from '../media/models.js';
 import { recordMediaUsage } from '../media-usage.js';
@@ -261,6 +262,11 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
               console.error(`[media] store to backend failed: ${e?.message || e}`);
             }
           }
+
+          // Generation artifacts land on disk outside writeProjectFile; mark
+          // the project so the blob upload starts NOW (a long video should be
+          // in the store before the next round's pre-run flush, not during).
+          markDirty(projectId);
 
           notifyTaskWaiters(task);
           console.error(
@@ -616,6 +622,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     await fs.promises.mkdir(projectDir, { recursive: true });
     const filePath = path.join(projectDir, filename);
     await fs.promises.writeFile(filePath, bytes);
+    markDirty(projectId);
     console.error(`[media upload] wrote ${filename} (${bytes.length} bytes) to ${projectDir}`);
 
     const backendUrl = process.env.OD_BACKEND_URL;

@@ -33,6 +33,7 @@ import {
   SANDBOX_IMPORTED_PROJECT_UNAVAILABLE_MESSAGE,
 } from './sandbox-mode.js';
 import { isOrchestratorScratchWorkspace } from './workspace-contract.js';
+import { markDirty } from './sync/engine.js';
 
 const FORBIDDEN_SEGMENT = /^$|^\.\.?$/;
 const RESERVED_PROJECT_FILE_SEGMENTS = new Set(['.live-artifacts']);
@@ -222,6 +223,7 @@ export async function deleteProjectFolder(projectsRoot, projectId, name, metadat
     throw err;
   }
   await rm(target, { recursive: true, force: true });
+  markDirty(projectId, metadata);
 }
 
 // Best-effort entry-file detector — looks for index.html at the root,
@@ -838,6 +840,7 @@ export async function writeProjectFile(
     const manifestTarget = await resolveSafeReal(dir, manifestFileName);
     await writeFile(manifestTarget, JSON.stringify(validatedManifest, null, 2));
   }
+  markDirty(projectId, metadata);
   const st = await stat(target);
   const persistedManifest = await readManifestForPath(dir, safeName);
   const result = {
@@ -942,6 +945,7 @@ export async function deleteProjectFile(projectsRoot, projectId, name, metadata?
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const file = await resolveSafeReal(dir, name);
   await unlink(file);
+  markDirty(projectId, metadata);
 }
 
 export async function renameProjectFile(projectsRoot, projectId, fromName, toName, metadata?) {
@@ -1005,6 +1009,7 @@ export async function renameProjectFile(projectsRoot, projectId, fromName, toNam
   await renameFilePath(source, targetPath, { noOverwrite: true });
   await commitArtifactManifestRename(manifestRename, newName);
   await updateArtifactManifestRefsForRename(dir, oldName, newName);
+  markDirty(projectId, metadata);
 
   const st = await stat(targetPath);
   const manifest = await readManifestForPath(dir, newName);
