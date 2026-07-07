@@ -495,6 +495,22 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false 
   }, [route]);
 
   useEffect(() => {
+    setState((current) => {
+      const orphaned = current.tabs.some(
+        (tab) => tab.kind === 'project' && !projectById.has(tab.projectId),
+      );
+      if (!orphaned) return current;
+      const nextTabs = current.tabs.filter(
+        (tab) => tab.kind !== 'project' || projectById.has(tab.projectId),
+      );
+      return normalizeTabsState({
+        ...current,
+        tabs: nextTabs,
+      });
+    });
+  }, [projectById]);
+
+  useEffect(() => {
     if (!previousOnboardingCompletedRef.current && onboardingCompleted) {
       resetEntryToHomeAfterOnboardingRef.current = true;
     }
