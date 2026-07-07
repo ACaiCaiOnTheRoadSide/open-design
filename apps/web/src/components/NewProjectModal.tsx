@@ -85,6 +85,7 @@ function NewProjectModalBody({
   initialTab,
 }: Omit<Props, 'open'>) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const creatingRef = useRef(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -109,7 +110,8 @@ function NewProjectModalBody({
   }, []);
 
   async function handleCreate(input: CreateInput & { requestId?: string }) {
-    if (creating) return;
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setCreating(true);
     setCreateError(null);
     try {
@@ -122,6 +124,7 @@ function NewProjectModalBody({
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Could not create project. Please try again.');
     } finally {
+      creatingRef.current = false;
       setCreating(false);
     }
   }
