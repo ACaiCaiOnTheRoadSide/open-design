@@ -31,6 +31,7 @@ import { parseFrontmatter } from './design-systems/frontmatter.js';
 // here because memory.ts is the chat hot path — a dynamic import per
 // turn would add a microtask hop for no real benefit.
 import { recordHeuristic, recordSkip } from './memory-extractions.js';
+import { currentTenantId, LEGACY_TENANT } from './multitenant.js';
 
 // Tiny in-process bus. The HTTP layer (`/api/memory/events`) subscribes
 // to this and forwards events to any open SSE client; the storage
@@ -86,8 +87,14 @@ back if you change your mind.
 
 `;
 
+// Per-tenant memory: each user gets an isolated directory under
+// <dataDir>/memory/<sanitised-tenant-id>/. The tenant ID for team users
+// contains a slash (teamId/userId); we replace it with '--' so the
+// whole ID maps to a single directory level.
 export function memoryDir(dataDir) {
-  return path.join(dataDir, 'memory');
+  const tenant = currentTenantId();
+  const safeTenant = tenant.replace(/\//g, '--');
+  return path.join(dataDir, 'memory', safeTenant);
 }
 
 async function ensureDir(dir) {

@@ -20,7 +20,6 @@ import type { IntegrationTab } from './components/IntegrationsView';
 import { MarketplaceView } from './components/MarketplaceView';
 import { PluginDetailView } from './components/PluginDetailView';
 import type { CreateInput, ImportClaudeDesignOutcome } from './components/NewProjectPanel';
-import { MemoryToast } from './components/MemoryToast';
 import { Toast } from './components/Toast';
 import { CenteredLoader } from './components/Loading';
 import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
@@ -2332,7 +2331,7 @@ function AppInner() {
         />
       ) : null}
       </AnimatePresence>
-      <MemoryToast onOpenMemory={() => openSettings('memory')} />
+      {/* MemoryToast hidden — memory UI is not user-facing */}
       {workingDirError ? (
         <Toast
           message={workingDirError}

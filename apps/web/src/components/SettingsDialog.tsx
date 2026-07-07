@@ -138,7 +138,6 @@ import { ProjectLocationsSection } from './ProjectLocationsSection';
 import { RoutinesSection } from './RoutinesSection';
 import { ConnectorsBrowser } from './ConnectorsBrowser';
 import { MemoryModelInline } from './MemoryModelInline';
-import { MemorySection } from './MemorySection';
 import { ByokConnectionTestControl } from './byok/ByokConnectionTestControl';
 import { ByokKeyField } from './byok/ByokKeyField';
 import { ByokModelField } from './byok/ByokModelField';
@@ -1728,16 +1727,6 @@ export function SettingsDialog({
     };
   }, [initialHighlight, activeSection]);
 
-  const selectedMemoryChatAgent =
-    cfg.mode === 'daemon' && cfg.agentId
-      ? agents.find((agent) => agent.id === cfg.agentId) ?? null
-      : null;
-  const selectedMemoryChatModel =
-    cfg.mode === 'daemon' && cfg.agentId
-      ? cfg.agentModels?.[cfg.agentId]?.model
-      ?? selectedMemoryChatAgent?.models?.[0]?.id
-      ?? null
-    : null;
   const agentChoiceForTest =
     cfg.mode === 'daemon' && cfg.agentId
       ? cfg.agentModels?.[cfg.agentId]
@@ -3858,17 +3847,7 @@ export function SettingsDialog({
                 <small>{t('settings.instructionsNavSub')}</small>
               </span>
             </button>
-            <button
-              type="button"
-              className={`settings-nav-item${activeSection === 'memory' ? ' active' : ''}`}
-              onClick={() => setActiveSection('memory')}
-            >
-              <Icon name="history" size={18} />
-              <span>
-                <strong>{t('settings.memory')}</strong>
-                <small>{t('settings.memoryHint')}</small>
-              </span>
-            </button>
+            {/* Memory nav hidden — memory is per-tenant backend-only, not user-facing */}
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'media' ? ' active' : ''}`}
@@ -5451,13 +5430,7 @@ export function SettingsDialog({
             </section>
           ) : null}
 
-          {activeSection === 'memory' ? (
-            <MemorySection
-              onOpenConnectors={() => setActiveSection('composio')}
-              chatAgentId={cfg.mode === 'daemon' ? cfg.agentId ?? null : null}
-              chatModel={selectedMemoryChatModel}
-            />
-          ) : null}
+          {/* MemorySection hidden — memory is per-tenant backend-only */}
 
           {activeSection === 'privacy' ? (
             <PrivacySection cfg={cfg} setCfg={setCfg} />
