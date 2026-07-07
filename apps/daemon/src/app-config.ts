@@ -30,6 +30,7 @@ import {
   writeInstallationFile,
   type InstallationFilePatch,
 } from './installation.js';
+import { getAgentDef } from './runtimes/registry.js';
 
 // Plugin-system env knobs. See docs/plans/plugins-implementation.md F6 / F9.
 // Phase 1 only reads them; the GC worker that enforces snapshot expiry lands
@@ -622,6 +623,9 @@ function applyTelemetryDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
 
 export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
   const base = await readAppConfigFileOnly(dataDir);
+  if (typeof base.agentId === 'string' && base.agentId && !getAgentDef(base.agentId)) {
+    base.agentId = null;
+  }
   // Channel-root installation file is the new authoritative source for the
   // identity bits that must survive a namespace-scoped data-dir wipe. It
   // lives outside `<namespace>/data/` so a reinstall of the same channel
@@ -661,6 +665,9 @@ export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
 // part of the read result.
 export function readAppConfigSync(dataDir: string): AppConfigPrefs {
   const base = readAppConfigFileOnlySync(dataDir);
+  if (typeof base.agentId === 'string' && base.agentId && !getAgentDef(base.agentId)) {
+    base.agentId = null;
+  }
   const installation = readInstallationFileSync(resolveInstallationDir(dataDir));
   if (
     typeof installation.installationId === 'string' &&
