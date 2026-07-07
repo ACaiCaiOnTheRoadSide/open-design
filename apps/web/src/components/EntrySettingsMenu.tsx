@@ -23,6 +23,11 @@ import {
   trackSettingsPopoverSurfaceView,
 } from '../analytics/events';
 import { createSocialSharePayload } from '../providers/registry';
+import {
+  ACCENT_SWATCHES,
+  DEFAULT_ACCENT_COLOR,
+  normalizeAccentColor,
+} from '../state/appearance';
 import type { AppConfig, AppTheme } from '../types';
 import { formatDiscordPresenceCount, useDiscordPresence } from './useDiscordPresence';
 import { Icon } from './Icon';
@@ -68,6 +73,9 @@ const ENTRY_THEME_OPTIONS: Array<{
 interface Props {
   config: AppConfig;
   onThemeChange: (theme: AppTheme) => void;
+  // Quick accent-color switch alongside the theme row; wired the same way as
+  // onThemeChange (apply + persist without opening the full SettingsDialog).
+  onAccentColorChange?: (color: string) => void;
   onOpenSettings: (section?: EntrySettingsSection) => void;
   // Fired when the gear trigger is clicked. Used by the in-project header to
   // emit the `artifact_header` / `settings` ui_click; the home/entry shell
@@ -81,6 +89,7 @@ interface Props {
 export function EntrySettingsMenu({
   config,
   onThemeChange,
+  onAccentColorChange,
   onOpenSettings,
   onTrackTriggerClick,
   trackingPageName,
@@ -97,6 +106,7 @@ export function EntrySettingsMenu({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const langListRef = useRef<HTMLDivElement | null>(null);
   const activeTheme = config.theme ?? 'system';
+  const activeAccent = normalizeAccentColor(config.accentColor) ?? DEFAULT_ACCENT_COLOR;
   const discordOnlineLabel = discordPresence
     ? t('entry.discordOnlineLabel', {
         count: formatDiscordPresenceCount(discordPresence.onlineCount),
@@ -319,6 +329,56 @@ export function EntrySettingsMenu({
                 );
               })}
             </div>
+            {onAccentColorChange ? (
+              <div
+                className="pet-swatches entry-settings-menu__accent-row"
+                role="radiogroup"
+                aria-label={t('pet.fieldAccent')}
+              >
+                {ACCENT_SWATCHES.map((color) => {
+                  const active = activeAccent === color;
+                  return (
+                    <button
+                      key={color}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      className={`pet-swatch${active ? ' active' : ''}`}
+                      style={{ background: color }}
+                      aria-label={
+                        color === DEFAULT_ACCENT_COLOR
+                          ? t('pet.fieldAccentDefault')
+                          : color
+                      }
+                      onClick={() => {
+                        trackSettingsPopoverClick(analytics.track, {
+                          page_name: pageName,
+                          area: 'settings_popover',
+                          element: 'accent_color',
+                          value: color,
+                        });
+                        onAccentColorChange(color);
+                      }}
+                    />
+                  );
+                })}
+                <input
+                  type="color"
+                  aria-label={t('pet.fieldAccentCustom')}
+                  className="pet-swatch-picker"
+                  value={activeAccent}
+                  onChange={(event) => {
+                    trackSettingsPopoverClick(analytics.track, {
+                      page_name: pageName,
+                      area: 'settings_popover',
+                      element: 'accent_color',
+                      value: event.target.value,
+                    });
+                    onAccentColorChange(event.target.value);
+                  }}
+                />
+              </div>
+            ) : null}
           </section>
 
           <section className="entry-settings-menu__section">

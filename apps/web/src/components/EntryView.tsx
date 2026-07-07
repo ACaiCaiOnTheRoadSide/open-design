@@ -80,6 +80,8 @@ interface Props {
   // user can flip light/dark/system without opening the full Settings
   // dialog. Persistence happens in `App`; this component just forwards.
   onThemeChange: (theme: AppTheme) => void;
+  // Same forwarding story as onThemeChange, for the accent-color swatches.
+  onAccentColorChange?: (color: string) => void;
   // Per-resource loading flags. Each tab gates its own content on whichever
   // flag matches the data it renders, so a slow `/api/agents` probe does
   // not block tabs that don't need agents. Templates are not gated here —
@@ -241,6 +243,7 @@ export function EntryView({
   onConfigPersist,
   onRefreshAgents,
   onThemeChange,
+  onAccentColorChange,
   skillsLoading = false,
   designSystemsLoading = false,
   projectsLoading = false,
@@ -359,6 +362,7 @@ export function EntryView({
       onConfigPersist={onConfigPersist}
       onRefreshAgents={onRefreshAgents}
       onThemeChange={onThemeChange}
+      onAccentColorChange={onAccentColorChange}
       onCreateProject={onCreateProject}
       onCreatePluginShareProject={onCreatePluginShareProject}
       onImportClaudeDesign={onImportClaudeDesign}

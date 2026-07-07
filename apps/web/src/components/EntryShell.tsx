@@ -341,6 +341,8 @@ interface Props {
   // flip between system / light / dark without opening the full Settings
   // dialog. App owns persistence; this component just calls the callback.
   onThemeChange: (theme: AppTheme) => void;
+  // Same forwarding story as onThemeChange, for the accent-color swatches.
+  onAccentColorChange?: (color: string) => void;
   onCreateProject: (
     input: CreateInput & {
       pendingPrompt?: string;
@@ -460,6 +462,7 @@ export function EntryShell({
   onConfigPersist,
   onRefreshAgents,
   onThemeChange,
+  onAccentColorChange,
   onCreateProject,
   onCreatePluginShareProject,
   onImportClaudeDesign,
@@ -677,6 +680,7 @@ export function EntryShell({
     <EntrySettingsMenu
       config={config}
       onThemeChange={onThemeChange}
+      onAccentColorChange={onAccentColorChange}
       onOpenSettings={onOpenSettings}
       onTrackTriggerClick={() => {
         trackHomeToolbarClick(analytics.track, {

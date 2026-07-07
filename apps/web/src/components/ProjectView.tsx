@@ -345,6 +345,7 @@ interface Props {
   onApiModelChange?: (model: string) => void;
   onRefreshAgents: () => void;
   onThemeChange?: (theme: AppConfig['theme']) => void;
+  onAccentColorChange?: (color: string) => void;
   onOpenSettings: (section?: SettingsSection) => void;
   onOpenAmrSettings?: () => void;
   onOpenMcpSettings?: () => void;
@@ -868,6 +869,7 @@ export function ProjectView({
   onApiModelChange,
   onRefreshAgents,
   onThemeChange,
+  onAccentColorChange,
   onOpenSettings,
   onOpenAmrSettings,
   onOpenMcpSettings,
@@ -6817,6 +6819,7 @@ export function ProjectView({
               <EntrySettingsMenu
                 config={config}
                 onThemeChange={handleThemeChange}
+                onAccentColorChange={onAccentColorChange}
                 onOpenSettings={onOpenSettings}
                 trackingPageName="artifact"
                 onTrackTriggerClick={() => {

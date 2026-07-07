@@ -1188,6 +1188,22 @@ function AppInner() {
     [config],
   );
 
+  // Quick accent-color switch from the same settings dropdown; mirrors
+  // handleThemeChange (synchronous DOM apply, then persist).
+  const handleAccentColorChange = useCallback(
+    (accentColor: string) => {
+      const next = { ...config, accentColor };
+      applyAppearanceToDocument({
+        theme: config.theme ?? 'system',
+        accentColor,
+      });
+      saveConfig(next);
+      void syncConfigToDaemon(next);
+      setConfig(next);
+    },
+    [config],
+  );
+
   const handleAgentChange = useCallback(
     (agentId: string) => {
       const next = { ...latestPersistedConfigRef.current, agentId };
@@ -2189,6 +2205,7 @@ function AppInner() {
         onApiModelChange={handleApiModelChange}
         onRefreshAgents={refreshAgents}
         onThemeChange={handleThemeChange}
+        onAccentColorChange={handleAccentColorChange}
         onOpenSettings={openSettings}
         onOpenAmrSettings={openAmrSettings}
         onOpenMcpSettings={openMcpSettings}
@@ -2235,6 +2252,7 @@ function AppInner() {
         onConfigPersist={handleConfigPersist}
         onRefreshAgents={refreshAgents}
         onThemeChange={handleThemeChange}
+        onAccentColorChange={handleAccentColorChange}
         skillsLoading={skillsLoading}
         designSystemsLoading={dsLoading}
         projectsLoading={projectsLoading}

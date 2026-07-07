@@ -1242,6 +1242,7 @@ export interface SettingsPopoverClickProps {
   element:
     | 'language_select'
     | 'appearance'
+    | 'accent_color'
     | 'share_channel'
     | 'workspace_teams'
     | 'join_discord'
@@ -1253,7 +1254,8 @@ export interface SettingsPopoverClickProps {
     | 'follow_xiaohongshu'
     | 'open_settings';
   // element=language_select → snake_cased locale (e.g. en, zh_cn, pt_br);
-  // element=appearance → system | light | dark.
+  // element=appearance → system | light | dark;
+  // element=accent_color → the picked hex (e.g. #7c3aed).
   value?: string;
   // element=share_channel only — which social network was clicked.
   channel?:
