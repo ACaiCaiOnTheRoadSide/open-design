@@ -37,6 +37,7 @@ import {
   uploadProjectFiles,
   writeProjectTextFile,
 } from '../providers/registry';
+import { useRawToken } from '../providers/raw-token';
 import type { Dict } from '../i18n/types';
 import { downloadDesignSystemArchive, downloadProjectArchive } from '../runtime/exports';
 import { finalizeBrandProject } from '../runtime/brands';
@@ -4463,6 +4464,9 @@ function DesignSystemInlinePreview({
   file: ProjectFile;
 }) {
   const url = projectFileUrl(projectId, file.name);
+  // Sign the baseHref so relative assets resolve cookie-free inside the
+  // sandboxed inline preview (same opaque-origin reason as the main preview).
+  const rawToken = useRawToken(projectId);
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
   const [srcDocReady, setSrcDocReady] = useState(false);
 
@@ -4484,13 +4488,14 @@ function DesignSystemInlinePreview({
       if (cancelled) return;
       setSrcDoc(buildSrcdoc(inlinedHtml, {
         baseHref: projectRawUrl(projectId, baseDirForDesignSystemPreviewFile(file.name)),
+        rawAssetSigning: { projectId, token: rawToken },
       }));
       setSrcDocReady(true);
     });
     return () => {
       cancelled = true;
     };
-  }, [file.kind, file.mtime, file.name, projectId]);
+  }, [file.kind, file.mtime, file.name, projectId, rawToken]);
 
   if (file.kind === 'html') {
     return (

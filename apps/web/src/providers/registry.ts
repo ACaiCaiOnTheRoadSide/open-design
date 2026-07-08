@@ -2004,6 +2004,53 @@ export function projectRawUrl(projectId: string, filePath: string): string {
   return `/api/projects/${encodeURIComponent(projectId)}/raw/${safePath}`;
 }
 
+// The path prefix that {@link projectRawUrl} emits for a given project, and its
+// signed counterpart. Kept as helpers so the srcDoc signer and the URL builder
+// stay in lockstep — see raw-token.ts for why sandbox-facing URLs need signing.
+function projectRawPrefix(projectId: string): string {
+  return `/api/projects/${encodeURIComponent(projectId)}/raw/`;
+}
+function projectRawSignedPrefix(projectId: string, token: string): string {
+  return `/raw-signed/${token}/${encodeURIComponent(projectId)}/`;
+}
+
+/**
+ * Signed raw-asset URL for references requested from INSIDE the sandbox preview
+ * iframe (opaque origin → no SameSite cookies → gateway 401 on the plain
+ * `/raw/` form). With a token, emits `/raw-signed/<token>/<projectId>/<path>`;
+ * without one, falls back to {@link projectRawUrl} so cookie-carrying contexts
+ * (desktop, same-origin) are unchanged. See raw-token.ts for the full rationale.
+ */
+export function projectRawSignedUrl(
+  projectId: string,
+  filePath: string,
+  token: string | null,
+): string {
+  if (!token) return projectRawUrl(projectId, filePath);
+  const safePath = filePath
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+  return `${projectRawSignedPrefix(projectId, token)}${safePath}`;
+}
+
+/**
+ * Rewrite every plain project raw-asset URL in an assembled HTML document to
+ * its signed form. This is the single chokepoint used by {@link buildSrcdoc}:
+ * because relative refs resolve against the (signed) `<base>` and any absolute
+ * `/api/projects/:id/raw/` ref — however it got there (base tag, server-side
+ * rewrite, author-authored) — is caught by one prefix replace, individual call
+ * sites never need to remember to sign. No-op without a token.
+ */
+export function signProjectRawUrlsInHtml(
+  html: string,
+  projectId: string,
+  token: string | null,
+): string {
+  if (!token) return html;
+  return html.split(projectRawPrefix(projectId)).join(projectRawSignedPrefix(projectId, token));
+}
+
 export function designSystemStaticUrl(designSystemId: string, filePath: string): string {
   return `/api/design-systems/${encodeURIComponent(designSystemId)}/static?path=${encodeURIComponent(filePath)}`;
 }

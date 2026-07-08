@@ -5,6 +5,7 @@ import { useT } from '../i18n';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
 import type { Dict } from '../i18n/types';
 import { projectFileUrl, projectRawUrl } from '../providers/registry';
+import { useRawToken } from '../providers/raw-token';
 import { buildSrcdoc } from '../runtime/srcdoc';
 import type { LiveArtifactWorkspaceEntry, ProjectFile, ProjectFileKind, ProjectFolder } from '../types';
 import {
@@ -1361,6 +1362,9 @@ function HtmlPreviewThumbnail({
   file: ProjectFile;
 }) {
   const url = projectFileUrl(projectId, file.name);
+  // Sign the baseHref so relative assets resolve cookie-free inside the
+  // sandboxed thumbnail iframe (same opaque-origin reason as the main preview).
+  const rawToken = useRawToken(projectId);
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -1368,7 +1372,10 @@ function HtmlPreviewThumbnail({
       .then((response) => (response.ok ? response.text() : null))
       .then((html) => {
         if (cancelled || html === null) return;
-        setSrcDoc(buildSrcdoc(html, { baseHref: projectRawUrl(projectId, baseDirForFile(file.name)) }));
+        setSrcDoc(buildSrcdoc(html, {
+          baseHref: projectRawUrl(projectId, baseDirForFile(file.name)),
+          rawAssetSigning: { projectId, token: rawToken },
+        }));
       })
       .catch(() => {
         if (!cancelled) setSrcDoc(null);
@@ -1376,7 +1383,7 @@ function HtmlPreviewThumbnail({
     return () => {
       cancelled = true;
     };
-  }, [file.mtime, file.name, projectId, url]);
+  }, [file.mtime, file.name, projectId, url, rawToken]);
 
   return (
     <iframe

@@ -21,6 +21,7 @@ import {
   MANUAL_EDIT_DISCOVERY_SELECTOR,
   MANUAL_EDIT_SOURCE_PATH_ATTR,
 } from '../edit-mode/bridge';
+import { signProjectRawUrlsInHtml } from '../providers/registry';
 
 export type SrcdocOptions = {
   deck?: boolean;
@@ -33,6 +34,15 @@ export type SrcdocOptions = {
   paletteBridge?: boolean;
   initialPalette?: string | null;
   previewFocusGuard?: boolean;
+  /**
+   * Sign every project raw-asset URL in the assembled document so images and
+   * in-document navigation load from inside the sandbox iframe (opaque origin,
+   * no cookies) without hitting the gateway's 401. Preview callers pass their
+   * project id + the token from `useRawToken`; export/self-contained callers
+   * omit it (tokens expire and must not be baked into downloads). No-op when
+   * the token is null. See providers/raw-token.ts for the rationale.
+   */
+  rawAssetSigning?: { projectId: string; token: string | null };
 };
 
 /**
@@ -285,9 +295,16 @@ export function buildSrcdoc(
   // it to a per-call option would force iframe srcdoc regeneration (and a
   // visible flash) every time the host toggle flips.
   const withTweaks = injectTweaksBridge(withEdit);
-  return injectSrcdocTransportActivationBridge(
+  const assembled = injectSrcdocTransportActivationBridge(
     injectExportCaptureBridge(injectSnapshotBridge(withTweaks)),
   );
+  // Sign raw-asset URLs last, over the fully assembled document — this single
+  // pass catches the injected <base> AND any absolute /api/projects/:id/raw/
+  // reference in the content (author-authored or produced by a relative→
+  // absolute rewrite), so no individual call site has to remember to sign.
+  return options.rawAssetSigning
+    ? signProjectRawUrlsInHtml(assembled, options.rawAssetSigning.projectId, options.rawAssetSigning.token)
+    : assembled;
 }
 
 /**

@@ -50,6 +50,7 @@ import {
   liveArtifactPreviewUrl,
   projectFileUrl,
   projectRawUrl,
+  projectRawSignedUrl,
   LiveArtifactRefreshError,
   refreshLiveArtifact,
   updateDeployConfig,
@@ -63,6 +64,7 @@ import {
   writeProjectTextFileDetailed,
 } from '../providers/registry';
 import type { ProjectFilePreview } from '../providers/registry';
+import { useRawToken } from '../providers/raw-token';
 import {
   downloadImageDataUrl,
   exportAsJsx,
@@ -4459,6 +4461,10 @@ function HtmlViewer({
 }) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
+  // Signed token for raw assets requested from INSIDE the sandbox preview
+  // iframe (relative <img>, multi-page navigation, url-loaded src). null until
+  // it arrives / when the feature is off → callers fall back to plain /raw/.
+  const rawToken = useRawToken(projectId);
   // Latest per-slide capture progress for the programmatic exporters, read by
   // the loading-toast ticker in fireShareExport to render elapsed time + ETA.
   const exportProgressRef = useRef<{ done: number; total: number } | null>(null);
@@ -5386,8 +5392,8 @@ function HtmlViewer({
   };
   const useUrlLoadPreview = shouldUrlLoadHtmlPreview(urlLoadDecision) && !manualEditRequiresSrcDoc;
   const basePreviewSrcUrl = useMemo(
-    () => `${projectRawUrl(projectId, file.name)}?v=${Math.round(file.mtime)}&r=${reloadKey}&odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot`,
-    [projectId, file.name, file.mtime, reloadKey],
+    () => `${projectRawSignedUrl(projectId, file.name, rawToken)}?v=${Math.round(file.mtime)}&r=${reloadKey}&odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot`,
+    [projectId, file.name, file.mtime, reloadKey, rawToken],
   );
   const [previewSrcUrl, setPreviewSrcUrl] = useState(basePreviewSrcUrl);
   // Hold the iframe URL still (it carries file.mtime) while the user is mid
@@ -5481,6 +5487,7 @@ function HtmlViewer({
     () => (previewSource ? buildSrcdoc(previewSource, {
       deck: effectiveDeck,
       baseHref: projectRawUrl(projectId, baseDirFor(file.name)),
+      rawAssetSigning: { projectId, token: rawToken },
       initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
       selectionBridge: true,
       // Always inject the manual-edit bridge into the PREVIEW srcDoc (not the
@@ -5496,7 +5503,7 @@ function HtmlViewer({
       paletteBridge: false,
       previewFocusGuard: true,
     }) : ''),
-    [previewSource, effectiveDeck, projectId, file.name, previewStateKey],
+    [previewSource, effectiveDeck, projectId, file.name, previewStateKey, rawToken],
   );
   const lazySrcDocTransport = useMemo(() => buildLazySrcdocTransport(), []);
   const [srcDocTransportResetKey, setSrcDocTransportResetKey] = useState(0);
@@ -7067,6 +7074,7 @@ function HtmlViewer({
     openSandboxedPreviewInNewTab(source, exportTitle, {
       deck: effectiveDeck,
       baseHref: projectRawUrl(projectId, baseDirFor(file.name)),
+      rawAssetSigning: { projectId, token: rawToken },
       initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
     });
   }
