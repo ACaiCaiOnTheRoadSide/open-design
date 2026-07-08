@@ -23,13 +23,16 @@
   height: 100vh;
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 36px minmax(0, 1fr);
+  /* Flex column instead of a fixed two-row grid: the tabs chrome renders
+     conditionally (it disappears entirely while the home/entry tab is the
+     only tab), and the body must reclaim its row when it does. */
+  display: flex;
+  flex-direction: column;
   background: var(--bg-app);
   overflow: hidden;
 }
 .workspace-shell__body {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -49,6 +52,7 @@
 }
 
 .workspace-tabs-chrome.app-chrome-header {
+  flex: 0 0 auto;
   min-width: 0;
   max-width: 100%;
   min-height: 38px;
@@ -1551,4 +1555,55 @@ a.avatar-item:visited {
 }
 .split-resize-handle:focus-visible {
   outline: none;
+}
+
+/* -------- Theme quick menu ------------------------------------------ */
+/* Appearance-only control pinned to the viewport's top-right corner
+   (ThemeQuickMenu.tsx). Owns its class names on purpose: the SaaS
+   white-label build hides `.entry-main__topbar` and `.settings-icon-btn`,
+   and this control must survive that pass. */
+.theme-quick-menu {
+  position: fixed;
+  top: 3px;
+  right: 8px;
+  z-index: 300;
+  -webkit-app-region: no-drag;
+}
+.theme-quick-menu__trigger {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 100ms var(--ease-out), color 100ms var(--ease-out);
+}
+.theme-quick-menu__trigger:hover,
+.theme-quick-menu__trigger.is-active {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.theme-quick-menu__popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1900;
+  width: 236px;
+  max-width: calc(100vw - 24px);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg, 0 14px 36px rgba(0, 0, 0, 0.14));
+}
+.theme-quick-menu__swatches {
+  padding: 0 2px;
 }

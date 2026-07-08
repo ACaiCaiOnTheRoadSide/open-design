@@ -28,6 +28,7 @@ import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
 import { TooltipLayer } from './components/TooltipLayer';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
+import { ThemeQuickMenu } from './components/ThemeQuickMenu';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -2290,6 +2291,11 @@ function AppInner() {
           route={route}
           projects={projects}
           onboardingCompleted={config.onboardingCompleted === true}
+        />
+        <ThemeQuickMenu
+          config={config}
+          onThemeChange={handleThemeChange}
+          onAccentColorChange={handleAccentColorChange}
         />
         <div className="workspace-shell__body">
           {appMain}

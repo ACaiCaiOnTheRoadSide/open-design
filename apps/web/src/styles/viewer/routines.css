@@ -747,9 +747,6 @@
 
 /* Project page audit pass: one final rule set for the active project shell.
    Keep the outer panes flat; only controls and repeated items get radius. */
-.workspace-shell {
-  grid-template-rows: 34px minmax(0, 1fr);
-}
 .workspace-shell .workspace-tabs-chrome.app-chrome-header {
   --workspace-tabs-chrome-height: 34px;
   --workspace-tab-bar-bg: color-mix(in srgb, var(--bg-panel) 82%, var(--bg-subtle));

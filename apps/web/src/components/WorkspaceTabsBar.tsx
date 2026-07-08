@@ -612,7 +612,9 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false 
       resizeObserver?.disconnect();
       window.removeEventListener('resize', requestMeasure);
     };
-  }, [state.tabs.length]);
+    // activeTabId is a dependency because the entry tab renders conditionally
+    // on which tab is active — the strip's children change on activation.
+  }, [state.tabs.length, state.activeTabId]);
 
   useEffect(() => {
     const stripElement = stripRef.current;
@@ -945,6 +947,19 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false 
     }, 0);
   }
 
+  // The permanent entry tab only earns its slot as a "back to home" affordance
+  // while the user is elsewhere: on the home/entry views themselves it is the
+  // active tab and showing it is pure noise, so it drops out of the strip. If
+  // that leaves nothing to show (home with no project tabs open), the whole
+  // chrome bar disappears and the body reclaims its height (flex column shell).
+  // Tab STATE is untouched — only rendering filters — so shortcuts, route sync,
+  // and persistence keep operating on the full tab list.
+  const visibleTabs = state.tabs.filter(
+    (tab) => !(tab.kind === 'entry' && tab.id === state.activeTabId),
+  );
+
+  if (visibleTabs.length === 0) return null;
+
   return (
     <header className="app-chrome-header workspace-tabs-chrome" aria-label="Workspace tabs">
       <div className="app-chrome-traffic-space workspace-tabs-traffic" aria-hidden />
@@ -964,7 +979,7 @@ export function WorkspaceTabsBar({ route, projects, onboardingCompleted = false 
             chrome horizontally. The search-tabs popover still acts as
             a keyboard surface for finding a tab that's scrolled out of
             view. */}
-        {state.tabs.map((tab) => {
+        {visibleTabs.map((tab) => {
           const display = displayTabById.get(tab.id) ?? displayTabFor(tab, projectById, t);
           const active = tab.id === state.activeTabId;
           // The single entry tab is permanent and pinned leftmost: it cannot be
