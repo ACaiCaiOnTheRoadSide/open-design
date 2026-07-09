@@ -1,3 +1,4 @@
+import type { ChatRunEndReason } from '../api/chat.js';
 import type { LiveArtifactRefreshStatus } from '../api/live-artifacts.js';
 import type { SseErrorPayload } from '../errors.js';
 import type { SseTransportEvent } from './common.js';
@@ -76,6 +77,11 @@ export interface ChatSseEndPayload {
    *  runtime). Lets the chat offer a Continue affordance without a separate
    *  run-status fetch. Mirrors ChatRunStatusResponse.resumable. */
   resumable?: boolean;
+  /** Why the run reached this terminal status — always stamped by the daemon
+   *  so the chat can tell the user why the agent stopped even when nothing
+   *  went wrong (clean turn end, manual stop, quiet-period wrap-up, …).
+   *  Mirrors ChatRunStatusResponse.endReason. */
+  reason?: ChatRunEndReason;
 }
 
 export type DaemonAgentPayload =

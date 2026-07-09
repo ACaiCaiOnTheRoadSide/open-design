@@ -256,6 +256,36 @@ export const CHAT_RUN_STATUSES = [
 
 export type ChatRunStatus = (typeof CHAT_RUN_STATUSES)[number];
 
+/**
+ * Structured "why did this run stop" codes the daemon stamps on every terminal
+ * run. `completed` covers a clean model turn end; the rest name the specific
+ * termination path so the chat can render a human-readable reason instead of
+ * silently going idle. Failure runs reuse the run's error code (e.g.
+ * RATE_LIMITED, AGENT_AUTH_REQUIRED, AGENT_EXECUTION_FAILED) as the reason
+ * code, so `code` stays `string` for forward compatibility.
+ */
+export const CHAT_RUN_END_REASON_CODES = [
+  /** The agent finished its turn normally (model chose to stop). */
+  'completed',
+  /** The model hit its output-token ceiling; the reply is truncated. */
+  'output_truncated',
+  /** The user stopped the run. */
+  'user_canceled',
+  /** The daemon shut down / restarted while the run was active. */
+  'daemon_shutdown',
+  /** The deliverable existed but the agent went quiet; the daemon wrapped the
+   *  run up as succeeded after the artifact quiet period. */
+  'idle_artifact_shutdown',
+] as const;
+
+export interface ChatRunEndReason {
+  /** One of CHAT_RUN_END_REASON_CODES, or the run's error code on failure. */
+  code: string;
+  /** Optional human-readable elaboration (e.g. the raw stop reason or the
+   *  failure message already shown in the error card). */
+  detail?: string;
+}
+
 export type ChatMessageFeedbackRating = 'positive' | 'negative';
 
 export type ChatMessageFeedbackReasonCode =
@@ -355,6 +385,11 @@ export interface ChatRunStatusResponse {
    *  conversation resumes the persisted session. Absent/false on success,
    *  non-resumable failures, and runtimes without CLI session resume. */
   resumable?: boolean;
+  /** Why the run reached its terminal status. Always present once the run is
+   *  terminal so every surface (chat footer, CLI `od run status`) can tell the
+   *  user why the agent stopped — not just that it stopped. Mirrors the SSE
+   *  `end` payload's `reason`. */
+  endReason?: ChatRunEndReason;
   /** Absolute path to the per-run JSONL event log the daemon mirrors
    *  the SSE stream to (see runs.ts `runsLogDir`). Null when the
    *  daemon was launched without event persistence configured. */

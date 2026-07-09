@@ -86,6 +86,11 @@ export function createChatRunService({
       signal: null,
       error: null,
       errorCode: null,
+      // Why the run reached its terminal status ({ code, detail? }). Stamped
+      // by the specific termination path (cancel, shutdown, quiet-period
+      // wrap-up, truncation) via setEndReason; finish() derives a fallback
+      // from status + error so every terminal run carries a reason.
+      endReason: null,
       cancelRequested: false,
       retryRestartTimer: null,
       stdinOpen: false,
@@ -188,6 +193,7 @@ export function createChatRunService({
     error: run.error ?? null,
     errorCode: run.errorCode ?? null,
     resumable: run.resumable ?? false,
+    ...(run.endReason ? { endReason: run.endReason } : {}),
     eventsLogPath: run.eventsLogPath ?? null,
     workspace: run.workspace ?? projectWorkspaceProvenance(run.projectMetadata),
     mediaExecution: run.mediaExecution ?? normalizeMediaExecutionPolicyForRun(null),
@@ -196,13 +202,36 @@ export function createChatRunService({
     ...(run.browserUse ? { browserUse: run.browserUse } : {}),
   });
 
+  // Stamp why the run is about to terminate. First stamp wins: the specific
+  // termination path (user cancel, daemon shutdown, quiet-period wrap-up,
+  // truncation) knows more than the generic finish() fallback, and a later
+  // generic signal must not overwrite it.
+  const setEndReason = (run, code, detail = null) => {
+    if (run.endReason || !code) return;
+    run.endReason = { code, ...(detail ? { detail } : {}) };
+  };
+
+  // finish()-time fallback so EVERY terminal run carries a reason the UI can
+  // show. Failure runs reuse the error code/message already stamped on the
+  // run by the `error` emit; a bare cancel means the user stopped it.
+  const deriveEndReason = (run, status) => {
+    if (run.endReason) return run.endReason;
+    if (status === 'succeeded') return { code: 'completed' };
+    if (status === 'canceled') return { code: 'user_canceled' };
+    return {
+      code: run.errorCode ?? 'AGENT_EXECUTION_FAILED',
+      ...(run.error ? { detail: run.error } : {}),
+    };
+  };
+
   const finish = (run, status, code: number | null = null, signal: string | null = null) => {
     if (TERMINAL_RUN_STATUSES.has(run.status)) return;
     run.status = status;
     run.exitCode = code;
     run.signal = signal;
+    run.endReason = deriveEndReason(run, status);
     run.updatedAt = Date.now();
-    emit(run, 'end', { code, signal, status, resumable: run.resumable ?? false });
+    emit(run, 'end', { code, signal, status, resumable: run.resumable ?? false, reason: run.endReason });
     for (const sse of run.clients) sse.end();
     run.clients.clear();
     for (const waiter of run.waiters) waiter(statusBody(run));
@@ -412,6 +441,7 @@ export function createChatRunService({
     const activeRuns = Array.from(runs.values()).filter((run) => !TERMINAL_RUN_STATUSES.has(run.status));
     await Promise.all(activeRuns.map(async (run) => {
       run.cancelRequested = true;
+      setEndReason(run, 'daemon_shutdown');
       run.updatedAt = Date.now();
       clearPendingRetryRestart(run);
       closeRunStdin(run);
@@ -472,6 +502,7 @@ export function createChatRunService({
     finish,
     fail,
     drop,
+    setEndReason,
     signalChild: killChild,
     statusBody,
     isTerminal(status) {

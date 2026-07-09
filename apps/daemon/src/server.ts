@@ -1824,11 +1824,27 @@ function reconcileAssistantMessageOnRunEnd(db, runs, run) {
   void runs
     .wait(run)
     .then(async (finalStatus) => {
-      await db.prepare(
+      const updated = await db.prepare(
         `UPDATE messages
             SET run_status = ?, ended_at = COALESCE(ended_at, ?)
           WHERE id = ? AND run_status IN ('queued', 'running')`,
       ).run(finalStatus.status, Date.now(), run.assistantMessageId);
+      // Persist WHY the run ended alongside the status so the chat can still
+      // explain the stop after a reload (the live SSE `end` payload carries
+      // the same reason). Guarded by the UPDATE's changed-row count so a
+      // status already reconciled elsewhere doesn't stack duplicate events.
+      const reason = finalStatus.endReason;
+      if (!reason?.code || !(updated?.changes > 0)) return;
+      try {
+        await appendMessageAgentEvent(db, run.assistantMessageId, {
+          kind: 'status',
+          label: 'run_end',
+          code: reason.code,
+          ...(reason.detail ? { detail: reason.detail } : {}),
+        });
+      } catch (err) {
+        console.warn('[runs] run end reason persistence failed', err);
+      }
     })
     .catch((err) => {
       console.warn('[runs] message reconciliation failed', err);
@@ -7290,6 +7306,14 @@ export async function startServer({
         // kill, OOM) is NOT silently reclassified to `succeeded` —
         // only signals from this watchdog branch should be.
         artifactQuietShutdownRequested = true;
+        // The close handler will classify this run `succeeded`, but "went
+        // quiet after producing the deliverable" is not the same as "model
+        // finished its turn" — record the real reason for the UI footer.
+        design.runs.setEndReason(
+          run,
+          'idle_artifact_shutdown',
+          `no new output for ${Math.round(activeInactivityTimeoutMs() / 1000)}s after the artifact was produced`,
+        );
         if (acpSession?.abort) {
           acpSession.abort();
         }
@@ -8310,6 +8334,16 @@ export async function startServer({
         try {
           applyClaudeStreamJsonRunBookkeeping(run, ev);
         } catch {}
+        // A `max_tokens` stop reason means the model hit its output ceiling
+        // mid-reply — the run still classifies as succeeded (clean turn end),
+        // but the user must see "truncated", not "done".
+        if (
+          ev &&
+          ((ev as any).type === 'turn_end' || (ev as any).type === 'usage') &&
+          (ev as any).stopReason === 'max_tokens'
+        ) {
+          design.runs.setEndReason(run, 'output_truncated', 'max_tokens');
+        }
       }, { suppressHtmlArtifactsAfterFileWrite: def.id === 'claude' });
       child.stdout.on('data', (chunk) => claude.feed(chunk));
       child.on('close', () => claude.flush());

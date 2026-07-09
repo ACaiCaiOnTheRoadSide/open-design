@@ -38,6 +38,73 @@ describe('chat run service shutdown', () => {
 
 
 
+  describe('terminal end reason', () => {
+    it('stamps completed on a clean success and carries it in the end event + status body', () => {
+      const runs = createRuns();
+      const run = runs.create({ projectId: 'p', conversationId: 'c' });
+
+      runs.finish(run, 'succeeded', 0, null);
+
+      expect(run.events.at(-1)).toMatchObject({
+        event: 'end',
+        data: { status: 'succeeded', reason: { code: 'completed' } },
+      });
+      expect(runs.statusBody(run).endReason).toEqual({ code: 'completed' });
+    });
+
+    it('derives the failure reason from the stamped error code and message', () => {
+      const runs = createRuns();
+      const run = runs.create({ projectId: 'p', conversationId: 'c' });
+
+      runs.emit(run, 'error', {
+        error: { code: 'RATE_LIMITED', message: 'usage limit reached' },
+      });
+      runs.finish(run, 'failed', 1, null);
+
+      expect(runs.statusBody(run).endReason).toEqual({
+        code: 'RATE_LIMITED',
+        detail: 'usage limit reached',
+      });
+    });
+
+    it('stamps user_canceled when the user cancels a run', async () => {
+      const runs = createRuns();
+      const run = runs.create({ projectId: 'p', conversationId: 'c' });
+
+      await runs.cancel(run);
+
+      expect(runs.statusBody(run).endReason).toEqual({ code: 'user_canceled' });
+      expect(run.events.at(-1)).toMatchObject({
+        event: 'end',
+        data: { status: 'canceled', reason: { code: 'user_canceled' } },
+      });
+    });
+
+    it('stamps daemon_shutdown when the daemon tears active runs down', async () => {
+      const runs = createRuns();
+      const run = runs.create({ projectId: 'p', conversationId: 'c' });
+      run.status = 'running';
+
+      await runs.shutdownActive({ graceMs: 10 });
+
+      expect(runs.statusBody(run).endReason).toEqual({ code: 'daemon_shutdown' });
+    });
+
+    it('lets an explicit early stamp win over the generic finish() fallback', () => {
+      const runs = createRuns();
+      const run = runs.create({ projectId: 'p', conversationId: 'c' });
+
+      runs.setEndReason(run, 'output_truncated', 'max_tokens');
+      runs.setEndReason(run, 'completed'); // later stamp must not overwrite
+      runs.finish(run, 'succeeded', 0, null);
+
+      expect(runs.statusBody(run).endReason).toEqual({
+        code: 'output_truncated',
+        detail: 'max_tokens',
+      });
+    });
+  });
+
   it('ignores subsequent finish attempts after the run reaches a terminal state', async () => {
     const runs = createRuns();
     const run = runs.create({ projectId: 'project-1', conversationId: 'conv-1' });

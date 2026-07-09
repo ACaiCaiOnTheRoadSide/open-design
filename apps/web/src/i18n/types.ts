@@ -3270,6 +3270,11 @@ export interface Dict {
   'assistant.role': string;
   'assistant.workingLabel': string;
   'assistant.doneLabel': string;
+  'assistant.endCanceled': string;
+  'assistant.endInterrupted': string;
+  'assistant.endTruncated': string;
+  'assistant.endIdleWrapUp': string;
+  'assistant.endFailed': string;
   'assistant.copyMarkdown': string;
   'assistant.forkConversation': string;
   'assistant.forkingConversation': string;

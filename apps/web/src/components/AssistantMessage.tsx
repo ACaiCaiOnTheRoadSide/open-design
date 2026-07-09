@@ -569,6 +569,16 @@ function AssistantMessageImpl({
   const hasEmptyResponse = events.some(
     (e) => e.kind === "status" && e.label === "empty_response"
   );
+  // Terminal end reason stamped by the daemon (live via the SSE `end`
+  // payload, persisted via message reconciliation) — lets the footer say WHY
+  // the agent stopped instead of just flipping to "Done". Last one wins so a
+  // reattach replay can't resurrect a stale reason.
+  const runEndEvent = [...events]
+    .reverse()
+    .find(
+      (e): e is Extract<AgentEvent, { kind: "status" }> =>
+        e.kind === "status" && e.label === "run_end"
+    );
   const unfinishedTodos = streaming ? [] : unfinishedTodosFromEvents(events);
   const runSucceeded =
     !streaming &&
@@ -707,6 +717,9 @@ function AssistantMessageImpl({
             // The pre-output "initializing" status is surfaced by the footer's
             // shimmering "Preparing…" label instead of its own pill.
             if (b.label === "initializing") return null;
+            // The terminal end-reason event renders through the footer's
+            // localized status label, not as a raw inline pill.
+            if (b.label === "run_end") return null;
             return <StatusPill key={i} label={b.label} detail={b.detail} />;
           }
           return null;
@@ -795,6 +808,9 @@ function AssistantMessageImpl({
                   forking,
                   forceVisible: true,
                   isLast: !!isLast,
+                  runStatus: message.runStatus,
+                  endReasonCode: runEndEvent?.code,
+                  endReasonDetail: runEndEvent?.detail,
                 }}
               />
             ) : (
@@ -811,6 +827,9 @@ function AssistantMessageImpl({
                 onFork={canFork ? onForkFromMessage : undefined}
                 forking={forking}
                 isLast={!!isLast}
+                runStatus={message.runStatus}
+                endReasonCode={runEndEvent?.code}
+                endReasonDetail={runEndEvent?.detail}
               />
             )}
           </div>
@@ -1004,6 +1023,49 @@ interface AssistantFooterProps {
   // The most recent assistant reply keeps its footer permanently visible
   // (not hover-gated), matching Lobe Chat's persistent last-message footer.
   isLast?: boolean;
+  // Terminal run status + daemon-stamped end reason ({code, detail} from the
+  // `run_end` status event). Together they pick the localized "why did this
+  // stop" label once streaming ends; older messages without a stamped reason
+  // fall back to runStatus alone.
+  runStatus?: ChatMessage["runStatus"];
+  endReasonCode?: string;
+  endReasonDetail?: string;
+}
+
+// Map the daemon's terminal end reason (plus the run status as legacy
+// fallback) to the footer's localized "why did this stop" label. Returns null
+// when the plain "Done" label is the right rendering (clean completion).
+function endReasonLabelKey(
+  runStatus: ChatMessage["runStatus"],
+  endReasonCode: string | undefined,
+):
+  | "assistant.endCanceled"
+  | "assistant.endInterrupted"
+  | "assistant.endTruncated"
+  | "assistant.endIdleWrapUp"
+  | "assistant.endFailed"
+  | null {
+  switch (endReasonCode) {
+    case "user_canceled":
+      return "assistant.endCanceled";
+    case "daemon_shutdown":
+      return "assistant.endInterrupted";
+    case "output_truncated":
+      return "assistant.endTruncated";
+    case "idle_artifact_shutdown":
+      return "assistant.endIdleWrapUp";
+    case "completed":
+    case undefined:
+      break;
+    default:
+      // Any other code is a failure reason (the run's error code). The error
+      // card carries the detail; the footer states the outcome.
+      return "assistant.endFailed";
+  }
+  // No stamped reason (pre-feature history) — fall back to the run status.
+  if (runStatus === "canceled") return "assistant.endCanceled";
+  if (runStatus === "failed") return "assistant.endFailed";
+  return null;
 }
 
 function AssistantFooter({
@@ -1021,8 +1083,12 @@ function AssistantFooter({
   feedbackControls,
   forceVisible = false,
   isLast = false,
+  runStatus,
+  endReasonCode,
+  endReasonDetail,
 }: AssistantFooterProps) {
   const t = useT();
+  const endLabelKey = streaming ? null : endReasonLabelKey(runStatus, endReasonCode);
   const elapsed = useLiveElapsed(streaming, startedAt, endedAt, usage?.durationMs);
   const formattedCost =
     typeof usage?.costUsd === "number" &&
@@ -1050,7 +1116,10 @@ function AssistantFooter({
       data-last={isLast ? "true" : "false"}
     >
       <span className="dot" data-active={streaming ? "true" : "false"} />
-      <span className={`assistant-label${streaming && preparing ? " shimmer-text shimmer-prepare" : ""}`}>
+      <span
+        className={`assistant-label${streaming && preparing ? " shimmer-text shimmer-prepare" : ""}`}
+        title={!streaming && endLabelKey && endReasonDetail ? endReasonDetail : undefined}
+      >
         {streaming
           ? preparing
             ? preparingStatus === "thinking"
@@ -1059,6 +1128,8 @@ function AssistantFooter({
             : t("assistant.workingLabel")
           : hasEmptyResponse
           ? t("assistant.emptyResponseLabel")
+          : endLabelKey
+          ? t(endLabelKey)
           : hasUnfinishedTodos
           ? t("assistant.unfinishedLabel")
           : t("assistant.doneLabel")}

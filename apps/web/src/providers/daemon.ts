@@ -1128,6 +1128,22 @@ async function consumeDaemonRun({
             // hitting the exit-code/signal safety net later.
             serverDeclaredSuccess = event.data.status === 'succeeded';
             endStatus = isChatRunStatus(event.data.status) ? event.data.status : 'succeeded';
+            // Surface WHY the run ended as a persisted-shaped status event so
+            // the assistant footer can explain the stop (manual stop, output
+            // truncation, quiet-period wrap-up, clean turn end). The daemon
+            // persists the same event server-side for reloads; this live copy
+            // covers the in-flight message state.
+            const endReason = event.data.reason;
+            if (endReason && typeof endReason.code === 'string' && endReason.code) {
+              handlers.onAgentEvent({
+                kind: 'status',
+                label: 'run_end',
+                code: endReason.code,
+                ...(typeof endReason.detail === 'string' && endReason.detail
+                  ? { detail: endReason.detail }
+                  : {}),
+              });
+            }
             onRunStatus?.(endStatus);
           }
         }
