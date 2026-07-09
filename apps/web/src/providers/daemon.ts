@@ -246,6 +246,15 @@ export interface DaemonStreamHandlers extends StreamHandlers {
    * tool name so the UI can gate the live preview to code-writing tools.
    */
   onToolInputDelta?: (id: string, name: string, delta: string) => void;
+  /**
+   * Live-only connection/retry notice for the streaming assistant message
+   * (e.g. "connection lost; reconnecting 2/4" from the client reconnect loop,
+   * or the dispatcher's `[od-retry]` sandbox-retry progress relayed over
+   * stderr). `null` clears the notice. Ephemeral by design: never persisted,
+   * never part of the message content — the user sees the retry story live,
+   * and a recovered run leaves no trace of it.
+   */
+  onConnectionStatus?: (notice: string | null) => void;
 }
 
 export interface DaemonStreamOptions {
@@ -670,7 +679,18 @@ export async function streamViaDaemon({
   } catch (err) {
     if ((err as Error).name === 'AbortError') return;
     emitRunStatus('failed');
-    handlers.onError(err instanceof Error ? err : new Error(String(err)));
+    const e = err instanceof Error ? err : new Error(String(err));
+    // fetch 的网络层失败是 TypeError,message 因浏览器而异且对用户无信息量
+    // (Safari "Load failed" / Chrome "Failed to fetch"):包装成能行动的说法。
+    // 走到这的网络错误只剩「run 创建请求(POST /api/runs)没发出去」——run 未
+    // 诞生,重发消息即可;流中断线已在 consumeDaemonRun 的重连环内消化。
+    if (e instanceof TypeError) {
+      handlers.onError(
+        new Error(`could not reach the server to start this turn (${e.message}); check the connection and resend`),
+      );
+      return;
+    }
+    handlers.onError(e);
   }
 }
 
@@ -692,6 +712,66 @@ export async function fetchChatRunStatus(runId: string): Promise<ChatRunStatusRe
   } catch {
     return null;
   }
+}
+
+/** [od-retry] 契约前缀:backend dispatcher(huskbox.go)在沙箱侧重试期间经 stderr
+ *  下发的进度行。识别成连接状态提示展示,并从错误尾里剔除(不参与失败归类)。 */
+const OD_RETRY_MARKER = '[od-retry]';
+
+type RunStatusProbe =
+  | { kind: 'ok'; status: string; exitCode?: number | null; signal?: string | null; resumable?: boolean }
+  | { kind: 'gone' }
+  | { kind: 'unreachable' };
+
+/**
+ * 与 `fetchChatRunStatus` 的关键区别:把「daemon 明确说查无此 run(404)」和「探针
+ * 本身够不着(断网/网关不可用)」区分开。前者可以宣判失败;后者绝不能——网络断掉
+ * 恰恰是需要探针的场景,此时凭 null 定罪等于把网络抖动放大成整轮失败。
+ * unreachable 判定前内置小退避重探,穿过与主流断相同的抖动窗口。
+ */
+async function probeChatRunStatusDetailed(runId: string): Promise<RunStatusProbe> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000 * attempt));
+    }
+    try {
+      const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+      if (resp.ok) {
+        const body = (await resp.json()) as ChatRunStatusResponse;
+        return {
+          kind: 'ok',
+          status: body.status,
+          exitCode: body.exitCode ?? null,
+          signal: body.signal ?? null,
+          resumable: body.resumable === true,
+        };
+      }
+      if (resp.status === 404) return { kind: 'gone' };
+      // 5xx/网关错误:按不可达处理(网关滚动中的坏响应不构成 run 失败的证据)。
+    } catch {
+      // 网络层失败 → 退避重探
+    }
+  }
+  return { kind: 'unreachable' };
+}
+
+/** 可被订阅中止信号打断的延时(中止时抛 AbortError,与 fetch 的中止语义一致)。 */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // PR #3157: Antigravity's auth banner can offer a one-click "open
@@ -954,6 +1034,15 @@ async function consumeDaemonRun({
 }: DaemonReattachOptions & { agentId?: string }): Promise<void> {
   let acc = '';
   let stderrBuf = '';
+  // stderr 按行缓冲:跨 chunk 拼行后才能可靠识别 [od-retry] 契约行(dispatcher 的
+  // 沙箱重试进度),识别出的行走 onConnectionStatus,其余照旧进 stderrBuf。
+  let stderrPending = '';
+  // 两类连接提示各自的「在展示中」标记,决定何时清除:
+  //  - reconnectNotice:客户端重连提示,新连接送达任何一帧即清(连上了);
+  //  - retryNotice:dispatcher 的 [od-retry] 提示,重试成功后新 execution 的
+  //    stdout 一到即清(keepalive 帧不算——dispatcher 退避期间 keepalive 照常流)。
+  let reconnectNoticeActive = false;
+  let retryNoticeActive = false;
   let exitCode: number | null = null;
   let exitSignal: string | null = null;
   let endStatus: ChatRunStatus | null = null;
@@ -987,7 +1076,21 @@ async function consumeDaemonRun({
       return;
     }
 
-    for (let reconnects = 0; endStatus === null && reconnects < 5;) {
+    const RECONNECT_MAX = 5;
+    // 重连退避 + 用户可见的连接提示:没有它们,一次网络抖动就是「莫名其妙失败」。
+    const reconnectPause = async (attempt: number, why: string) => {
+      const delayMs = Math.min(15_000, 500 * 2 ** (attempt - 1));
+      reconnectNoticeActive = true;
+      handlers.onConnectionStatus?.(
+        `connection lost (${why}); reconnecting ${attempt}/${RECONNECT_MAX - 1}`,
+      );
+      await abortableDelay(delayMs, signal);
+    };
+    // 外层 watch 环:内层重连环耗尽后问 daemon 真相,run 还活着就继续守——
+    // daemon 自己的无输出看门狗保证 run 不会永远 running,守候必然收敛。
+    let watchCycles = 0;
+    watch: for (;;) {
+    for (let reconnects = 0; endStatus === null && reconnects < RECONNECT_MAX;) {
       const qs = lastEventId ? `?after=${encodeURIComponent(lastEventId)}` : '';
       let resp: Response;
       try {
@@ -998,6 +1101,9 @@ async function consumeDaemonRun({
       } catch (err) {
         if ((err as Error).name === 'AbortError') throw err;
         reconnects += 1;
+        if (endStatus === null && reconnects < RECONNECT_MAX) {
+          await reconnectPause(reconnects, (err as Error)?.message || 'network error');
+        }
         continue;
       }
 
@@ -1012,6 +1118,12 @@ async function consumeDaemonRun({
       let buf = '';
       let sawStreamProgress = false;
 
+      // reader.read() 的中途异常(代理/网关掐流、网络切换、机器睡醒)与拨号失败
+      // 同待遇:计入重连、按 lastEventId 断点续传。此前它不在任何保护内,异常直接
+      // 穿透整个重连循环,把「服务端还好好跑着的 run」误判成整轮失败(线上
+      // Safari 的 "Load failed" 病根)。try 只为兜异常,内部逻辑未动、不重缩进。
+      let readFailure: Error | null = null;
+      try {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -1022,6 +1134,11 @@ async function consumeDaemonRun({
           buf = buf.slice(idx + 2);
           const parsed = parseSseFrame(frame);
           if (!parsed) continue;
+          // 新连接送达任何一帧 = 重连成功,撤下客户端侧的重连提示。
+          if (reconnectNoticeActive) {
+            reconnectNoticeActive = false;
+            handlers.onConnectionStatus?.(null);
+          }
           if (parsed.kind === 'comment') {
             sawStreamProgress = true;
             trackRunProgress(runId);
@@ -1038,6 +1155,11 @@ async function consumeDaemonRun({
           const event = parsed as unknown as ChatSseEvent;
 
           if (event.event === 'stdout') {
+            // agent 恢复产出 = 沙箱侧重试成功,撤下 [od-retry] 提示。
+            if (retryNoticeActive) {
+              retryNoticeActive = false;
+              handlers.onConnectionStatus?.(null);
+            }
             const chunk = String(event.data.chunk ?? '');
             acc += chunk;
             handlers.onDelta(chunk);
@@ -1046,7 +1168,22 @@ async function consumeDaemonRun({
           }
 
           if (event.event === 'stderr') {
-            stderrBuf += event.data.chunk ?? '';
+            // 按行拼装以可靠识别 [od-retry] 契约行(dispatcher 在沙箱侧重试时的
+            // 进度播报,见 backend huskbox.go):识别出的行转成连接状态提示,不进
+            // stderrBuf——避免重试叙事污染最终失败的错误尾与归类。
+            stderrPending += String(event.data.chunk ?? '');
+            let nl: number;
+            while ((nl = stderrPending.indexOf('\n')) !== -1) {
+              const line = stderrPending.slice(0, nl);
+              stderrPending = stderrPending.slice(nl + 1);
+              const trimmed = line.trimStart();
+              if (trimmed.startsWith(OD_RETRY_MARKER)) {
+                retryNoticeActive = true;
+                handlers.onConnectionStatus?.(trimmed.slice(OD_RETRY_MARKER.length).trim());
+              } else {
+                stderrBuf += `${line}\n`;
+              }
+            }
             continue;
           }
 
@@ -1148,7 +1285,72 @@ async function consumeDaemonRun({
           }
         }
       }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') throw err;
+        readFailure = err instanceof Error ? err : new Error(String(err));
+      }
+      if (readFailure) {
+        reconnects += 1;
+        if (endStatus === null && reconnects < RECONNECT_MAX) {
+          await reconnectPause(reconnects, readFailure.message || 'stream read failed');
+        }
+        continue;
+      }
       reconnects = sawStreamProgress ? 0 : reconnects + 1;
+    }
+    // 不完整的 stderr 尾行(无换行结尾)归还给错误尾缓冲。
+    stderrBuf += stderrPending;
+    stderrPending = '';
+    if (endStatus !== null) {
+      handlers.onConnectionStatus?.(null);
+      break watch;
+    }
+
+    // 重连环耗尽:三级裁决——凭 daemon 的真相定罪,不凭网络症状。
+    const probe = await probeChatRunStatusDetailed(runId);
+    if (probe.kind === 'ok' && (probe.status === 'running' || probe.status === 'queued') && watchCycles < 3) {
+      // run 在服务端还活着,只是事件通道建不起来:继续守。守候有限次,防
+      // 「status 端点可达而 events 端点永久坏死」的病态组合守成无限循环。
+      watchCycles += 1;
+      reconnectNoticeActive = true;
+      handlers.onConnectionStatus?.(
+        `events stream unavailable; the run is still active on the server (watch ${watchCycles}/3)`,
+      );
+      await abortableDelay(5_000, signal);
+      continue watch;
+    }
+    handlers.onConnectionStatus?.(null);
+    if (probe.kind === 'gone') {
+      onRunStatus?.('failed');
+      handlers.onError(
+        new Error('the daemon has no record of this run (it may have restarted); this turn did not complete'),
+      );
+      return;
+    }
+    if (probe.kind === 'unreachable' || probe.status === 'running' || probe.status === 'queued') {
+      // 探针也够不着(整段网络断了)或守候超限:这是网络层问题,不是 run 的罪。
+      // 标 transient:调用侧不把 failed 持久化——刷新/重进会话时消息仍是
+      // running,attachRecoverableRuns 会带着恢复后的网络重新裁决并自动接回。
+      // 注意不发 onRunStatus('failed'):那条通道的消费方会把状态持久化,
+      // 失败叙事只经 onError(带 transient 标记)走内存。
+      const err = new Error(
+        'lost connection to the server while the run was in progress; it may still be running — refresh or reopen the conversation to reattach',
+      );
+      (err as Error & { transient?: boolean }).transient = true;
+      handlers.onError(err);
+      return;
+    }
+    // 探针拿到了权威终态(run 已收敛,只是 end 帧没送到浏览器):与 SSE end 同等
+    // 权威,直接落地,交给循环后的统一收尾逻辑(exit-code 安全网/onDone)。
+    if (isChatRunStatus(probe.status)) {
+      endStatus = probe.status;
+      exitCode = probe.exitCode ?? null;
+      exitSignal = probe.signal ?? null;
+      serverDeclaredSuccess = probe.status === 'succeeded';
+      if (probe.resumable) endResumable = true;
+      onRunStatus?.(endStatus);
+    }
+    break watch;
     }
 
     if (endStatus === null) {

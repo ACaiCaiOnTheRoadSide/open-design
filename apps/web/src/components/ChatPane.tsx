@@ -500,6 +500,10 @@ interface Props {
   // AssistantMessage so an in-flight Write/Edit can render its code in real
   // time before the full `tool_use` arrives. Never persisted.
   liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
+  // Live-only connection/retry notices keyed by assistant message id
+  // ("connection lost; reconnecting 2/4", dispatcher [od-retry] progress).
+  // Shown on the streaming row's footer; never persisted.
+  connectionNotices?: Record<string, string>;
   initialDraft?: string;
   composerPlaceholder?: string;
   // Focus the right-hand Questions tab from the chat banner.
@@ -713,6 +717,7 @@ export function ChatPane({
   shareToOpenDesignBusyMessageId,
   forceStreamingMessageIds,
   liveToolInput,
+  connectionNotices,
   initialDraft,
   composerPlaceholder,
   onOpenQuestions,
@@ -2129,6 +2134,7 @@ export function ChatPane({
                 messages={displayMessages}
                 streaming={streaming}
                 liveToolInput={liveToolInput}
+                connectionNotices={connectionNotices}
                 projectId={projectId}
                 projectKindForTracking={projectKindForTracking}
                 activeConversationId={activeConversationId}
@@ -2523,6 +2529,7 @@ function ChatRows({
   messages,
   streaming,
   liveToolInput,
+  connectionNotices,
   projectId,
   projectKindForTracking,
   activeConversationId,
@@ -2570,6 +2577,7 @@ function ChatRows({
   messages: ChatMessage[];
   streaming: boolean;
   liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
+  connectionNotices?: Record<string, string>;
   projectId: string | null;
   projectKindForTracking: TrackingProjectKind | null;
   activeConversationId: string | null;
@@ -2679,6 +2687,7 @@ function ChatRows({
         // get a stable `undefined`, so adding `liveToolInput` to the memo
         // comparator re-renders just this row per `tool_input_delta`, not all N.
         liveToolInput={messageStreaming ? liveToolInput : undefined}
+        connectionNotice={messageStreaming ? connectionNotices?.[m.id] : undefined}
         showConversationTodoCard={m.id === conversationTodoAnchorMessageId}
         conversationTodoInput={conversationTodoInput}
         projectId={projectId}

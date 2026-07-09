@@ -263,6 +263,10 @@ interface Props {
   // in-flight Write/Edit's code in real time before the full `tool_use`
   // arrives. Never persisted.
   liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
+  // Live-only connection/retry notice for the streaming row ("connection
+  // lost; reconnecting 2/4", dispatcher [od-retry] progress). Rendered in the
+  // footer in place of the Working label; never persisted.
+  connectionNotice?: string;
   // ChatPane renders the canonical conversation-level TodoWrite card as its
   // own row, while this message strips TodoWrite tool groups to avoid a
   // duplicate per-message card.
@@ -374,6 +378,9 @@ const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   // comparing it re-renders just that row as the card grows — without it the
   // memo swallows the deltas and the card only updates on the final tool_use.
   'liveToolInput',
+  // Same live-only pattern as liveToolInput: only the streaming row receives
+  // a value, so comparing re-renders just that row per notice update.
+  'connectionNotice',
 ];
 
 function areAssistantMessagePropsEqual(prev: Props, next: Props): boolean {
@@ -403,6 +410,7 @@ function AssistantMessageImpl({
   message,
   streaming,
   liveToolInput,
+  connectionNotice,
   showConversationTodoCard = false,
   conversationTodoInput = null,
   projectId,
@@ -811,6 +819,7 @@ function AssistantMessageImpl({
                   runStatus: message.runStatus,
                   endReasonCode: runEndEvent?.code,
                   endReasonDetail: runEndEvent?.detail,
+                  connectionNotice,
                 }}
               />
             ) : (
@@ -830,6 +839,7 @@ function AssistantMessageImpl({
                 runStatus={message.runStatus}
                 endReasonCode={runEndEvent?.code}
                 endReasonDetail={runEndEvent?.detail}
+                connectionNotice={connectionNotice}
               />
             )}
           </div>
@@ -1030,6 +1040,10 @@ interface AssistantFooterProps {
   runStatus?: ChatMessage["runStatus"];
   endReasonCode?: string;
   endReasonDetail?: string;
+  // Live connection/retry notice; when present during streaming it replaces
+  // the Working label so the user sees the retry story instead of a stuck
+  // spinner. Cleared (undefined) the moment the stream recovers.
+  connectionNotice?: string;
 }
 
 // Map the daemon's terminal end reason (plus the run status as legacy
@@ -1086,6 +1100,7 @@ function AssistantFooter({
   runStatus,
   endReasonCode,
   endReasonDetail,
+  connectionNotice,
 }: AssistantFooterProps) {
   const t = useT();
   const endLabelKey = streaming ? null : endReasonLabelKey(runStatus, endReasonCode);
@@ -1117,11 +1132,13 @@ function AssistantFooter({
     >
       <span className="dot" data-active={streaming ? "true" : "false"} />
       <span
-        className={`assistant-label${streaming && preparing ? " shimmer-text shimmer-prepare" : ""}`}
+        className={`assistant-label${streaming && (preparing || connectionNotice) ? " shimmer-text shimmer-prepare" : ""}`}
         title={!streaming && endLabelKey && endReasonDetail ? endReasonDetail : undefined}
       >
         {streaming
-          ? preparing
+          ? connectionNotice
+            ? connectionNotice
+            : preparing
             ? preparingStatus === "thinking"
               ? t("assistant.statusThinking")
               : t("assistant.statusPreparing")

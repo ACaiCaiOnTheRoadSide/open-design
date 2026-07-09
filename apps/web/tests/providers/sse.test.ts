@@ -1757,7 +1757,68 @@ describe('streamViaDaemon', () => {
     expect(handlers.onDone).toHaveBeenCalledWith('');
   });
 
-  it('reports an error when reconnects are exhausted before an end event', async () => {
+  it('resumes from lastEventId when the stream read fails mid-flight', async () => {
+    // 本次修复的核心规格:连接建立后读到一半断掉(reader.read() 抛错——代理/
+    // 网关掐流、网络切换)不再穿透成整轮失败,而是计入重连、带 after=<lastEventId>
+    // 断点续传,最终正常收尾。旧行为下这个场景直接把服务端还在跑的 run 判死
+    // (线上 Safari "Load failed")。
+    const handlers = createDaemonHandlers();
+    const encoder = new TextEncoder();
+    // pull 驱动:第一次 read 正常交付带 id 的事件,第二次 read 才报错——
+    // start() 里 enqueue 后立即 error 会把未读队列一起丢弃,模拟不出"读了一半"。
+    let pulls = 0;
+    const brokenMidRead = new Response(
+      new ReadableStream({
+        pull(controller) {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(
+              encoder.encode('id: 3\nevent: stdout\ndata: {"chunk":"hel"}\n\n'),
+            );
+            return;
+          }
+          controller.error(new TypeError('Load failed'));
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
+      if (url === '/api/runs/run-1/events') return brokenMidRead;
+      if (url === '/api/runs/run-1/events?after=3') {
+        return sseResponse(
+          'id: 4\nevent: stdout\ndata: {"chunk":"lo"}\n\n' +
+            'id: 5\nevent: end\ndata: {"code":0,"status":"succeeded"}\n\n',
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    vi.useFakeTimers();
+    try {
+      const done = streamViaDaemon({
+        agentId: 'mock',
+        history: [{ id: '1', role: 'user', content: 'hello' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        handlers,
+      });
+      await vi.runAllTimersAsync();
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/runs/run-1/events?after=3')).toBe(true);
+    expect(handlers.onError).not.toHaveBeenCalled();
+    expect(handlers.onDone).toHaveBeenCalledWith('hello'.slice(0, 3) + 'lo');
+  });
+
+  it('reports a transient error when reconnects exhaust and the status probe is unreachable', async () => {
+    // 重连环耗尽且 run 状态探针也够不着(整段网络断了):三级裁决判「transient」——
+    // 报错但打上 transient 标,调用侧据此不把 failed 持久化,重进会话时重新裁决。
     const handlers = createDaemonHandlers();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -1767,20 +1828,37 @@ describe('streamViaDaemon', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await streamViaDaemon({
-      agentId: 'mock',
-      history: [{ id: '1', role: 'user', content: 'hello' }],
-      systemPrompt: '',
-      signal: new AbortController().signal,
-      handlers,
-    });
+    vi.useFakeTimers();
+    try {
+      const done = streamViaDaemon({
+        agentId: 'mock',
+        history: [{ id: '1', role: 'user', content: 'hello' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        handlers,
+      });
+      await vi.runAllTimersAsync();
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(fetchMock).not.toHaveBeenCalledWith('/api/runs/run-1/cancel', { method: 'POST' });
-    expect(handlers.onError).toHaveBeenCalledWith(new Error('daemon stream disconnected before run completed'));
+    expect(handlers.onError).toHaveBeenCalledWith(
+      Object.assign(
+        new Error(
+          'lost connection to the server while the run was in progress; it may still be running — refresh or reopen the conversation to reattach',
+        ),
+        { transient: true },
+      ),
+    );
     expect(handlers.onDone).not.toHaveBeenCalled();
   });
 
-  it('marks a daemon run failed when the SSE stream closes silently and status is still active', async () => {
+  it('keeps watching an active run through silent stream closes, then surfaces a transient error', async () => {
+    // 静默断流但探针说 run 还在跑:不再立即判死(旧行为),而是有限守候
+    // (watch ×3),守候超限后以 transient 错误收尾——不发 onRunStatus('failed'),
+    // 避免消费方把 failed 持久化;持久化副本保持 running,重进会话时自动接回。
     const handlers = createDaemonHandlers();
     const onRunStatus = vi.fn();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -1804,18 +1882,32 @@ describe('streamViaDaemon', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await streamViaDaemon({
-      agentId: 'mock',
-      history: [{ id: '1', role: 'user', content: 'hello' }],
-      systemPrompt: '',
-      signal: new AbortController().signal,
-      handlers,
-      onRunStatus,
-    });
+    vi.useFakeTimers();
+    try {
+      const done = streamViaDaemon({
+        agentId: 'mock',
+        history: [{ id: '1', role: 'user', content: 'hello' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        handlers,
+        onRunStatus,
+      });
+      await vi.runAllTimersAsync();
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/runs/run-1')).toBe(true);
-    expect(onRunStatus).toHaveBeenCalledWith('failed');
-    expect(handlers.onError).toHaveBeenCalledWith(new Error('daemon stream disconnected before run completed'));
+    expect(onRunStatus).not.toHaveBeenCalledWith('failed');
+    expect(handlers.onError).toHaveBeenCalledWith(
+      Object.assign(
+        new Error(
+          'lost connection to the server while the run was in progress; it may still be running — refresh or reopen the conversation to reattach',
+        ),
+        { transient: true },
+      ),
+    );
     expect(handlers.onDone).not.toHaveBeenCalled();
   });
 
