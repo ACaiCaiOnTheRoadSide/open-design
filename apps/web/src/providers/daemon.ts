@@ -255,6 +255,14 @@ export interface DaemonStreamHandlers extends StreamHandlers {
    * and a recovered run leaves no trace of it.
    */
   onConnectionStatus?: (notice: string | null) => void;
+  /**
+   * Tail of the run's stderr, delivered once at terminal resolution (before
+   * onDone/onError). Exit-0 runs normally discard stderr entirely, yet that is
+   * exactly where the `[opencode-log]` pump drops the swallowed provider error
+   * when a turn ends "successfully" with zero output — the empty-delivery
+   * guard reads it to say WHY instead of showing a silent stop.
+   */
+  onStderrTail?: (tail: string) => void;
 }
 
 export interface DaemonStreamOptions {
@@ -1371,6 +1379,12 @@ async function consumeDaemonRun({
         handlers.onError(new Error('daemon stream disconnected before run completed'));
         return;
       }
+    }
+
+    // 终局前把 stderr 尾交给调用侧:exit 0 的轮次 stderr 原本无人问津,而日志泵
+    // 抓到的被吞 provider 错误恰恰躺在这——空交付守卫靠它说清「为什么没输出」。
+    if (stderrBuf.trim()) {
+      handlers.onStderrTail?.(stderrBuf.slice(-2000));
     }
 
     if (endStatus === 'canceled') {

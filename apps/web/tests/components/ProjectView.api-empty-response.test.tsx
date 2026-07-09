@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProjectView } from '../../src/components/ProjectView';
 import { streamMessage } from '../../src/providers/anthropic';
+import { streamViaDaemon } from '../../src/providers/daemon';
 import type { StreamHandlers } from '../../src/providers/anthropic';
 import {
   fetchProjectFilePreview,
@@ -183,6 +184,7 @@ vi.mock('../../src/components/ChatPane', () => ({
 }));
 
 const mockedStreamMessage = vi.mocked(streamMessage);
+const mockedStreamViaDaemon = vi.mocked(streamViaDaemon);
 const mockedFetchProjectFilePreview = vi.mocked(fetchProjectFilePreview);
 const mockedFetchProjectFileText = vi.mocked(fetchProjectFileText);
 const mockedFetchProjectFiles = vi.mocked(fetchProjectFiles);
@@ -218,12 +220,12 @@ const project: Project = {
   updatedAt: 1,
 };
 
-function renderProjectView(renderProject: Project = project) {
+function renderProjectView(renderProject: Project = project, renderConfig: AppConfig = config) {
   return render(
     <ProjectView
       project={renderProject}
       routeFileName={null}
-      config={config}
+      config={renderConfig}
       agents={[] as AgentInfo[]}
       skills={[] as SkillSummary[]}
       designTemplates={[] as SkillSummary[]}
@@ -714,6 +716,77 @@ describe('ProjectView API empty response handling', () => {
       '/api/media/providers/elevenlabs/voices?limit=100',
       expect.any(Object),
     );
+  });
+});
+
+describe('ProjectView daemon empty delivery guard', () => {
+  beforeEach(() => {
+    mockedStreamViaDaemon.mockReset();
+    mockedFetchProjectFiles.mockReset();
+    mockedFetchProjectFiles.mockResolvedValue([]);
+    mockedListMessages.mockClear();
+    mockedSaveMessage.mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  // 空交付守卫(daemon 模式):agent exit 0 但整轮没有文字/artifact/新文件时,
+  // 不许显示成「完成」——标失败 + empty_response 事件,并把 stderr 里日志泵
+  // 抓到的被吞 provider 错误一起上屏,用户不用翻服务器日志。
+  it('marks a tool-only daemon turn with zero delivery as no-output failed, surfacing the pump line', async () => {
+    mockedStreamViaDaemon.mockImplementation(async (options) => {
+      options.onRunCreated?.('run-guard-1');
+      options.handlers.onStderrTail?.(
+        '[opencode-log] llm request failed: status code 400; context length exceeded\n',
+      );
+      options.handlers.onDone('');
+    });
+    renderProjectView(project, { ...config, mode: 'daemon', agentId: 'opencode' });
+
+    await sendTestPrompt();
+
+    await waitFor(() => {
+      expect(screen.getByText(/empty_response:/)).toBeTruthy();
+    });
+    // 诊断文案 + 真实原因(泵行)都要对用户可见
+    expect(screen.getByText(/provider ended the request/i)).toBeTruthy();
+    // 事件 detail 与诊断正文各渲染一次泵行
+    expect(screen.getAllByText(/status code 400; context length exceeded/).length).toBeGreaterThan(0);
+    expect(screen.queryByText('succeeded')).toBeNull();
+
+    await waitFor(() => {
+      expect(
+        hasSavedAssistantMessage(
+          (message) =>
+            message.runStatus === 'failed' &&
+            (message.events ?? []).some(
+              (event: AgentEvent) => event.kind === 'status' && event.label === 'empty_response',
+            ),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('leaves a daemon turn that streamed text untouched by the guard', async () => {
+    mockedStreamViaDaemon.mockImplementation(async (options) => {
+      options.onRunCreated?.('run-guard-2');
+      options.handlers.onDelta('All done — wrote the summary.');
+      options.handlers.onDone('All done — wrote the summary.');
+    });
+    renderProjectView(project, { ...config, mode: 'daemon', agentId: 'opencode' });
+
+    await sendTestPrompt();
+
+    await waitFor(() => {
+      expect(
+        hasSavedAssistantMessage((message) => message.runStatus === 'succeeded'),
+      ).toBe(true);
+    });
+    expect(screen.queryByText(/empty_response:/)).toBeNull();
   });
 });
 

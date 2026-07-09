@@ -3991,6 +3991,9 @@ export function ProjectView({
       let parsedArtifact: Artifact | null = null;
       let liveHtml = '';
       let streamedText = '';
+      // 终局时由 onStderrTail 填充:空交付守卫用它提取日志泵抓到的真实错误
+      // (如 "[opencode-log] llm request failed: status code 400")上屏。
+      let lastStderrTail = '';
 
       const updateAssistant = (updater: (prev: ChatMessage) => ChatMessage) => {
         setMessages((curr) =>
@@ -4300,6 +4303,51 @@ export function ProjectView({
                 nextFiles,
                 traceTouchedFilePaths,
               ) ?? [];
+              // 空交付守卫(daemon 模式版,镜像上方 emptyApiResponse):agent 正常
+              // 退出(exit 0)但整轮零交付——没有文字、没有 artifact、也没有新
+              // 文件——对用户就是「只有工具调用,什么都没说就停了」。不许它显示
+              // 成「完成」:标失败 + empty_response 事件(脚注显示"无输出") +
+              // 诊断文案;stderr 尾里日志泵抓到的被吞 provider 错误一并上屏,
+              // 用户不用翻服务器日志就能看到真实原因。只拦 succeeded:canceled
+              // 是用户自己停的,failed 已有自己的错误卡。
+              const emptyDaemonDelivery =
+                config.mode === 'daemon' &&
+                finalRunStatus === 'succeeded' &&
+                !fullText.trim() &&
+                !streamedText.trim() &&
+                !liveHtml.trim() &&
+                !parsedArtifact?.html &&
+                produced.length === 0;
+              if (emptyDaemonDelivery) {
+                const pumpLine = lastStderrTail
+                  .split('\n')
+                  .reverse()
+                  .map((line) => line.trim())
+                  .find((line) => line.includes('[opencode-log]'));
+                const diagnostic = pumpLine
+                  ? `${t('assistant.emptyResponseMessage')}\n\n\`${pumpLine}\``
+                  : t('assistant.emptyResponseMessage');
+                updateMessageById(
+                  assistantId,
+                  (prev) => ({
+                    ...prev,
+                    runStatus: 'failed',
+                    traceObjectFiles,
+                    events: [
+                      ...(prev.events ?? []),
+                      { kind: 'status', label: 'empty_response', ...(pumpLine ? { detail: pumpLine } : {}) },
+                      { kind: 'text', text: diagnostic },
+                    ],
+                  }),
+                  true,
+                  { telemetryFinalized: true },
+                );
+                if (ownsCurrentRun) updateConversationLatestRun('failed', endedAt);
+                // 设计系统工作台的产出审计不因守卫短路:它自带「空产出→播种修复
+                // prompt」的领域处理,非 DS 项目则是 no-op。
+                await auditDesignSystemWorkspaceAfterRun(assistantId);
+                return;
+              }
               const producedHtmlToOpen = selectAutoOpenProducedHtml(produced);
               if (producedHtmlToOpen) requestOpenFile(producedHtmlToOpen);
               setMessages((curr) => {
@@ -4321,6 +4369,9 @@ export function ProjectView({
         },
         onConnectionStatus: (notice: string | null) => {
           setConnectionNotice(assistantId, notice);
+        },
+        onStderrTail: (tail: string) => {
+          lastStderrTail = tail;
         },
         onError: (err: Error) => {
           const endedAt = Date.now();
