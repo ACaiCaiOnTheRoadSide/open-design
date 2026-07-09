@@ -243,8 +243,21 @@ export function ComposerPlusMenu({
   function scheduleCloseSubmenu() {
     cancelSubmenuClose();
     submenuCloseTimer.current = setTimeout(() => {
-      setSubmenu(null);
       submenuCloseTimer.current = null;
+      // Typing in a flyout search box filters the list and shrinks the panel.
+      // With the bottom-anchored "up" placement the top edge retreats below a
+      // stationary cursor, firing a synthetic mouseleave mid-typing. Hover-out
+      // must not win over an active keyboard session: keep the flyout open
+      // while focus is inside it (Escape / outside click still close).
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        popupRef.current?.contains(active) &&
+        active.closest('.plus-menu__flyout')
+      ) {
+        return;
+      }
+      setSubmenu(null);
     }, 200);
   }
 
