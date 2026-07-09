@@ -2282,6 +2282,7 @@ export const esES: Dict = {
   'fileViewer.exportPptxBusy': 'Espera a que termine el turno actual.',
   'fileViewer.exportPptxHint': 'Envía una solicitud al agente para convertir este diseño a PPTX.',
   'fileViewer.exportPptxNa': 'La exportación a PPTX no está disponible aquí.',
+  'fileViewer.exportPptxAgentQueued': 'Encargado al agente de IA: el .pptx aparecerá en tu lista de archivos cuando esté listo.',
   'fileViewer.exportZip': 'Descargar como .zip',
   'fileViewer.exportHtml': 'Exportar como HTML independiente',
   'fileViewer.exportMd': 'Exportar como Markdown',

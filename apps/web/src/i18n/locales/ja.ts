@@ -2282,6 +2282,7 @@ export const ja: Dict = {
   'fileViewer.exportPptxBusy': '現在のターンが終わるまでお待ちください。',
   'fileViewer.exportPptxHint': 'エージェントにこのデザインを PPTX に変換するようリクエストを送信します。',
   'fileViewer.exportPptxNa': 'ここでは PPTX エクスポートは利用できません。',
+  'fileViewer.exportPptxAgentQueued': 'AI エージェントに引き継ぎました。完成すると .pptx がファイル一覧に表示されます。',
   'fileViewer.exportZip': '.zip としてダウンロード',
   'fileViewer.exportHtml': 'スタンドアロン HTML としてエクスポート',
   'fileViewer.exportMd': 'Markdown としてエクスポート',

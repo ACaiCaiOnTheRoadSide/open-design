@@ -2282,6 +2282,7 @@ export const zhTW: Dict = {
   'fileViewer.exportPptxBusy': '請等待當前任務完成。',
   'fileViewer.exportPptxHint': '請求代理將此設計轉換為 PPTX。',
   'fileViewer.exportPptxNa': '此處暫不支援匯出 PPTX。',
+  'fileViewer.exportPptxAgentQueued': '已交給 AI 產生，完成後 .pptx 會出現在檔案清單中。',
   'fileViewer.exportZip': '下載為 .zip',
   'fileViewer.exportHtml': '匯出為獨立 HTML',
   'fileViewer.exportMd': '匯出為 Markdown',

@@ -2282,6 +2282,7 @@ export const hu: Dict = {
   'fileViewer.exportPptxBusy': 'Várj, amíg az aktuális kör befejeződik.',
   'fileViewer.exportPptxHint': 'Küldj kérést az ügynöknek, hogy alakítsa át ezt a designt PPTX-szé.',
   'fileViewer.exportPptxNa': 'A PPTX export itt nem elérhető.',
+  'fileViewer.exportPptxAgentQueued': 'Átadva az AI-ügynöknek — a .pptx elkészülte után megjelenik a fájllistában.',
   'fileViewer.exportZip': 'Letöltés .zip-ként',
   'fileViewer.exportHtml': 'Exportálás önálló HTML-ként',
   'fileViewer.exportMd': 'Exportálás Markdown-ként',

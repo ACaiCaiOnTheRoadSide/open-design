@@ -1021,6 +1021,22 @@ export function ProjectView({
     if (!streaming) setLiveToolInput((prev) => (Object.keys(prev).length ? {} : prev));
   }, [streaming]);
   const [error, setError] = useState<string | null>(null);
+  // 流式消息上的瞬态连接提示(客户端断线重连进度 / dispatcher 的 [od-retry]
+  // 沙箱重试播报),keyed by assistant message id。只存在于内存:不持久化、不进
+  // 消息内容——重试成功后无痕,用户只在过程里看到"断了/为什么/第几次重试"。
+  const [connectionNotices, setConnectionNotices] = useState<Record<string, string>>({});
+  const setConnectionNotice = useCallback((messageId: string, notice: string | null) => {
+    setConnectionNotices((curr) => {
+      if (notice === null) {
+        if (!(messageId in curr)) return curr;
+        const next = { ...curr };
+        delete next[messageId];
+        return next;
+      }
+      if (curr[messageId] === notice) return curr;
+      return { ...curr, [messageId]: notice };
+    });
+  }, []);
   const [audioVoiceOptionsError, setAudioVoiceOptionsError] = useState<string | null>(null);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
   const [filesRefresh, setFilesRefresh] = useState(0);
@@ -3251,9 +3267,16 @@ export function ProjectView({
               })();
               onProjectsRefresh();
             },
+            onConnectionStatus: (notice) => {
+              setConnectionNotice(message.id, notice);
+            },
             onError: (err) => {
               const errorCode = (err as Error & { code?: string }).code;
               const resumable = (err as Error & { resumable?: boolean }).resumable === true;
+              // transient = 网络层失败且 run 未被服务端定罪:内存里照常报错,但
+              // 不持久化 failed——下次进入会话时重新裁决(与发送路径同语义)。
+              const transient = (err as Error & { transient?: boolean }).transient === true;
+              setConnectionNotice(message.id, null);
               // A superseded reattached run must not paint a global failure
               // banner or re-finalize its message over the replacement run.
               const runMayFinalize =
@@ -3263,7 +3286,15 @@ export function ProjectView({
               unregisterTextBuffer();
               if (runMayFinalize) {
                 setError(err.message);
-                appendAssistantErrorEvent(message.id, err.message, errorCode);
+                if (transient) {
+                  updateMessageById(
+                    message.id,
+                    (prev) => appendErrorStatusEvent(prev, err.message, errorCode),
+                    false,
+                  );
+                } else {
+                  appendAssistantErrorEvent(message.id, err.message, errorCode);
+                }
                 updateMessageById(
                   message.id,
                   (prev) => ({
@@ -3272,7 +3303,7 @@ export function ProjectView({
                     endedAt: prev.endedAt ?? Date.now(),
                     resumable,
                   }),
-                  true,
+                  !transient,
                 );
                 if (artifactFromRecoverableSourceText(replayedContent)) {
                   void (async () => {
@@ -3343,7 +3374,9 @@ export function ProjectView({
               reattachControllersRef.current.delete(runId);
               reattachCancelControllersRef.current.delete(runId);
               clearCurrentRunStreamingMarker(reattachConversationId, controller, cancelController);
-              persistNow({ telemetryFinalized: true });
+              // transient(网络层失败、run 未定罪)不落终态:持久化副本保持
+              // running,重进会话时重新裁决。内容尾已由增量持久化兜着。
+              if (!transient) persistNow({ telemetryFinalized: true });
               scheduleConversationMessageRefresh(reattachConversationId);
             },
           },
@@ -4286,10 +4319,19 @@ export function ProjectView({
           })();
           onProjectsRefresh();
         },
+        onConnectionStatus: (notice: string | null) => {
+          setConnectionNotice(assistantId, notice);
+        },
         onError: (err: Error) => {
           const endedAt = Date.now();
           const errorCode = (err as Error & { code?: string }).code;
           const resumable = (err as Error & { resumable?: boolean }).resumable === true;
+          // transient = 网络层失败且服务端 run 未定罪(见 consumeDaemonRun 的三级
+          // 裁决):本 tab 内照常显示失败让用户知情,但绝不把 failed 持久化——
+          // 持久化的消息保持 running,刷新/重进会话时 attachRecoverableRuns 会用
+          // 恢复后的网络重新裁决并自动接回(服务端 run 很可能一直在正常跑)。
+          const transient = (err as Error & { transient?: boolean }).transient === true;
+          setConnectionNotice(assistantId, null);
           // A run superseded by a "send now" interrupt can still surface a
           // late disconnect error (e.g. a canceled stream that lost its
           // terminal SSE). It must not paint a global failure banner or
@@ -4302,7 +4344,16 @@ export function ProjectView({
           cancelSendTextBuffer();
           if (runMayFinalize) {
             setError(err.message);
-            appendAssistantErrorEvent(assistantId, err.message, errorCode);
+            if (transient) {
+              // 错误卡只进内存(persist=false),持久化副本不留失败叙事。
+              updateMessageById(
+                assistantId,
+                (prev) => appendErrorStatusEvent(prev, err.message, errorCode),
+                false,
+              );
+            } else {
+              appendAssistantErrorEvent(assistantId, err.message, errorCode);
+            }
             updateAssistant((prev) => ({
               ...prev,
               endedAt,
@@ -4323,7 +4374,7 @@ export function ProjectView({
           if (ownsCurrentRun) updateConversationLatestRun('failed', endedAt);
           setMessages((curr) => {
             const finalized = curr.find((m) => m.id === assistantId);
-            if (finalized) persistMessage(finalized, { telemetryFinalized: true });
+            if (finalized && !transient) persistMessage(finalized, { telemetryFinalized: true });
             return curr;
           });
           void refreshProjectFiles();
@@ -5005,6 +5056,27 @@ export function ProjectView({
         'Before making changes, inspect the current project files as needed. ' +
         'Update TodoWrite as you complete each remaining task.';
       void handleSend(prompt, [], []);
+    },
+    [currentConversationActionDisabled, handleSend],
+  );
+
+  // PPTX export fallback for runtimes without an off-screen renderer (the
+  // daemon answers 501): hand the conversion to the project agent, which runs
+  // the html-to-pptx skill (headless Chromium + PptxGenJS) and writes the
+  // .pptx into the project directory, where it shows up in the file list.
+  const handleExportPptxViaAgent = useCallback(
+    async ({ fileName, title }: { fileName: string; title?: string; editable: boolean }) => {
+      if (currentConversationActionDisabled) return false;
+      const deckLabel = title && title.trim().length > 0 ? title.trim() : fileName;
+      const prompt =
+        `Export the HTML deck "${fileName}" in this project to a .pptx file using the html-to-pptx skill. ` +
+        'Follow the skill exactly — set up the dependency workspace OUTSIDE the project directory, ' +
+        'render with the bundled render-pptx.mjs script, and write the resulting .pptx INTO the project ' +
+        `directory named after the deck title ("${deckLabel}") so it appears in my file list. ` +
+        'When finished, report the slide count and the output file name. If any step fails, report the ' +
+        'actual error instead of producing a substitute artifact.';
+      const started = await handleSend(prompt, [], []);
+      return started !== false;
     },
     [currentConversationActionDisabled, handleSend],
   );
@@ -6552,6 +6624,7 @@ export function ProjectView({
               messages={messages}
               streaming={currentConversationControlStreaming}
               liveToolInput={liveToolInput}
+              connectionNotices={connectionNotices}
               loading={currentConversationLoading}
               sendDisabled={currentConversationSendDisabled}
               queuedItems={currentConversationQueuedItems}
@@ -6763,6 +6836,7 @@ export function ProjectView({
           onRemovePreviewComment={removePreviewComment}
           onSendBoardCommentAttachments={handleSendBoardCommentAttachments}
           onRequestBrowserUsePrompt={handleBrowserUsePrompt}
+          onExportPptxViaAgent={handleExportPptxViaAgent}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
           preferredPreviewFile={currentProject.metadata?.entryFile ?? null}

@@ -975,6 +975,14 @@ interface Props {
   // Bumped nonce asking a deck preview to flip to `slideIndex` (a queued chat
   // send for this file just started processing).
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
+  // Fallback when this runtime has no off-screen renderer (POST /export/pptx →
+  // 501): hand the export to the project agent (html-to-pptx skill) instead of
+  // reporting PPTX as unsupported. Return false to decline (e.g. chat busy).
+  onExportPptxViaAgent?: (opts: {
+    fileName: string;
+    title?: string;
+    editable: boolean;
+  }) => Promise<boolean | void> | boolean | void;
 }
 
 export function FileViewer({
@@ -998,6 +1006,7 @@ export function FileViewer({
   shareRequest,
   downloadRequest,
   slideNavRequest,
+  onExportPptxViaAgent,
 }: Props) {
   const rendererMatch = artifactRendererRegistry.resolve({
     file,
@@ -1041,6 +1050,7 @@ export function FileViewer({
         shareRequest={shareRequest}
         downloadRequest={downloadRequest}
         slideNavRequest={slideNavRequest}
+        onExportPptxViaAgent={onExportPptxViaAgent}
       />
     );
   }
@@ -4438,6 +4448,7 @@ function HtmlViewer({
   shareRequest,
   downloadRequest,
   slideNavRequest,
+  onExportPptxViaAgent,
 }: {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -4458,6 +4469,11 @@ function HtmlViewer({
   shareRequest?: { nonce: number } | null;
   downloadRequest?: { nonce: number } | null;
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
+  onExportPptxViaAgent?: (opts: {
+    fileName: string;
+    title?: string;
+    editable: boolean;
+  }) => Promise<boolean | void> | boolean | void;
 }) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
@@ -4575,6 +4591,15 @@ function HtmlViewer({
             if (result === 'cancelled') {
               finish('cancelled');
               if (toastFormats.has(format)) setExportToast(null);
+              return;
+            }
+            // 'delegated': the export was handed to the project agent (no local
+            // renderer) — the file arrives asynchronously, so don't say "done".
+            if (result === 'delegated') {
+              finish('success');
+              if (toastFormats.has(format)) {
+                setExportToast({ message: t('fileViewer.exportPptxAgentQueued'), tone: 'success' });
+              }
               return;
             }
             finish('success');
@@ -9701,7 +9726,19 @@ function HtmlViewer({
                       deck: true,
                       editable,
                     });
-                    if (!res.ok) throw new Error('error' in res ? res.error : t('fileViewer.exportPptxNa'));
+                    if (res.ok) return;
+                    // No off-screen renderer in this runtime (501). Hand the
+                    // export to the project agent (html-to-pptx skill) when the
+                    // host wired a fallback; the .pptx lands in the file list.
+                    if (!('error' in res) && onExportPptxViaAgent) {
+                      const queued = await onExportPptxViaAgent({
+                        fileName: file.name,
+                        title: exportTitle,
+                        editable,
+                      });
+                      if (queued !== false) return 'delegated';
+                    }
+                    throw new Error('error' in res ? res.error : t('fileViewer.exportPptxNa'));
                   });
                 }}
               >

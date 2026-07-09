@@ -98,6 +98,11 @@ const residualAllowedExactPaths = new Set([
   // runtime deps (puppeteer-core + a headless Chrome + ffmpeg) are provided by
   // the CI environment and never pulled into the daemon/web TS build or bundle.
   "scripts/bake-plugin-previews.mjs",
+  // html-to-pptx skill runtime script: agents fetch it via the skill asset
+  // route and execute it with plain Node inside their sandbox (playwright +
+  // pptxgenjs installed at run time) — there is no TS build step in that
+  // environment, so it must ship as directly runnable .mjs.
+  "skills/html-to-pptx/scripts/render-pptx.mjs",
   // Manifest diff guard + its node:test coverage. Run directly by Node from the
   // bake workflows (no TS build step there) to decide whether a `previews` entry
   // actually changed, ignoring the per-run `generatedAt` timestamp.
