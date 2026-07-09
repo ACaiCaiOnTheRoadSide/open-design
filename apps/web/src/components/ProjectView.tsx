@@ -5075,7 +5075,10 @@ export function ProjectView({
         `directory named after the deck title ("${deckLabel}") so it appears in my file list. ` +
         'When finished, report the slide count and the output file name. If any step fails, report the ' +
         'actual error instead of producing a substitute artifact.';
-      const started = await handleSend(prompt, [], []);
+      // skillIds is what actually injects the skill (body into the system
+      // prompt, side files staged into `.od-skills/` and synced into sandbox
+      // workspaces) — naming the skill in the prompt text alone does nothing.
+      const started = await handleSend(prompt, [], [], { skillIds: ['html-to-pptx'] });
       return started !== false;
     },
     [currentConversationActionDisabled, handleSend],

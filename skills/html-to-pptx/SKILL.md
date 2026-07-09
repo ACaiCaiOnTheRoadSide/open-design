@@ -60,9 +60,16 @@ re-running the export must not re-download Chromium).
 
 ## Step 2 — get the render script into the workspace
 
-The script ships with this skill at `scripts/render-pptx.mjs` (relative to the
-skill root advertised in the skill preamble). If the skill directory is not on
-the local filesystem (sandboxed runtimes), fetch it from the daemon:
+The script ships with this skill at `scripts/render-pptx.mjs`. Copy it from
+the skill root advertised in the skill preamble (in staged runtimes that is
+`.od-skills/html-to-pptx/` inside the project working directory):
+
+```bash
+cp <skill-root>/scripts/render-pptx.mjs "$WORKDIR/"
+```
+
+If no skill-root copy is reachable on the local filesystem, fetch it from the
+daemon instead:
 
 ```bash
 curl -fsSL ${OD_API_TOKEN:+-H "Authorization: Bearer $OD_API_TOKEN"} \
