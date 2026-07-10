@@ -527,6 +527,16 @@ export async function updateProject(db: SqliteDb, id: string, patch: DbRow) {
   return getProject(db, id);
 }
 
+/** 项目产物下载计数自增(download_count 列由 20260710000001 迁移引入)。
+ *  web 端下载/导出成功后经 beacon 上报,后台项目管理列表跨 schema 直读展示。
+ *  不动 updated_at:下载是消费行为,不该把项目顶到"最近更新"。 */
+export async function incrementProjectDownloadCount(db: SqliteDb, id: string) {
+  const tenantId = currentTenantId();
+  await db.prepare(
+    `UPDATE projects SET download_count = download_count + 1 WHERE id = ? AND tenant_id = ?`,
+  ).run(id, tenantId);
+}
+
 // tombstone:false 仅供"创建失败回滚"路径使用:那种项目用户从未真正拥有过,
 // 不应计入"创建过的项目"统计。用户主动删除一律走默认路径写墓碑,
 // 后台的项目数统计(现存 projects + deleted_projects)才不随删除缩水。

@@ -914,7 +914,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { sendApiError, createSseResponse } = ctx.http;
   const { DESIGN_SYSTEMS_DIR, PROJECTS_DIR, SKILLS_DIR, BRANDS_DIR } = ctx.paths;
   const { readAppConfig, writeAppConfig } = ctx.appConfig;
-  const { insertProject, validateLinkedDirs, getProject, updateProject, dbDeleteProject, removeProjectDir } = ctx.projectStore;
+  const { insertProject, validateLinkedDirs, getProject, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount } = ctx.projectStore;
   const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
@@ -1512,6 +1512,20 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     /** @type {import('@open-design/contracts').ProjectResponse} */
     const body = { project, resolvedDir };
     res.json(body);
+  });
+
+  // 产物下载计数 beacon:web 端下载/导出成功后上报一次,后台项目管理列表
+  // (backend 跨 schema 直读 projects.download_count)展示。尽力而为语义:
+  // 前端 fire-and-forget,失败不影响下载本身。
+  app.post('/api/projects/:id/download-events', async (req, res) => {
+    try {
+      const existing = await getProject(db, req.params.id);
+      if (!existing) return sendApiError(res, 404, 'NOT_FOUND', 'project not found');
+      await incrementProjectDownloadCount(db, req.params.id);
+      return res.json({ ok: true });
+    } catch (err) {
+      return sendApiError(res, 500, 'INTERNAL_ERROR', String(err));
+    }
   });
 
   app.patch('/api/projects/:id', async (req, res) => {

@@ -4484,6 +4484,16 @@ function HtmlViewer({
   // Latest per-slide capture progress for the programmatic exporters, read by
   // the loading-toast ticker in fireShareExport to render elapsed time + ETA.
   const exportProgressRef = useRef<{ done: number; total: number } | null>(null);
+  // 下载计数 beacon:导出真正成功(用户拿到字节)后上报一次,daemon 侧
+  // projects.download_count 自增,后台项目管理列表展示。fire-and-forget:
+  // 失败静默,绝不影响导出本身。分享类(share_link/share_page)、保存为模板、
+  // delegated(交给 agent 异步产出,用户此刻没拿到文件)不计。
+  const reportDownloadEvent = () => {
+    if (!projectId) return;
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}/download-events`, {
+      method: 'POST',
+    }).catch(() => {});
+  };
   // Shared helper for the share menu: emit studio_click share_option on
   // entry and artifact_export_result on resolution. Sync exports report
   // success immediately after the call returns; async exports get .then
@@ -4520,7 +4530,15 @@ function HtmlViewer({
       { requestId },
     );
     const started = performance.now();
-    const finish = (result: 'success' | 'failed' | 'cancelled', errorCode?: string) => {
+    const downloadCountFormats = new Set(['pdf', 'pptx', 'zip', 'html', 'image', 'markdown']);
+    const finish = (
+      result: 'success' | 'failed' | 'cancelled',
+      errorCode?: string,
+      opts?: { countDownload?: boolean },
+    ) => {
+      if (result === 'success' && opts?.countDownload !== false && downloadCountFormats.has(format)) {
+        reportDownloadEvent();
+      }
       trackArtifactExportResult(
         analytics.track,
         {
@@ -4596,7 +4614,7 @@ function HtmlViewer({
             // 'delegated': the export was handed to the project agent (no local
             // renderer) — the file arrives asynchronously, so don't say "done".
             if (result === 'delegated') {
-              finish('success');
+              finish('success', undefined, { countDownload: false });
               if (toastFormats.has(format)) {
                 setExportToast({ message: t('fileViewer.exportPptxAgentQueued'), tone: 'success' });
               }
@@ -8075,6 +8093,7 @@ function HtmlViewer({
   ) => {
     if (imageExportResolvedRef.current) return;
     imageExportResolvedRef.current = true;
+    if (result === 'success') reportDownloadEvent();
     const requestId = imageExportRequestIdRef.current ?? analytics.newRequestId();
     const started = imageExportStartedRef.current || performance.now();
     trackArtifactExportResult(
