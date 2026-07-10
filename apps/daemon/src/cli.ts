@@ -30,6 +30,52 @@ import {
   removeJsonInstall,
 } from './mcp-agent-install.js';
 
+// ── daemon 请求的鉴权收口 ─────────────────────────────────────────────────
+// 本 CLI 诞生于「daemon = 本机回环、无守卫」的假设,150+ 处 fetch 里只有 media
+// 工具链带鉴权。token 守卫部署(daemon 挂公网网关、OD_API_TOKEN 强制)下,其余
+// 子命令一律 401 API_TOKEN_REQUIRED——哪怕 token 就躺在 env 里(实测:od export)。
+// 逐调用点补头不可维护,在 fetch 层统一兜底:仅当目标 URL 落在已解析的 daemon
+// base 前缀之下(cliDaemonUrl 解析时登记)、且调用方没有自带 authorization 时,
+// 注入 Bearer $OD_API_TOKEN。backend(网关前缀不同)、OSS 预签名下载、第三方
+// URL 一概不碰——预签名请求多一个头都可能破坏签名校验。
+// 必须放在模块顶部:CLI 的子命令分发是顶层 await,先于文件后段的声明执行。
+const daemonApiBases = new Set();
+
+function noteDaemonApiBase(url) {
+  if (typeof url === 'string' && /^https?:\/\//.test(url)) {
+    daemonApiBases.add(url.replace(/\/$/, ''));
+  }
+}
+
+const rawCliFetch = globalThis.fetch;
+globalThis.fetch = function odCliAuthedFetch(input, init) {
+  try {
+    const token = process.env.OD_API_TOKEN;
+    if (token && daemonApiBases.size > 0) {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
+      let isDaemon = false;
+      if (typeof url === 'string') {
+        for (const base of daemonApiBases) {
+          if (url === base || url.startsWith(`${base}/`)) {
+            isDaemon = true;
+            break;
+          }
+        }
+      }
+      if (isDaemon) {
+        const headers = new Headers(init?.headers ?? undefined);
+        if (!headers.has('authorization')) {
+          headers.set('authorization', `Bearer ${token}`);
+          init = { ...(init ?? {}), headers };
+        }
+      }
+    }
+  } catch {
+    // 注入失败按原样发——宁可 401,不能破坏请求本身。
+  }
+  return rawCliFetch(input, init);
+};
+
 const argv = process.argv.slice(2);
 
 // ---- Subcommand router ----------------------------------------------------
@@ -445,6 +491,19 @@ async function runExport(args) {
   } catch (err) {
     surfaceFetchError(err, base);
     process.exit(3);
+  }
+  if (resp.status === 501) {
+    // 无渲染器部署(SaaS/headless daemon):这条路在本环境是死的,重试/换参数都
+    // 不会通。给 agent 一条明确的替代路径,免得它反复试探(实测事故:agent 对
+    // 501 的 od export 重试 20+ 次后静默耗尽步数)。
+    exitWithStructuredError({
+      code: 'renderer-unavailable',
+      message:
+        'export rendering is not available in this deployment (HTTP 501). Do NOT retry `od export` — ' +
+        'it cannot succeed here. To produce a .pptx, use the html-to-pptx skill instead: set up its ' +
+        'dependency workspace OUTSIDE the project directory, render with the bundled render-pptx.mjs, ' +
+        'and write the resulting .pptx INTO the project directory.',
+    });
   }
   if (!resp.ok) return structuredHttpFailure(resp);
   const buffer = Buffer.from(await resp.arrayBuffer());
@@ -1158,7 +1217,9 @@ function positionalArgs(argv, stringFlags = new Set()) {
 }
 
 async function cliDaemonUrl(flags) {
-  return resolveDaemonUrl({ flagUrl: flags?.['daemon-url'] });
+  const url = await resolveDaemonUrl({ flagUrl: flags?.['daemon-url'] });
+  noteDaemonApiBase(url);
+  return url;
 }
 
 async function cliDaemonBaseUrl(flags) {
