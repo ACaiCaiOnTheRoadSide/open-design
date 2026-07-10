@@ -5116,14 +5116,24 @@ export function ProjectView({
   // the html-to-pptx skill (headless Chromium + PptxGenJS) and writes the
   // .pptx into the project directory, where it shows up in the file list.
   const handleExportPptxViaAgent = useCallback(
-    async ({ fileName, title }: { fileName: string; title?: string; editable: boolean }) => {
+    async ({ fileName, title, editable }: { fileName: string; title?: string; editable: boolean }) => {
       if (currentConversationActionDisabled) return false;
       const deckLabel = title && title.trim().length > 0 ? title.trim() : fileName;
+      // The user picked a mode in the export dialog; the skill's render script
+      // implements both (default = screenshot images, --editable = native
+      // text/shapes via the bundled dom-to-pptx engine).
+      const modeInstruction = editable
+        ? 'The user chose the EDITABLE mode: render with the --editable flag so the deck exports as ' +
+          'native PowerPoint text/shapes (copy the skill\'s assets/dom-to-pptx.bundle.js.gz next to the ' +
+          'script first). If editable rendering fails after one retry, fall back to the default ' +
+          'screenshot mode and tell me the file fell back to screenshot slides. '
+        : 'The user chose the SCREENSHOT mode: render WITHOUT the --editable flag (one image per slide). ';
       const prompt =
         `Export the HTML deck "${fileName}" in this project to a .pptx file using the html-to-pptx skill. ` +
         'Follow the skill exactly — set up the dependency workspace OUTSIDE the project directory, ' +
         'render with the bundled render-pptx.mjs script, and write the resulting .pptx INTO the project ' +
         `directory named after the deck title ("${deckLabel}") so it appears in my file list. ` +
+        modeInstruction +
         'When finished, report the slide count and the output file name. If any step fails, report the ' +
         'actual error instead of producing a substitute artifact.';
       // skillIds is what actually injects the skill (body into the system

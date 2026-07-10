@@ -3,10 +3,12 @@ name: html-to-pptx
 description: |
   Export an HTML slide deck from the current project to a downloadable .pptx
   using headless Chromium — for web/sandbox runtimes where the built-in desktop
-  PPTX export is unavailable. Renders each slide to a pixel-perfect PNG and
-  assembles a one-image-per-slide PowerPoint file inside the project directory
-  so it appears in the user's file list. Use when the user asks to export or
-  convert an HTML deck to PPTX/PowerPoint and there is no desktop renderer.
+  PPTX export is unavailable. Two modes: screenshot (default — each slide as a
+  pixel-perfect PNG, one image per slide) and editable (--editable — native
+  PowerPoint text/shapes via the bundled dom-to-pptx engine). The .pptx is
+  written inside the project directory so it appears in the user's file list.
+  Use when the user asks to export or convert an HTML deck to PPTX/PowerPoint
+  and there is no desktop renderer.
 triggers:
   - "export pptx"
   - "导出 pptx"
@@ -21,10 +23,21 @@ od:
 
 # HTML → PPTX (headless Chromium)
 
-Deterministic screenshot-based PPTX export for environments without the desktop
-(Electron) renderer. The bundled script ports the desktop export semantics
-(slide detection, presenter-chrome hiding, stage measurement, per-slide paging)
-to Playwright, then assembles the deck with PptxGenJS.
+Deterministic PPTX export for environments without the desktop (Electron)
+renderer. The bundled script ports the desktop export semantics (slide
+detection, presenter-chrome hiding, stage measurement, per-slide paging, the
+dom-to-pptx editable handoff) to Playwright.
+
+Two modes — use the one the user asked for (default to screenshot when
+unspecified):
+
+- **Screenshot (default)**: each slide captured as a pixel-perfect PNG,
+  assembled one-image-per-slide with PptxGenJS. Exact visual fidelity; the
+  slides are pictures, not editable text.
+- **Editable (`--editable`)**: the script injects the dom-to-pptx browser
+  engine (ships with this skill under `assets/`) and emits native PowerPoint
+  shapes/text — users can edit the result in PowerPoint. Layout fidelity on
+  exotic CSS is lower than screenshot mode.
 
 **Follow the steps below exactly. Do NOT improvise your own conversion** (no
 hand-written python-pptx layouts, no drawing replacement SVGs). If a step
@@ -100,13 +113,15 @@ session (`$WORKDIR` persists — never re-download on a retry).
 
 ## Step 3 — get the render script into the workspace
 
-The script ships with this skill at `scripts/render-pptx.mjs`. Copy it from
+The script ships with this skill at `scripts/render-pptx.mjs`, and the
+editable-mode engine at `assets/dom-to-pptx.bundle.js.gz`. Copy them from
 the skill root advertised in the skill preamble — in staged runtimes that is
 `.od-skills/html-to-pptx/` inside the project working directory, otherwise
 use the absolute skill-root path from the preamble:
 
 ```bash
 cp <skill-root>/scripts/render-pptx.mjs "$WORKDIR/"
+cp <skill-root>/assets/dom-to-pptx.bundle.js.gz "$WORKDIR/"   # editable mode only
 ```
 
 If NEITHER skill-root path exists on the local filesystem, STOP and report
@@ -116,13 +131,20 @@ those requests fail with `API_TOKEN_REQUIRED` no matter how they are retried)
 and do not write a replacement script from memory.
 
 The script must live in `$WORKDIR` so its `playwright`/`pptxgenjs` imports
-resolve against the workspace `node_modules`.
+resolve against the workspace `node_modules`; the engine bundle must sit next
+to the script (the script also finds it via `<skill-root>/assets/` when run
+in place).
 
 ## Step 4 — render
 
 ```bash
+# screenshot mode (default)
 . /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
 node /tmp/od-pptx-export/render-pptx.mjs "<project-dir>/<deck>.html" "<project-dir>/<deck-title>.pptx"
+
+# editable mode (native text/shapes — only when the user chose it)
+. /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
+node /tmp/od-pptx-export/render-pptx.mjs --editable "<project-dir>/<deck>.html" "<project-dir>/<deck-title>.pptx"
 ```
 
 Always source `env.sh` in the same command — the browser location, library
@@ -173,6 +195,13 @@ and Chromium; an uncapped Node heap invites the OOM killer.
 - **Exit code 4 (`no slide surfaces found`)**: the file is not a deck. Tell
   the user PPTX export needs a slide-based document; offer image/PDF export of
   the page instead.
+- **Exit code 5 (editable engine missing or failed)**: if the message says the
+  engine bundle was not found, redo Step 3 (copy
+  `assets/dom-to-pptx.bundle.js.gz` next to the script) and retry. If the
+  engine itself failed on this deck, retry ONCE; if it fails again, run the
+  default screenshot mode instead and TELL the user the deck could not be
+  converted to editable shapes, so they received the screenshot-based .pptx —
+  never fall back silently.
 - **Relative assets missing in the capture** (rare): serve the project
   directory (`python3 -m http.server` or `npx serve`) and pass an
   `http://127.0.0.1:<port>/<deck>.html` URL to the script instead of the file

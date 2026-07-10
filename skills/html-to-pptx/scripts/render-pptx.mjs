@@ -1,22 +1,32 @@
 #!/usr/bin/env node
-// Render an HTML slide deck to a screenshot-per-slide .pptx with headless
-// Chromium (Playwright) + PptxGenJS — no Electron/desktop runtime required.
+// Render an HTML slide deck to a .pptx with headless Chromium (Playwright) —
+// no Electron/desktop runtime required. Two modes:
 //
-// Slide detection, presenter-chrome hiding, stage measurement/pinning, and the
-// show-slide/restack paging semantics are ported from the desktop export path
-// (apps/desktop/src/main/deck-capture.ts) so this produces the same slides the
+//   default      screenshot mode — one pixel-perfect PNG per slide, assembled
+//                with PptxGenJS ("exactly what you see", not editable).
+//   --editable   editable mode — inject the vendored dom-to-pptx browser
+//                engine (ships with this skill under assets/) and emit native
+//                PowerPoint shapes/text instead of images.
+//
+// Slide detection, presenter-chrome hiding, stage measurement/pinning, the
+// show-slide/restack paging semantics, and the editable dom-to-pptx handoff
+// are ported from the desktop export path
+// (apps/desktop/src/main/deck-capture.ts) so this produces the same deck the
 // desktop app would.
 //
-// usage: node render-pptx.mjs <input.html> [output.pptx]
+// usage: node render-pptx.mjs [--editable] <input.html> [output.pptx]
 // env:   OD_PPTX_SCALE  device scale factor for capture (default 1; 2 = crisper, slower)
 //
-// Exit codes: 0 ok, 2 usage, 3 input not found, 4 no slide surfaces (not a deck).
+// Exit codes: 0 ok, 2 usage, 3 input not found, 4 no slide surfaces (not a
+// deck), 5 editable engine missing or failed (retry without --editable for
+// the screenshot fallback).
 
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { chromium } from 'playwright';
 
 // pptxgenjs 4.x points its ESM `exports` entry at a .js file that is not
@@ -38,9 +48,11 @@ const SLIDE_MIN_PX = 320;
 const SLIDE_MAX_PX = 8192;
 const PX_PER_INCH = 96;
 
-const [, , inputArg, outputArg] = process.argv;
+const argv = process.argv.slice(2);
+const editable = argv.includes('--editable');
+const [inputArg, outputArg] = argv.filter((a) => a !== '--editable');
 if (!inputArg) {
-  console.error('usage: node render-pptx.mjs <input.html> [output.pptx]');
+  console.error('usage: node render-pptx.mjs [--editable] <input.html> [output.pptx]');
   process.exit(2);
 }
 // Accept a served URL too (see SKILL.md troubleshooting: decks whose relative
@@ -57,6 +69,26 @@ if (isUrl && !outputArg) {
 }
 const output = path.resolve(outputArg || input.replace(/\.html?$/i, '') + '.pptx');
 const scale = Number(process.env.OD_PPTX_SCALE) >= 2 ? 2 : 1;
+
+// Editable mode: the vendored dom-to-pptx browser UMD ships with this skill
+// (assets/dom-to-pptx.bundle.js.gz). Resolve it next to this script (the
+// workspace copy) or in the sibling assets/ directory (running in place from
+// the staged skill root).
+function loadDomToPptxEngine() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(here, 'dom-to-pptx.bundle.js.gz'),
+    path.join(here, 'dom-to-pptx.bundle.js'),
+    path.join(here, '..', 'assets', 'dom-to-pptx.bundle.js.gz'),
+    path.join(here, '..', 'assets', 'dom-to-pptx.bundle.js'),
+  ];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    const bytes = fs.readFileSync(candidate);
+    return candidate.endsWith('.gz') ? gunzipSync(bytes).toString('utf8') : bytes.toString('utf8');
+  }
+  return null;
+}
 
 // Prefer a system-installed Chromium (sandbox images bake a musl build in —
 // the Playwright-downloaded browser is glibc-only and cannot run on Alpine).
@@ -233,6 +265,214 @@ try {
     document.head.appendChild(style);
   }, stage);
   const tPrepare = Date.now();
+
+  // Editable mode: hand the live, laid-out slides to the vendored dom-to-pptx
+  // engine (native shapes/text) instead of capturing images. Ported from the
+  // desktop path (deck-capture.ts showAllSlides + runDomToPptx).
+  if (editable) {
+    const engine = loadDomToPptxEngine();
+    if (!engine) {
+      console.error(
+        'dom-to-pptx engine bundle not found — copy assets/dom-to-pptx.bundle.js.gz from the skill root next to this script',
+      );
+      process.exit(5);
+    }
+    // dom-to-pptx measures each element's live layout, so every real slide
+    // must be laid out simultaneously (stacked at the origin, opacity 1) —
+    // decks normally render only the active one, which would give the others
+    // no layout box.
+    await page.evaluate(
+      ([selector, cloneAncestors]) => {
+        const slides = Array.from(document.querySelectorAll(selector)).filter(
+          (el) => !el.closest(cloneAncestors),
+        );
+        for (const el of slides) {
+          el.style.setProperty('opacity', '1', 'important');
+          el.style.setProperty('visibility', 'visible', 'important');
+          el.style.setProperty('position', 'absolute', 'important');
+          el.style.setProperty('left', '0', 'important');
+          el.style.setProperty('top', '0', 'important');
+          ['active', 'visible', 'is-active', 'current'].forEach((c) => el.classList.add(c));
+        }
+        return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      },
+      [SLIDE_SELECTOR, CLONE_ANCESTORS],
+    );
+    await page.addScriptTag({ content: engine });
+    const out = await page.evaluate(
+      async ([selector, cloneAncestors]) => {
+        function isTransparentColor(input) {
+          const value = input.trim().toLowerCase();
+          return value === '' || value === 'transparent' || value === 'rgba(0, 0, 0, 0)';
+        }
+        function firstCssColor(input) {
+          const rgb = input.match(/rgba?\([^)]*\)/i);
+          if (rgb) return rgb[0];
+          const hex = input.match(/#[0-9a-f]{3,8}\b/i);
+          return hex ? hex[0] : null;
+        }
+        // The slide's effective background often lives on an ancestor (body,
+        // .deck). dom-to-pptx only sees the slide subtree, so materialize that
+        // background INTO each slide as an explicit backdrop layer.
+        function effectiveBackgroundStyle(slide) {
+          const candidates = [];
+          for (let el = slide; el; el = el.parentElement) candidates.push(el);
+          if (document.body && !candidates.includes(document.body)) candidates.push(document.body);
+          if (document.documentElement && !candidates.includes(document.documentElement)) {
+            candidates.push(document.documentElement);
+          }
+          for (const el of candidates) {
+            const style = getComputedStyle(el);
+            const bgColor = style.backgroundColor;
+            const bgImage = style.backgroundImage;
+            const hasImage = bgImage && bgImage !== 'none';
+            const hasColor = bgColor && !isTransparentColor(bgColor);
+            const fallbackColor = hasColor ? bgColor : firstCssColor(bgImage);
+            if (!hasImage && !hasColor) continue;
+            if (!fallbackColor) continue;
+            return {
+              color: fallbackColor,
+              image: bgImage,
+              position: style.backgroundPosition,
+              size: style.backgroundSize,
+              repeat: style.backgroundRepeat,
+              origin: style.backgroundOrigin,
+              clip: style.backgroundClip,
+            };
+          }
+          return null;
+        }
+        function ensureExplicitSlideBackgrounds(slides) {
+          for (const slide of slides) {
+            slide.querySelectorAll(':scope > [data-od-pptx-bg]').forEach((el) => el.remove());
+            const background = effectiveBackgroundStyle(slide);
+            if (!background) continue;
+            const bg = document.createElement('div');
+            bg.setAttribute('data-od-pptx-bg', 'true');
+            bg.setAttribute('aria-hidden', 'true');
+            bg.style.setProperty('position', 'absolute', 'important');
+            bg.style.setProperty('inset', '0', 'important');
+            bg.style.setProperty('z-index', '0', 'important');
+            bg.style.setProperty('pointer-events', 'none', 'important');
+            bg.style.setProperty('background-color', background.color, 'important');
+            bg.style.setProperty('background-image', background.image, 'important');
+            bg.style.setProperty('background-position', background.position, 'important');
+            bg.style.setProperty('background-size', background.size, 'important');
+            bg.style.setProperty('background-repeat', background.repeat, 'important');
+            bg.style.setProperty('background-origin', background.origin, 'important');
+            bg.style.setProperty('background-clip', background.clip, 'important');
+            const style = getComputedStyle(slide);
+            if (style.position === 'static') slide.style.setProperty('position', 'relative', 'important');
+            if (style.overflow === 'visible') slide.style.setProperty('overflow', 'hidden', 'important');
+            slide.style.setProperty('background-color', background.color, 'important');
+            Array.from(slide.children).forEach((child) => {
+              if (child.getAttribute('data-od-pptx-bg') === 'true') return;
+              const childStyle = getComputedStyle(child);
+              if (childStyle.position === 'static') {
+                child.style.setProperty('position', 'relative', 'important');
+              }
+              if (childStyle.zIndex === 'auto') {
+                child.style.setProperty('z-index', '1', 'important');
+              }
+            });
+            slide.prepend(bg);
+          }
+        }
+        // Hero/display text set at line-height:1 measures ambiguously; pin its
+        // box and center via flex so dom-to-pptx places it like the browser did.
+        function stabilizeLargeSingleLineText(slides) {
+          for (const slide of slides) {
+            slide.querySelectorAll('*').forEach((el) => {
+              const rawText = el.innerText || el.textContent || '';
+              const text = rawText.replace(/\s+/g, ' ').trim();
+              if (!text || rawText.includes('\n')) return;
+              const style = getComputedStyle(el);
+              const fontSizePx = Number.parseFloat(style.fontSize);
+              if (!Number.isFinite(fontSizePx) || fontSizePx < 96) return;
+              const lineHeightPx = Number.parseFloat(style.lineHeight);
+              if (!Number.isFinite(lineHeightPx) || lineHeightPx <= 0 || lineHeightPx > fontSizePx * 1.05) return;
+              const rect = el.getBoundingClientRect();
+              if (rect.width <= 1 || rect.height <= 1) return;
+              const justify =
+                style.textAlign === 'center' || style.textAlign === '-webkit-center'
+                  ? 'center'
+                  : style.textAlign === 'right' || style.textAlign === 'end'
+                    ? 'flex-end'
+                    : 'flex-start';
+              el.style.setProperty('display', 'flex', 'important');
+              el.style.setProperty('align-items', 'center', 'important');
+              el.style.setProperty('justify-content', justify, 'important');
+              el.style.setProperty('width', `${rect.width}px`, 'important');
+              el.style.setProperty('height', `${rect.height}px`, 'important');
+              el.style.setProperty('line-height', 'normal', 'important');
+              el.style.setProperty('white-space', 'nowrap', 'important');
+              el.style.setProperty('overflow', 'visible', 'important');
+            });
+          }
+        }
+        try {
+          if (!window.domToPptx || typeof window.domToPptx.exportToPptx !== 'function') {
+            return { error: 'dom-to-pptx engine did not load' };
+          }
+          const slides = Array.from(document.querySelectorAll(selector)).filter(
+            (el) => !el.closest(cloneAncestors),
+          );
+          if (slides.length === 0) return { error: 'no slides to export' };
+          ensureExplicitSlideBackgrounds(slides);
+          stabilizeLargeSingleLineText(slides);
+          // dom-to-pptx assumes `node.className` is a string, but SVG elements
+          // expose an SVGAnimatedString, so its DOM walk throws on decks
+          // containing inline SVG. Normalize those to a plain string.
+          document.querySelectorAll('*').forEach((el) => {
+            const cn = el.className;
+            if (cn != null && typeof cn !== 'string') {
+              try {
+                Object.defineProperty(el, 'className', {
+                  value: cn.baseVal ?? '',
+                  configurable: true,
+                  writable: true,
+                });
+              } catch {
+                // Leave it; dom-to-pptx may still handle this node.
+              }
+            }
+          });
+          const blob = await window.domToPptx.exportToPptx(slides, {
+            fileName: 'deck.pptx',
+            skipDownload: true,
+            autoEmbedFonts: true,
+            svgAsVector: true,
+          });
+          if (!blob || typeof blob.arrayBuffer !== 'function') {
+            return { error: 'dom-to-pptx returned no blob' };
+          }
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          let binary = '';
+          const CHUNK = 0x8000;
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
+          }
+          return { b64: btoa(binary) };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error) };
+        }
+      },
+      [SLIDE_SELECTOR, CLONE_ANCESTORS],
+    );
+    if (!out || out.error || !out.b64) {
+      console.error(`editable export failed: ${(out && out.error) || 'engine returned no output'}`);
+      process.exit(5);
+    }
+    await browser.close();
+    fs.writeFileSync(output, Buffer.from(out.b64, 'base64'));
+    const end = Date.now();
+    console.log(
+      `ok: ${output} (${count} slides, ${stage.w}x${stage.h}, editable) ` +
+        `load=${tLoad - t0}ms prepare=${tPrepare - tLoad}ms convert=${end - tPrepare}ms total=${end - t0}ms`,
+    );
+    // Browser already closed and no shots dir was created — exit directly.
+    process.exit(0);
+  }
 
   // Show slide i via the common active-slide conventions, settle two frames,
   // and — when the deck positions the active slide off the capture viewport
