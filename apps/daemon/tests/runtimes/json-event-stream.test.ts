@@ -90,6 +90,39 @@ test('opencode json stream emits structured errors as error events', () => {
   ]);
 });
 
+test('opencode json stream surfaces errored tool results with the failure reason', () => {
+  const { events, handler } = collectEvents('opencode');
+
+  // OpenCode's terminal failure state (e.g. an external_directory permission
+  // denial) carries the reason in `state.error`; it must reach the web as an
+  // isError tool_result instead of being dropped (which leaves a bare failed
+  // tool row and misattributes the turn to the provider).
+  handler.feed(
+    JSON.stringify({
+      type: 'tool_use',
+      part: {
+        tool: 'bash',
+        callID: 'call-2',
+        state: {
+          input: JSON.stringify({ command: 'cat /etc/os-release' }),
+          error: 'Permission denied: /etc/os-release is outside the allowed directories',
+          status: 'error',
+        },
+      },
+    }) + '\n',
+  );
+
+  assert.deepEqual(events, [
+    { type: 'tool_use', id: 'call-2', name: 'bash', input: { command: 'cat /etc/os-release' } },
+    {
+      type: 'tool_result',
+      toolUseId: 'call-2',
+      content: 'Permission denied: /etc/os-release is outside the allowed directories',
+      isError: true,
+    },
+  ]);
+});
+
 test('opencode json stream preserves nested error messages', () => {
   const { events, handler } = collectEvents('opencode');
 

@@ -189,6 +189,20 @@ function handleOpenCodeEvent(obj: unknown, onEvent: StreamEventHandler, state: P
         content: stringifyContent(statePart.output),
         isError: false,
       });
+    } else if (statePart?.status === 'error') {
+      // OpenCode's terminal failure state carries the reason in `state.error`
+      // (permission denials, spawn failures, timeouts). Dropping it leaves the
+      // web with a bare failed tool row and the empty-delivery guard blaming
+      // the provider — the real cause becomes undiagnosable from the product.
+      onEvent({
+        type: 'tool_result',
+        toolUseId: part.callID,
+        content:
+          typeof statePart.error === 'string' && statePart.error.length > 0
+            ? statePart.error
+            : stringifyContent(statePart.output),
+        isError: true,
+      });
     }
     return true;
   }

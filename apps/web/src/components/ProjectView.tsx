@@ -3994,6 +3994,10 @@ export function ProjectView({
       // 终局时由 onStderrTail 填充:空交付守卫用它提取日志泵抓到的真实错误
       // (如 "[opencode-log] llm request failed: status code 400")上屏。
       let lastStderrTail = '';
+      // 本轮最后一个失败的工具结果(如 opencode 权限拒绝的原因文本):模型在
+      // 工具被拒后常直接哑火,空交付守卫要靠它把真实原因上屏,而不是笼统地
+      // 归咎服务商。
+      let lastToolError = '';
 
       const updateAssistant = (updater: (prev: ChatMessage) => ChatMessage) => {
         setMessages((curr) =>
@@ -4064,6 +4068,9 @@ export function ProjectView({
             // project tree and outside it.
             pendingWrites.set(ev.id, filePath);
           }
+        }
+        if (ev.kind === 'tool_result' && ev.isError && ev.content.trim()) {
+          lastToolError = ev.content.trim().slice(0, 300);
         }
         if (ev.kind === 'tool_result') {
           const filePath = pendingWrites.get(ev.toolUseId);
@@ -4324,8 +4331,14 @@ export function ProjectView({
                   .reverse()
                   .map((line) => line.trim())
                   .find((line) => line.includes('[opencode-log]'));
-                const diagnostic = pumpLine
-                  ? `${t('assistant.emptyResponseMessage')}\n\n\`${pumpLine}\``
+                // 真实原因优先级:provider 错误(日志泵)> 最后一个失败的工具
+                // 结果(如权限拒绝)。两者都有就都给——它们描述的是不同环节。
+                const causeLine =
+                  pumpLine && lastToolError
+                    ? `${pumpLine}\n[tool-error] ${lastToolError}`
+                    : pumpLine || (lastToolError ? `[tool-error] ${lastToolError}` : '');
+                const diagnostic = causeLine
+                  ? `${t('assistant.emptyResponseMessage')}\n\n\`\`\`\n${causeLine}\n\`\`\``
                   : t('assistant.emptyResponseMessage');
                 updateMessageById(
                   assistantId,
@@ -4335,7 +4348,7 @@ export function ProjectView({
                     traceObjectFiles,
                     events: [
                       ...(prev.events ?? []),
-                      { kind: 'status', label: 'empty_response', ...(pumpLine ? { detail: pumpLine } : {}) },
+                      { kind: 'status', label: 'empty_response', ...(causeLine ? { detail: causeLine } : {}) },
                       { kind: 'text', text: diagnostic },
                     ],
                   }),
