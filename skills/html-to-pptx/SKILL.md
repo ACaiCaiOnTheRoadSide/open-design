@@ -83,8 +83,13 @@ resolve against the workspace `node_modules`.
 ## Step 3 — render
 
 ```bash
+NODE_OPTIONS=--max-old-space-size=256 \
 node "$WORKDIR/render-pptx.mjs" "<project-dir>/<deck>.html" "<project-dir>/<deck-title>.pptx"
 ```
+
+Keep the `NODE_OPTIONS` cap — sandbox runtimes limit the whole container to
+~1GiB shared by your own process, this script, and Chromium; an uncapped Node
+heap invites the OOM killer.
 
 - The output path MUST be inside the project directory — that is what makes it
   sync back and appear in the user's file list.
@@ -102,6 +107,12 @@ node "$WORKDIR/render-pptx.mjs" "<project-dir>/<deck>.html" "<project-dir>/<deck
 
 ## Troubleshooting
 
+- **Process reports `Killed` (exit code 137)**: the sandbox hit its memory
+  limit (~1GiB for everything in the container). Do NOT retry in a loop.
+  First kill any leftover processes from earlier attempts
+  (`pkill -f headless_shell; pkill -f render-pptx` — ignore errors), then
+  retry ONCE. If it is killed again, stop and tell the user the export needs
+  more sandbox memory than this environment provides.
 - **Browser download fails / hangs**: try without the mirror env vars; if the
   sandbox provides an HTTP proxy (`HTTPS_PROXY`), keep it exported for both
   `npm i` and `playwright install`.

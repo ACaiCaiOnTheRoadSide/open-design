@@ -59,6 +59,14 @@ const browser = await chromium.launch({
     '--force-color-profile=srgb',
     '--hide-scrollbars',
     '--font-render-hinting=none',
+    // Sandbox runtimes cap the whole container (opencode + this script +
+    // Chromium) at ~1GiB; without these the OOM killer takes the run down.
+    '--disable-gpu',
+    '--no-zygote',
+    '--renderer-process-limit=1',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--js-flags=--max-old-space-size=256',
   ],
 });
 try {
