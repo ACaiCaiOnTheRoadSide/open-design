@@ -13,11 +13,17 @@
 // Exit codes: 0 ok, 2 usage, 3 input not found, 4 no slide surfaces (not a deck).
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import PptxGenJS from 'pptxgenjs';
+
+// pptxgenjs 4.x points its ESM `exports` entry at a .js file that is not
+// marked as a module — `import` breaks on Node < 22 (no syntax detection),
+// which is what sandbox images ship. The CJS entry loads everywhere.
+const require = createRequire(import.meta.url);
+const PptxGenJS = require('pptxgenjs');
 
 // Mirrors deck-capture.ts: the slide-surface family across deck conventions.
 const SLIDE_SELECTOR = '.slide, [data-screen-label], .deck-slide, .ppt-slide';
@@ -61,9 +67,20 @@ const systemChromium =
   ) ||
   null;
 
+// Forward the sandbox's egress proxy (if any) so decks that reference remote
+// webfonts/images still load them; file:// navigation is unaffected.
+const proxyServer =
+  process.env.HTTPS_PROXY ||
+  process.env.https_proxy ||
+  process.env.HTTP_PROXY ||
+  process.env.http_proxy ||
+  null;
+const proxyBypass = process.env.NO_PROXY || process.env.no_proxy || undefined;
+
 const t0 = Date.now();
 const browser = await chromium.launch({
   ...(systemChromium ? { executablePath: systemChromium } : {}),
+  ...(proxyServer ? { proxy: { server: proxyServer, bypass: proxyBypass } } : {}),
   args: [
     '--no-sandbox',
     '--disable-dev-shm-usage',

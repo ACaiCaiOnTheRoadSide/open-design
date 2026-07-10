@@ -49,26 +49,56 @@ would pollute the user's file list).
 ```bash
 WORKDIR=/tmp/od-pptx-export
 mkdir -p "$WORKDIR" && cd "$WORKDIR"
-export PLAYWRIGHT_BROWSERS_PATH="$WORKDIR/browsers"
-# China-network mirrors; harmless elsewhere. Drop them only if they 404.
-export PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
 [ -f package.json ] || npm init -y >/dev/null
 npm i --registry=https://registry.npmmirror.com playwright pptxgenjs
-# System Chromium (baked into sandbox images) takes priority — the render
-# script auto-detects it. Only download a browser when there is none:
-command -v chromium-browser >/dev/null || command -v chromium >/dev/null || \
-  { npx playwright install chromium-headless-shell || npx playwright install chromium; }
 ```
 
 Skip installs that are already present (`$WORKDIR` persists within a session —
-re-running the export must not re-download Chromium).
+re-running the export must not re-download anything).
 
-Do NOT download a browser with `playwright install` when a system Chromium
-exists: on musl-based sandboxes (Alpine) the downloaded glibc build can never
-run (`Error relocating ...` from ldd is the telltale) — the system browser is
-the only one that works there.
+## Step 2 — obtain a Chromium (pick the branch that matches the system)
 
-## Step 2 — get the render script into the workspace
+Environment differences (musl vs glibc, root vs not) are handled here, once.
+The result is `$WORKDIR/env.sh`, which every later step sources — shell state
+does not survive between your commands, so the env MUST live in that file.
+
+```bash
+WORKDIR=/tmp/od-pptx-export
+BROWSER="$(command -v chromium-browser || command -v chromium || true)"
+echo "export PLAYWRIGHT_BROWSERS_PATH=\"$WORKDIR/browsers\"" > "$WORKDIR/env.sh"
+if [ -z "$BROWSER" ] && [ -f /etc/alpine-release ]; then
+  # musl (Alpine) without root: Playwright's glibc browser can NEVER run here
+  # ("Error relocating ..."). Instead, userspace-install Alpine's own musl
+  # Chromium: `apk fetch` only downloads (no root needed), .apk files are
+  # plain tar.gz, and LD_LIBRARY_PATH makes the extracted tree self-contained.
+  PREFIX="$WORKDIR/chromium-root"
+  mkdir -p "$PREFIX" "$WORKDIR/apks" "$WORKDIR/fc-cache"
+  apk --no-cache fetch --recursive --output "$WORKDIR/apks" \
+    chromium font-noto-cjk ttf-dejavu fontconfig
+  for f in "$WORKDIR"/apks/*.apk; do tar -xzf "$f" -C "$PREFIX" 2>/dev/null || true; done
+  printf '%s\n' '<?xml version="1.0"?>' \
+    '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">' '<fontconfig>' \
+    "  <dir>$PREFIX/usr/share/fonts</dir>" \
+    "  <cachedir>$WORKDIR/fc-cache</cachedir>" '</fontconfig>' > "$WORKDIR/fonts.conf"
+  {
+    echo "export OD_PPTX_CHROMIUM=\"$PREFIX/usr/lib/chromium/chrome\""
+    echo "export LD_LIBRARY_PATH=\"$PREFIX/usr/lib:$PREFIX/lib:$PREFIX/usr/lib/pulseaudio\""
+    echo "export FONTCONFIG_FILE=\"$WORKDIR/fonts.conf\""
+  } >> "$WORKDIR/env.sh"
+elif [ -z "$BROWSER" ]; then
+  # glibc system without a system browser: Playwright's own build works.
+  export PLAYWRIGHT_BROWSERS_PATH="$WORKDIR/browsers"
+  # China-network mirror; harmless elsewhere. Drop it only if it 404s.
+  export PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
+  npx playwright install chromium-headless-shell || npx playwright install chromium
+fi
+# else: a system chromium exists — the render script auto-detects it.
+```
+
+The apk download is ~250MB from the image's configured mirror; run it once per
+session (`$WORKDIR` persists — never re-download on a retry).
+
+## Step 3 — get the render script into the workspace
 
 The script ships with this skill at `scripts/render-pptx.mjs`. Copy it from
 the skill root advertised in the skill preamble — in staged runtimes that is
@@ -88,16 +118,18 @@ and do not write a replacement script from memory.
 The script must live in `$WORKDIR` so its `playwright`/`pptxgenjs` imports
 resolve against the workspace `node_modules`.
 
-## Step 3 — render
+## Step 4 — render
 
 ```bash
-NODE_OPTIONS=--max-old-space-size=256 \
-node "$WORKDIR/render-pptx.mjs" "<project-dir>/<deck>.html" "<project-dir>/<deck-title>.pptx"
+. /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
+node /tmp/od-pptx-export/render-pptx.mjs "<project-dir>/<deck>.html" "<project-dir>/<deck-title>.pptx"
 ```
 
-Keep the `NODE_OPTIONS` cap — sandbox runtimes limit the whole container to
-~1GiB shared by your own process, this script, and Chromium; an uncapped Node
-heap invites the OOM killer.
+Always source `env.sh` in the same command — the browser location, library
+path, and font config from Step 2 live there, and shell state does not carry
+over between your commands. Keep the `NODE_OPTIONS` cap — sandbox runtimes
+limit the whole container to ~1GiB shared by your own process, this script,
+and Chromium; an uncapped Node heap invites the OOM killer.
 
 - The output path MUST be inside the project directory — that is what makes it
   sync back and appear in the user's file list.
@@ -105,7 +137,7 @@ heap invites the OOM killer.
 - The script logs `slide N/M captured` progress and a final `ok:` line with
   slide count and per-phase timings.
 
-## Step 4 — verify and report
+## Step 5 — verify and report
 
 1. Confirm the `.pptx` exists in the project directory and is non-trivial
    (`ls -la`; a real deck is at least tens of KB).
@@ -125,14 +157,19 @@ heap invites the OOM killer.
   sandbox provides an HTTP proxy (`HTTPS_PROXY`), keep it exported for both
   `npm i` and `playwright install`.
 - **Chromium fails to launch with missing shared libraries / `Error
-  relocating`**: `Error relocating` means a glibc browser on a musl (Alpine)
-  system — no amount of dependency installing can fix that; the environment
-  needs a system Chromium baked into its image. Check
-  `command -v chromium-browser || command -v chromium` once more; if there is
-  no system browser, STOP and report to the user that this sandbox image
-  cannot run Chromium yet. On glibc systems you may try
+  relocating`**: `Error relocating` means a glibc browser is being run on a
+  musl (Alpine) system — installing dependencies can never fix that. You are
+  on the wrong branch of Step 2: run its Alpine branch (userspace apk
+  install) and render again via `env.sh`. If `apk fetch` itself fails
+  (no network to the mirror), STOP and report. On glibc systems you may try
   `npx playwright install-deps chromium` (needs root/apt). Never silently
   produce a different artifact.
+- **Output uses wrong/fallback fonts while layout is otherwise correct**: the
+  deck references remote webfonts (e.g. fonts.googleapis.com) that this
+  sandbox cannot reach. The script forwards `HTTPS_PROXY` to Chromium
+  automatically when set. If fonts still fall back, finish the export and
+  tell the user the deck's webfonts were unreachable from the sandbox, so
+  system fonts were substituted — do not treat this as a failure.
 - **Exit code 4 (`no slide surfaces found`)**: the file is not a deck. Tell
   the user PPTX export needs a slide-based document; offer image/PDF export of
   the page instead.
