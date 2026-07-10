@@ -149,12 +149,20 @@ in place).
 ```bash
 # screenshot mode (default)
 . /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
-node /tmp/od-pptx-export/render-pptx.mjs "<project-dir>/<deck>.html" "<project-dir>/<deck-title>.pptx"
+node /tmp/od-pptx-export/render-pptx.mjs "<project-dir>/<deck>.html" "<project-dir>/<deck-title>-截图版.pptx"
 
 # editable mode (native text/shapes — only when the user chose it)
 . /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
-node /tmp/od-pptx-export/render-pptx.mjs --editable "<project-dir>/<deck>.html" "<project-dir>/<deck-title>.pptx"
+node /tmp/od-pptx-export/render-pptx.mjs --editable "<project-dir>/<deck>.html" "<project-dir>/<deck-title>-可编辑版.pptx"
 ```
+
+The two modes are DIFFERENT artifacts and their filenames MUST stay distinct:
+always append the mode marker to the output name — `-截图版` for screenshot
+mode, `-可编辑版` for editable mode (use `-screenshot` / `-editable` instead
+when the deck title is not Chinese). A .pptx from the OTHER mode (or from an
+earlier run) already sitting in the project directory does NOT satisfy the
+current request — never point at an existing file and report the export as
+done; run the render for the requested mode every time.
 
 Always source `env.sh` in the same command — the browser location, library
 path, and font config from Step 2 live there, and shell state does not carry
@@ -164,7 +172,8 @@ and Chromium; an uncapped Node heap invites the OOM killer.
 
 - The output path MUST be inside the project directory — that is what makes it
   sync back and appear in the user's file list.
-- Name the .pptx after the deck's human title when known, not the raw filename.
+- Name the .pptx after the deck's human title when known, not the raw filename,
+  and always keep the mode marker suffix described above.
 - The script logs `slide N/M captured` progress and a final `ok:` line with
   slide count and per-phase timings.
 
@@ -173,8 +182,8 @@ and Chromium; an uncapped Node heap invites the OOM killer.
 1. Confirm the `.pptx` exists in the project directory and is non-trivial
    (`ls -la`; a real deck is at least tens of KB).
 2. Confirm the slide count in the `ok:` line matches the deck.
-3. Tell the user the export is done and the file name to look for in the
-   project file list. Include the slide count.
+3. Tell the user the export is done and the exact file name (including the
+   mode marker) to look for in the project file list. Include the slide count.
 
 ## Troubleshooting
 
@@ -221,7 +230,9 @@ and Chromium; an uncapped Node heap invites the OOM killer.
   and tell the user editable conversion is not possible for this deck. For other engine failures, retry ONCE; if it
   fails again, run the default screenshot mode instead and TELL the user the
   deck could not be converted to editable shapes, so they received the
-  screenshot-based .pptx — never fall back silently.
+  screenshot-based .pptx — never fall back silently. A fallback output is a
+  screenshot artifact: name it with the screenshot marker (`-截图版`), not the
+  editable one.
 - **Relative assets missing in the capture** (rare): serve the project
   directory (`python3 -m http.server` or `npx serve`) and pass an
   `http://127.0.0.1:<port>/<deck>.html` URL to the script instead of the file

@@ -5132,6 +5132,14 @@ export function ProjectView({
     async ({ fileName, title, editable }: { fileName: string; title?: string; editable: boolean }) => {
       if (currentConversationActionDisabled) return false;
       const deckLabel = title && title.trim().length > 0 ? title.trim() : fileName;
+      // Mode-distinct output names: a screenshot .pptx and an editable .pptx of
+      // the same deck are different artifacts, so they must never share a
+      // filename — otherwise exporting the second mode finds the first mode's
+      // file already on disk and the agent skips the render, reporting a file
+      // the user did not ask for. Chinese markers match the SaaS audience and
+      // the skill's own Step 4 naming rule.
+      const baseLabel = deckLabel.replace(/\.pptx$/i, '').replace(/\.html?$/i, '');
+      const outputName = `${baseLabel}${editable ? '-可编辑版' : '-截图版'}.pptx`;
       // The user picked a mode in the export dialog; the skill's render script
       // implements both (default = screenshot images, --editable = native
       // text/shapes via the bundled dom-to-pptx engine).
@@ -5139,14 +5147,18 @@ export function ProjectView({
         ? 'The user chose the EDITABLE mode: render with the --editable flag so the deck exports as ' +
           'native PowerPoint text/shapes (copy the skill\'s assets/dom-to-pptx.bundle.js.gz next to the ' +
           'script first). If editable rendering fails after one retry, fall back to the default ' +
-          'screenshot mode and tell me the file fell back to screenshot slides. '
+          'screenshot mode, name the fallback output with the -截图版 marker instead, and tell me the ' +
+          'file fell back to screenshot slides. '
         : 'The user chose the SCREENSHOT mode: render WITHOUT the --editable flag (one image per slide). ';
       const prompt =
         `Export the HTML deck "${fileName}" in this project to a .pptx file using the html-to-pptx skill. ` +
         'Follow the skill exactly — set up the dependency workspace OUTSIDE the project directory, ' +
         'render with the bundled render-pptx.mjs script, and write the resulting .pptx INTO the project ' +
-        `directory named after the deck title ("${deckLabel}") so it appears in my file list. ` +
+        `directory named exactly "${outputName}" so it appears in my file list. ` +
         modeInstruction +
+        'A .pptx exported earlier in the OTHER mode (or an older run) may already exist in the project — ' +
+        'it does NOT satisfy this request; run the render for the requested mode regardless of any ' +
+        'existing .pptx files. ' +
         'When finished, report the slide count and the output file name. If any step fails, report the ' +
         'actual error instead of producing a substitute artifact.';
       // skillIds is what actually injects the skill (body into the system
