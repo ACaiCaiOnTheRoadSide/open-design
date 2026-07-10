@@ -298,6 +298,56 @@ try {
       },
       [SLIDE_SELECTOR, CLONE_ANCESTORS],
     );
+    // Text-coverage precondition. Decks gate entrance animations behind
+    // JS-added classes (`.slide.visible .reveal { opacity: 1 }`); the prep
+    // above triggers the common conventions, but when a deck's mechanics
+    // don't match, its text is still at opacity 0 here. dom-to-pptx then
+    // (correctly) skips invisible text and emits a shell of background
+    // shapes — an export that LOOKS successful while silently dropping the
+    // content. Refuse loudly instead: exit 5 routes into the skill's
+    // explicit-fallback path rather than shipping a text-less .pptx.
+    const textStat = await page.evaluate(
+      ([selector, cloneAncestors]) => {
+        const slides = Array.from(document.querySelectorAll(selector)).filter(
+          (el) => !el.closest(cloneAncestors),
+        );
+        let total = 0;
+        let visible = 0;
+        for (const slide of slides) {
+          const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const text = (node.textContent || '').replace(/\s+/gu, '');
+            if (!text) continue;
+            const el = node.parentElement;
+            if (!el) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const hasBox = range.getClientRects().length > 0; // display:none has no box
+            total += text.length;
+            if (!hasBox || getComputedStyle(el).visibility === 'hidden') continue;
+            // Effective opacity multiplies down the ancestor chain — a text
+            // node whose own element is opaque is still invisible inside an
+            // opacity-0 reveal container.
+            let opacity = 1;
+            for (let cur = el; cur && cur !== slide.parentElement; cur = cur.parentElement) {
+              opacity *= Number.parseFloat(getComputedStyle(cur).opacity);
+              if (!(opacity > 0.05)) break;
+            }
+            if (opacity > 0.05) visible += text.length;
+          }
+        }
+        return { total, visible };
+      },
+      [SLIDE_SELECTOR, CLONE_ANCESTORS],
+    );
+    if (textStat.total >= 40 && textStat.visible < textStat.total * 0.6) {
+      console.error(
+        `editable export refused: only ${textStat.visible}/${textStat.total} text characters are visible after slide reveal — ` +
+          'the deck hides its text behind reveal mechanics this exporter could not trigger; ' +
+          'converting now would silently drop most of the content',
+      );
+      process.exit(5);
+    }
     await page.addScriptTag({ content: engine });
     const out = await page.evaluate(
       async ([selector, cloneAncestors]) => {

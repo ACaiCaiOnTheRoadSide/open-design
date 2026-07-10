@@ -40,7 +40,10 @@ unspecified):
   exotic CSS is lower than screenshot mode.
 
 **Follow the steps below exactly. Do NOT improvise your own conversion** (no
-hand-written python-pptx layouts, no drawing replacement SVGs). If a step
+hand-written python-pptx layouts, no drawing replacement SVGs, and NEVER
+drive `assets/dom-to-pptx.bundle.js.gz` with your own script — the engine
+only sees text that render-pptx.mjs's slide-reveal prep has made visible;
+a hand-rolled driver produces a .pptx of empty background shapes). If a step
 fails, report the actual error to the user instead of fabricating a result.
 If the same command fails the same way twice, stop and report — do not keep
 retrying it.
@@ -212,10 +215,14 @@ and Chromium; an uncapped Node heap invites the OOM killer.
 - **Exit code 5 (editable engine missing or failed)**: if the message says the
   engine bundle was not found, redo Step 3 (copy
   `assets/dom-to-pptx.bundle.js.gz` next to the script) and retry. If the
-  engine itself failed on this deck, retry ONCE; if it fails again, run the
-  default screenshot mode instead and TELL the user the deck could not be
-  converted to editable shapes, so they received the screenshot-based .pptx —
-  never fall back silently.
+  message says `editable export refused: only N/M text characters are
+  visible`, do NOT retry — the deck keeps its text hidden behind reveal
+  mechanics the exporter could not trigger; run screenshot mode, check the
+  slides are not blank/text-less, and tell the user editable conversion is
+  not possible for this deck. For other engine failures, retry ONCE; if it
+  fails again, run the default screenshot mode instead and TELL the user the
+  deck could not be converted to editable shapes, so they received the
+  screenshot-based .pptx — never fall back silently.
 - **Relative assets missing in the capture** (rare): serve the project
   directory (`python3 -m http.server` or `npx serve`) and pass an
   `http://127.0.0.1:<port>/<deck>.html` URL to the script instead of the file
