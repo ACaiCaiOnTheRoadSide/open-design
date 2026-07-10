@@ -545,8 +545,8 @@ export async function deleteProject(db: SqliteDb, id: string, opts?: { tombstone
   if (opts?.tombstone !== false) {
     await db
       .prepare(
-        `INSERT INTO deleted_projects (id, tenant_id, name, created_at, deleted_at, creator_id)
-           SELECT id, tenant_id, name, created_at, ?, creator_id FROM projects WHERE id = ? AND tenant_id = ?
+        `INSERT INTO deleted_projects (id, tenant_id, name, created_at, deleted_at, creator_id, download_count)
+           SELECT id, tenant_id, name, created_at, ?, creator_id, download_count FROM projects WHERE id = ? AND tenant_id = ?
            ON CONFLICT (id) DO NOTHING`,
       )
       .run(Date.now(), id, tenantId);

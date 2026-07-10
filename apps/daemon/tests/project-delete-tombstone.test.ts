@@ -38,6 +38,12 @@ describe('project delete tombstone', () => {
     const id = `tomb-${randomUUID().slice(0, 8)}`;
     await createProject(id, `Tombstone ${id}`);
 
+    // 生前攒两次下载:删除后计数必须随墓碑保留(后台列表已删项目也展示下载次数)。
+    for (let i = 0; i < 2; i += 1) {
+      const bump = await fetch(`${baseUrl}/api/projects/${id}/download-events`, { method: 'POST' });
+      expect(bump.status).toBe(200);
+    }
+
     const resp = await fetch(`${baseUrl}/api/projects/${id}`, { method: 'DELETE' });
     expect(resp.status).toBe(200);
 
@@ -47,11 +53,18 @@ describe('project delete tombstone', () => {
 
     const tomb = (await db
       .prepare(
-        `SELECT tenant_id AS tenantId, name, created_at AS createdAt, deleted_at AS deletedAt
+        `SELECT tenant_id AS tenantId, name, created_at AS createdAt, deleted_at AS deletedAt,
+                download_count AS downloadCount
            FROM deleted_projects WHERE id = ?`,
       )
       .get(id)) as
-      | { tenantId: string; name: string; createdAt: number | string; deletedAt: number | string }
+      | {
+          tenantId: string;
+          name: string;
+          createdAt: number | string;
+          deletedAt: number | string;
+          downloadCount: number | string;
+        }
       | undefined;
     expect(tomb).toBeTruthy();
     expect(tomb!.name).toBe(`Tombstone ${id}`);
@@ -59,6 +72,7 @@ describe('project delete tombstone', () => {
     expect(tomb!.tenantId).toBe('__legacy__');
     expect(Number(tomb!.createdAt)).toBeGreaterThan(0);
     expect(Number(tomb!.deletedAt)).toBeGreaterThanOrEqual(Number(tomb!.createdAt));
+    expect(Number(tomb!.downloadCount)).toBe(2);
   });
 
   it('skips the tombstone for creation-rollback deletes (tombstone:false)', async () => {
