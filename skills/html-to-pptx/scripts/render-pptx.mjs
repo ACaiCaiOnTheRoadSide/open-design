@@ -13,6 +13,7 @@
 // Exit codes: 0 ok, 2 usage, 3 input not found, 4 no slide surfaces (not a deck).
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
@@ -66,9 +67,11 @@ const browser = await chromium.launch({
     '--renderer-process-limit=1',
     '--disable-extensions',
     '--disable-background-networking',
+    '--aggressive-cache-discard',
     '--js-flags=--max-old-space-size=256',
   ],
 });
+let shotsDir = null;
 try {
   const context = await browser.newContext({
     viewport: { width: SLIDE_W, height: SLIDE_H },
@@ -279,26 +282,42 @@ try {
     }
   };
 
+  // Memory choreography for ~1GiB sandboxes: capture every slide to DISK
+  // first, close Chromium, and only then assemble the .pptx — the browser
+  // (hundreds of MB) and the zip build never coexist, and no slide bitmap is
+  // held in this process's heap while the next slide renders.
+  shotsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-pptx-shots-'));
+  // Best-effort per-slide cache purge: a critical memory-pressure signal makes
+  // Chromium drop decoded images and other reclaimable caches between slides.
+  const cdp = await page.context().newCDPSession(page).catch(() => null);
+  const shots = [];
+  for (let i = 0; i < count; i++) {
+    await showSlide(i);
+    const shot = path.join(shotsDir, `slide-${i + 1}.png`);
+    await page.screenshot({
+      clip: { x: 0, y: 0, width: stage.w, height: stage.h },
+      type: 'png',
+      path: shot,
+    });
+    shots.push(shot);
+    await cdp?.send('Memory.simulatePressureNotification', { level: 'critical' }).catch(() => {});
+    console.log(`slide ${i + 1}/${count} captured`);
+  }
+  const tRender = Date.now();
+  await browser.close();
+
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: 'OD', width: stage.w / PX_PER_INCH, height: stage.h / PX_PER_INCH });
   pptx.layout = 'OD';
-  for (let i = 0; i < count; i++) {
-    await showSlide(i);
-    const png = await page.screenshot({
-      clip: { x: 0, y: 0, width: stage.w, height: stage.h },
-      type: 'png',
-    });
+  for (const shot of shots) {
     pptx.addSlide().addImage({
-      data: `data:image/png;base64,${png.toString('base64')}`,
+      path: shot,
       x: 0,
       y: 0,
       w: stage.w / PX_PER_INCH,
       h: stage.h / PX_PER_INCH,
     });
-    console.log(`slide ${i + 1}/${count} captured`);
   }
-  const tRender = Date.now();
-
   await pptx.writeFile({ fileName: output });
   const end = Date.now();
   console.log(
@@ -306,5 +325,6 @@ try {
       `load=${tLoad - t0}ms prepare=${tPrepare - tLoad}ms render=${tRender - tPrepare}ms write=${end - tRender}ms total=${end - t0}ms`,
   );
 } finally {
-  await browser.close();
+  await browser.close(); // no-op when already closed before assembly
+  if (shotsDir) fs.rmSync(shotsDir, { recursive: true, force: true });
 }
