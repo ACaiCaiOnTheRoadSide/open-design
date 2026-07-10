@@ -215,11 +215,10 @@ and Chromium; an uncapped Node heap invites the OOM killer.
 - **Exit code 5 (editable engine missing or failed)**: if the message says the
   engine bundle was not found, redo Step 3 (copy
   `assets/dom-to-pptx.bundle.js.gz` next to the script) and retry. If the
-  message says `editable export refused: only N/M text characters are
-  visible`, do NOT retry — the deck keeps its text hidden behind reveal
-  mechanics the exporter could not trigger; run screenshot mode, check the
-  slides are not blank/text-less, and tell the user editable conversion is
-  not possible for this deck. For other engine failures, retry ONCE; if it
+  message starts with `editable export refused`, do NOT retry — the deck
+  keeps its text/images hidden behind reveal mechanics the exporter could
+  not trigger; run screenshot mode, check the slides are not blank/text-less,
+  and tell the user editable conversion is not possible for this deck. For other engine failures, retry ONCE; if it
   fails again, run the default screenshot mode instead and TELL the user the
   deck could not be converted to editable shapes, so they received the
   screenshot-based .pptx — never fall back silently.

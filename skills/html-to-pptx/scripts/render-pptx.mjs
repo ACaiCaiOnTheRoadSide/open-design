@@ -306,13 +306,24 @@ try {
     // shapes — an export that LOOKS successful while silently dropping the
     // content. Refuse loudly instead: exit 5 routes into the skill's
     // explicit-fallback path rather than shipping a text-less .pptx.
-    const textStat = await page.evaluate(
+    const coverage = await page.evaluate(
       ([selector, cloneAncestors]) => {
         const slides = Array.from(document.querySelectorAll(selector)).filter(
           (el) => !el.closest(cloneAncestors),
         );
-        let total = 0;
-        let visible = 0;
+        // Effective opacity multiplies down the ancestor chain — a node whose
+        // own element is opaque is still invisible inside an opacity-0 reveal
+        // container.
+        const effectivelyVisible = (el, slide) => {
+          if (getComputedStyle(el).visibility === 'hidden') return false;
+          let opacity = 1;
+          for (let cur = el; cur && cur !== slide.parentElement; cur = cur.parentElement) {
+            opacity *= Number.parseFloat(getComputedStyle(cur).opacity);
+            if (!(opacity > 0.05)) return false;
+          }
+          return true;
+        };
+        const stat = { textTotal: 0, textVisible: 0, mediaTotal: 0, mediaVisible: 0 };
         for (const slide of slides) {
           const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
           for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -323,28 +334,31 @@ try {
             const range = document.createRange();
             range.selectNodeContents(node);
             const hasBox = range.getClientRects().length > 0; // display:none has no box
-            total += text.length;
-            if (!hasBox || getComputedStyle(el).visibility === 'hidden') continue;
-            // Effective opacity multiplies down the ancestor chain — a text
-            // node whose own element is opaque is still invisible inside an
-            // opacity-0 reveal container.
-            let opacity = 1;
-            for (let cur = el; cur && cur !== slide.parentElement; cur = cur.parentElement) {
-              opacity *= Number.parseFloat(getComputedStyle(cur).opacity);
-              if (!(opacity > 0.05)) break;
-            }
-            if (opacity > 0.05) visible += text.length;
+            stat.textTotal += text.length;
+            if (hasBox && effectivelyVisible(el, slide)) stat.textVisible += text.length;
+          }
+          // Media carry content the same way text does (an <img> chart inside
+          // an unrevealed container is silently dropped just like a headline).
+          // Nested SVG internals count once via their root.
+          for (const el of slide.querySelectorAll('img,svg,canvas,video,picture')) {
+            if (el.closest('svg') !== el && el.closest('svg')) continue;
+            stat.mediaTotal += 1;
+            const r = el.getBoundingClientRect();
+            if (r.width > 1 && r.height > 1 && effectivelyVisible(el, slide)) stat.mediaVisible += 1;
           }
         }
-        return { total, visible };
+        return stat;
       },
       [SLIDE_SELECTOR, CLONE_ANCESTORS],
     );
-    if (textStat.total >= 40 && textStat.visible < textStat.total * 0.6) {
+    const textBroken = coverage.textTotal >= 40 && coverage.textVisible < coverage.textTotal * 0.6;
+    const mediaBroken = coverage.mediaTotal >= 3 && coverage.mediaVisible < coverage.mediaTotal * 0.6;
+    if (textBroken || mediaBroken) {
       console.error(
-        `editable export refused: only ${textStat.visible}/${textStat.total} text characters are visible after slide reveal — ` +
-          'the deck hides its text behind reveal mechanics this exporter could not trigger; ' +
-          'converting now would silently drop most of the content',
+        `editable export refused: only ${coverage.textVisible}/${coverage.textTotal} text characters and ` +
+          `${coverage.mediaVisible}/${coverage.mediaTotal} media elements are visible after slide reveal — ` +
+          'the deck hides its content behind reveal mechanics this exporter could not trigger; ' +
+          'converting now would silently drop most of it',
       );
       process.exit(5);
     }
