@@ -19,6 +19,14 @@ import { getResolvedDeviceId } from '../analytics/client';
 import { trackChatPanelClick, trackMessageQueueClick, trackRunFailedToastSurfaceView } from '../analytics/events';
 import { amrHandoffDeviceId, attributedAmrUrl, recordAmrEntry } from '../analytics/amr-attribution';
 import { useT } from '../i18n';
+import { patchProject } from '../state/projects';
+import {
+  recommendTemplates,
+  templateRecommendUnavailable,
+  type TemplateRecommendation,
+  type TemplateRecommendResponse,
+} from '../state/templateRecommend';
+import { TemplateRecommendCard, TemplateRecommendEntry } from './TemplateRecommendCard';
 import {
   FEATURED_DESIGN_TOOLBOX_ACTION_IDS,
   findDesignToolboxSkill,
@@ -789,6 +797,15 @@ export function ChatPane({
   const t = useT();
   const analytics = useAnalytics();
   const displayMessages = messages;
+  // 模板推荐(baizhi fork,对话中场景):入口在 composer 上方;"使用"= PATCH
+  // 项目 skillId 后自动开新一轮,注入靠既有轮边界机制(stable-prompt 哈希变更
+  // 强制重发 system prompt)自动生效。对话中只推荐 design-template(skillId
+  // 可换绑);plugin 类另有 apply 链路,不在此处混入。
+  const [chatRecResult, setChatRecResult] = useState<TemplateRecommendResponse | null>(null);
+  const [chatRecLoading, setChatRecLoading] = useState(false);
+  const [chatRecRound, setChatRecRound] = useState(0);
+  const [chatRecHidden, setChatRecHidden] = useState(false);
+  const chatRecSeenIdsRef = useRef<string[]>([]);
   const amrProfile = config?.agentCliEnv?.amr?.[AMR_PROFILE_ENV_KEY] ?? null;
   const [inlineAmrLoginStatus, setInlineAmrLoginStatus] =
     useState<VelaLoginStatus | null>(null);
@@ -1802,8 +1819,81 @@ export function ChatPane({
     };
   }, [composerPortalRect, composerPortalTarget, tab]);
 
+  // 对话中推荐:以最近一条用户消息为语料;流式进行中/无历史时不展示入口。
+  const lastUserMessageText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m?.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
+        return m.content.trim();
+      }
+    }
+    return '';
+  }, [messages]);
+
+  async function runChatTemplateRecommend(excludeIds?: string[]) {
+    if (!lastUserMessageText || chatRecLoading) return;
+    setChatRecLoading(true);
+    try {
+      const result = await recommendTemplates({
+        prompt: lastUserMessageText,
+        ...(excludeIds && excludeIds.length > 0 ? { excludeIds } : {}),
+      });
+      const templatesOnly = result
+        ? result.recommendations.filter((r) => r.kind === 'design-template')
+        : [];
+      if (!result || templatesOnly.length === 0) {
+        if (templateRecommendUnavailable()) setChatRecHidden(true);
+        setChatRecResult(null);
+        return;
+      }
+      chatRecSeenIdsRef.current = [
+        ...chatRecSeenIdsRef.current,
+        ...result.recommendations.map((r) => r.id),
+      ];
+      setChatRecResult({ ...result, recommendations: templatesOnly });
+      setChatRecRound((n) => n + 1);
+    } finally {
+      setChatRecLoading(false);
+    }
+  }
+
+  async function useChatRecommendedTemplate(rec: TemplateRecommendation, displayName: string) {
+    if (!projectId) return;
+    setChatRecResult(null);
+    chatRecSeenIdsRef.current = [];
+    const patched = await patchProject(projectId, { skillId: rec.id });
+    if (!patched) return;
+    // 换绑后自动开新一轮:这一轮 daemon 重组 system prompt 时带上新模板。
+    onSend(t('templateRec.switchPrompt').replace(/\{name\}/g, displayName), [], []);
+  }
+
+  const templateRecNode =
+    projectId && !streaming && !chatRecHidden && lastUserMessageText ? (
+      chatRecResult ? (
+        <TemplateRecommendCard
+          key={chatRecRound}
+          recommendations={chatRecResult.recommendations}
+          degraded={chatRecResult.degraded}
+          busy={chatRecLoading}
+          onUse={(rec, displayName) => void useChatRecommendedTemplate(rec, displayName)}
+          onExhausted={() => void runChatTemplateRecommend(chatRecSeenIdsRef.current)}
+          onDismiss={() => {
+            setChatRecResult(null);
+            chatRecSeenIdsRef.current = [];
+          }}
+        />
+      ) : (
+        <TemplateRecommendEntry
+          loading={chatRecLoading}
+          onClick={() => void runChatTemplateRecommend()}
+        />
+      )
+    ) : null;
+
   const composerNode = (
-    <ChatComposer
+    <>
+      {templateRecNode}
+      <ChatComposer
       ref={composerRef}
       designSystemPicker={designSystemPicker}
       projectId={projectId}
@@ -1877,7 +1967,8 @@ export function ChatPane({
       currentDesignSystemId={currentDesignSystemId}
       onActiveDesignSystemChange={onActiveDesignSystemChange}
       onShowToast={onShowToast}
-    />
+      />
+    </>
   );
   const shouldPortalComposer =
     tab === 'chat'

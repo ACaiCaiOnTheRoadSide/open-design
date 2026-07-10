@@ -57,7 +57,14 @@ import {
   mergeAihubmixImageModels,
   useAIHubMixImageModels,
 } from '../media/aihubmix-image-models';
-import { openFolderDialog, fetchRecentLinkedDirs, pushRecentLinkedDir } from '../providers/registry';
+import { openFolderDialog, fetchRecentLinkedDirs, pushRecentLinkedDir, fetchDesignTemplates } from '../providers/registry';
+import {
+  recommendTemplates,
+  templateRecommendUnavailable,
+  type TemplateRecommendation,
+  type TemplateRecommendResponse,
+} from '../state/templateRecommend';
+import { TemplateRecommendCard, TemplateRecommendEntry } from './TemplateRecommendCard';
 import { isOpenDesignHostAvailable, pickHostWorkingDir } from '@open-design/host';
 import type {
   DesignSystemSummary,
@@ -288,6 +295,14 @@ export function HomeView({
   } | null>(null);
   const [sessionMode, setSessionMode] = useState<ChatSessionMode>('design');
   const [activeSkill, setActiveSkill] = useState<SkillSummary | null>(null);
+  // 模板推荐(baizhi fork):点按钮调 backend 推理出候选,卡片里三选一。
+  // recSeenIds 累计本轮会话已展示过的候选,"换一个"翻尽后作为 excludeIds 重调。
+  const [recResult, setRecResult] = useState<TemplateRecommendResponse | null>(null);
+  const [recLoading, setRecLoading] = useState(false);
+  const [recRound, setRecRound] = useState(0);
+  const [recHidden, setRecHidden] = useState(false);
+  const recSeenIdsRef = useRef<string[]>([]);
+  const designTemplateCatalogRef = useRef<SkillSummary[] | null>(null);
   const [selectedPluginContexts, setSelectedPluginContexts] = useState<SelectedPluginContext[]>([]);
   const [selectedMcpContexts, setSelectedMcpContexts] = useState<SelectedMcpContext[]>([]);
   const [selectedConnectorContexts, setSelectedConnectorContexts] = useState<SelectedConnectorContext[]>([]);
@@ -1372,6 +1387,66 @@ export function HomeView({
     focusPromptAtEnd();
   }
 
+  // --- 模板推荐(baizhi fork) ---------------------------------------------
+  async function runTemplateRecommend(excludeIds?: string[]) {
+    const trimmed = prompt.trim();
+    if (!trimmed || recLoading) return;
+    setRecLoading(true);
+    try {
+      const result = await recommendTemplates({
+        prompt: trimmed,
+        locale,
+        ...(excludeIds && excludeIds.length > 0 ? { excludeIds } : {}),
+      });
+      if (!result || result.recommendations.length === 0) {
+        // 服务不可达(本地无 backend)后入口整体隐藏;单纯无结果只收起卡片。
+        if (templateRecommendUnavailable()) setRecHidden(true);
+        setRecResult(null);
+        return;
+      }
+      recSeenIdsRef.current = [
+        ...recSeenIdsRef.current,
+        ...result.recommendations.map((r) => r.id),
+      ];
+      setRecResult(result);
+      setRecRound((n) => n + 1);
+      // design-template 的"使用"需要 SkillSummary,目录懒加载一次备用。
+      if (designTemplateCatalogRef.current == null) {
+        void fetchDesignTemplates().then((list) => {
+          designTemplateCatalogRef.current = list;
+        });
+      }
+    } finally {
+      setRecLoading(false);
+    }
+  }
+
+  function useRecommendedTemplate(rec: TemplateRecommendation) {
+    setRecResult(null);
+    recSeenIdsRef.current = [];
+    if (rec.kind === 'design-template') {
+      const summary = designTemplateCatalogRef.current?.find((s) => s.id === rec.id);
+      if (summary) {
+        // 保留用户已输入的需求文本,只挂模板芯片。
+        useSkill(summary, prompt);
+        return;
+      }
+      // 目录还没加载完的兜底:现场拉一次再挂。
+      void fetchDesignTemplates().then((list) => {
+        designTemplateCatalogRef.current = list;
+        const found = list.find((s) => s.id === rec.id);
+        if (found) useSkill(found, prompt);
+      });
+      return;
+    }
+    if (rec.kind === 'plugin') {
+      const record = plugins.find(
+        (p) => p.id === rec.id || p.sourceMarketplaceEntryName === rec.id,
+      );
+      if (record) void routePluginUse(record, 'use');
+    }
+  }
+
   function useMcpServer(_server: McpServerConfig, nextPrompt: string) {
     setSelectedMcpContexts((current) => (
       current.some((item) => item.server.id === _server.id)
@@ -1927,6 +2002,29 @@ export function HomeView({
         onSessionModeChange={setSessionMode}
         executionSwitcher={executionSwitcher}
       />
+
+      {/* 模板推荐(baizhi fork):输入需求后出现入口;卡片展示候选供三选一。 */}
+      {!recHidden && prompt.trim().length >= 4 ? (
+        recResult ? (
+          <TemplateRecommendCard
+            key={recRound}
+            recommendations={recResult.recommendations}
+            degraded={recResult.degraded}
+            busy={recLoading}
+            onUse={useRecommendedTemplate}
+            onExhausted={() => void runTemplateRecommend(recSeenIdsRef.current)}
+            onDismiss={() => {
+              setRecResult(null);
+              recSeenIdsRef.current = [];
+            }}
+          />
+        ) : (
+          <TemplateRecommendEntry
+            loading={recLoading}
+            onClick={() => void runTemplateRecommend()}
+          />
+        )
+      ) : null}
 
       <RecentProjectsStrip
         projects={projects}

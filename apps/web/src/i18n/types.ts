@@ -1113,6 +1113,14 @@ export interface Dict {
   'handoff.promptProjectId': string;
   'handoff.notInstalled': string;
   'handoff.notDetectedTitle': string;
+  'templateRec.button': string;
+  'templateRec.loading': string;
+  'templateRec.title': string;
+  'templateRec.use': string;
+  'templateRec.next': string;
+  'templateRec.dismiss': string;
+  'templateRec.degraded': string;
+  'templateRec.switchPrompt': string;
   'designSystemPicker.select': string;
   'designSystemPicker.loading': string;
   'designSystemPicker.searchPlaceholder': string;
