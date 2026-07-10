@@ -29,6 +29,8 @@ to Playwright, then assembles the deck with PptxGenJS.
 **Follow the steps below exactly. Do NOT improvise your own conversion** (no
 hand-written python-pptx layouts, no drawing replacement SVGs). If a step
 fails, report the actual error to the user instead of fabricating a result.
+If the same command fails the same way twice, stop and report — do not keep
+retrying it.
 
 ## Preconditions
 
@@ -61,21 +63,19 @@ re-running the export must not re-download Chromium).
 ## Step 2 — get the render script into the workspace
 
 The script ships with this skill at `scripts/render-pptx.mjs`. Copy it from
-the skill root advertised in the skill preamble (in staged runtimes that is
-`.od-skills/html-to-pptx/` inside the project working directory):
+the skill root advertised in the skill preamble — in staged runtimes that is
+`.od-skills/html-to-pptx/` inside the project working directory, otherwise
+use the absolute skill-root path from the preamble:
 
 ```bash
 cp <skill-root>/scripts/render-pptx.mjs "$WORKDIR/"
 ```
 
-If no skill-root copy is reachable on the local filesystem, fetch it from the
-daemon instead:
-
-```bash
-curl -fsSL ${OD_API_TOKEN:+-H "Authorization: Bearer $OD_API_TOKEN"} \
-  "$OD_DAEMON_URL/api/skills/html-to-pptx/assets/scripts/render-pptx.mjs" \
-  -o "$WORKDIR/render-pptx.mjs"
-```
+If NEITHER skill-root path exists on the local filesystem, STOP and report
+that the skill files were not synced into this workspace. Do not try to fetch
+the script over the network (sandbox runtimes have no daemon credentials —
+those requests fail with `API_TOKEN_REQUIRED` no matter how they are retried)
+and do not write a replacement script from memory.
 
 The script must live in `$WORKDIR` so its `playwright`/`pptxgenjs` imports
 resolve against the workspace `node_modules`.
