@@ -52,8 +52,18 @@ if (isUrl && !outputArg) {
 const output = path.resolve(outputArg || input.replace(/\.html?$/i, '') + '.pptx');
 const scale = Number(process.env.OD_PPTX_SCALE) >= 2 ? 2 : 1;
 
+// Prefer a system-installed Chromium (sandbox images bake a musl build in —
+// the Playwright-downloaded browser is glibc-only and cannot run on Alpine).
+const systemChromium =
+  process.env.OD_PPTX_CHROMIUM ||
+  ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome'].find((p) =>
+    fs.existsSync(p),
+  ) ||
+  null;
+
 const t0 = Date.now();
 const browser = await chromium.launch({
+  ...(systemChromium ? { executablePath: systemChromium } : {}),
   args: [
     '--no-sandbox',
     '--disable-dev-shm-usage',

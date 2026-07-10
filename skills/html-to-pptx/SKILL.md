@@ -54,11 +54,19 @@ export PLAYWRIGHT_BROWSERS_PATH="$WORKDIR/browsers"
 export PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
 [ -f package.json ] || npm init -y >/dev/null
 npm i --registry=https://registry.npmmirror.com playwright pptxgenjs
-npx playwright install chromium-headless-shell || npx playwright install chromium
+# System Chromium (baked into sandbox images) takes priority — the render
+# script auto-detects it. Only download a browser when there is none:
+command -v chromium-browser >/dev/null || command -v chromium >/dev/null || \
+  { npx playwright install chromium-headless-shell || npx playwright install chromium; }
 ```
 
 Skip installs that are already present (`$WORKDIR` persists within a session —
 re-running the export must not re-download Chromium).
+
+Do NOT download a browser with `playwright install` when a system Chromium
+exists: on musl-based sandboxes (Alpine) the downloaded glibc build can never
+run (`Error relocating ...` from ldd is the telltale) — the system browser is
+the only one that works there.
 
 ## Step 2 — get the render script into the workspace
 
@@ -116,9 +124,14 @@ heap invites the OOM killer.
 - **Browser download fails / hangs**: try without the mirror env vars; if the
   sandbox provides an HTTP proxy (`HTTPS_PROXY`), keep it exported for both
   `npm i` and `playwright install`.
-- **Chromium fails to launch with missing shared libraries**: run
-  `npx playwright install-deps chromium` (needs root/apt). If that is
-  unavailable, report the missing libraries to the user — do not silently
+- **Chromium fails to launch with missing shared libraries / `Error
+  relocating`**: `Error relocating` means a glibc browser on a musl (Alpine)
+  system — no amount of dependency installing can fix that; the environment
+  needs a system Chromium baked into its image. Check
+  `command -v chromium-browser || command -v chromium` once more; if there is
+  no system browser, STOP and report to the user that this sandbox image
+  cannot run Chromium yet. On glibc systems you may try
+  `npx playwright install-deps chromium` (needs root/apt). Never silently
   produce a different artifact.
 - **Exit code 4 (`no slide surfaces found`)**: the file is not a deck. Tell
   the user PPTX export needs a slide-based document; offer image/PDF export of
