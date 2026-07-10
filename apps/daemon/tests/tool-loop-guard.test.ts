@@ -5,6 +5,7 @@ import {
   displayToolSignature,
   isProgressSuccess,
   isReadOnlyShellCommand,
+  maskedOdCliFailure,
   resolveToolLoopMode,
 } from '../src/tool-loop-guard.js';
 
@@ -363,5 +364,61 @@ describe('resolveToolLoopMode', () => {
   });
   it('falls back to warn on an unrecognized value', () => {
     expect(resolveToolLoopMode({ OD_TOOL_LOOP_GUARD: 'disable' })).toBe('warn');
+  });
+});
+
+describe('maskedOdCliFailure', () => {
+  const envelope = '{"error":{"code":"daemon-not-running","message":"HTTP 501: renderer unavailable","data":{}}}';
+
+  it('detects an od failure envelope in a shell tool result tail', () => {
+    expect(maskedOdCliFailure('bash', `some output\n${envelope}\n`)).toBe(true);
+    expect(maskedOdCliFailure('Bash', envelope)).toBe(true);
+  });
+
+  it('ignores the same envelope in non-shell tool results (Read of a source file)', () => {
+    expect(maskedOdCliFailure('read', `file contents\n${envelope}`)).toBe(false);
+    expect(maskedOdCliFailure('Edit', envelope)).toBe(false);
+  });
+
+  it('ignores clean shell output and non-envelope JSON', () => {
+    expect(maskedOdCliFailure('bash', '{"file":{"name":"a.png"}}')).toBe(false);
+    expect(maskedOdCliFailure('bash', 'all good\nexit 0')).toBe(false);
+    expect(maskedOdCliFailure('bash', '')).toBe(false);
+  });
+
+  it('ignores an envelope buried above the tail window', () => {
+    const tail = Array.from({ length: 8 }, (_, i) => `line ${i}`).join('\n');
+    expect(maskedOdCliFailure('bash', `${envelope}\n${tail}`)).toBe(false);
+  });
+
+  it('counts masked failures toward the repeated-failure trigger', () => {
+    // `od export … 2>&1 | cat` 洗白退出码的真实事故形态:tool_result 标成功、
+    // 信封在输出尾部。守卫必须照常计数并在阈值处 WARN。
+    const guard = createToolLoopGuard({ mode: 'warn', warnRepeat: 3 });
+    const command = 'env OD_API_TOKEN="$OD_API_TOKEN" "$OD_NODE_BIN" "$OD_BIN" export index.html --format pptx 2>&1 | cat';
+    let verdict = null;
+    for (let i = 0; i < 3; i += 1) {
+      guard.observeToolUse(`u${i}`, 'bash', { command });
+      verdict = guard.observeToolResult(`u${i}`, false, `probing...\n${envelope}`);
+    }
+    expect(verdict).not.toBeNull();
+    expect(verdict?.reason).toBe('repeated-failure');
+    expect(verdict?.action).toBe('warn');
+  });
+
+  it('still treats genuinely clean successes as progress', () => {
+    const guard = createToolLoopGuard({ mode: 'warn', warnRepeat: 3 });
+    const command = '"$OD_NODE_BIN" "$OD_BIN" export a.html --format pptx 2>&1 | cat';
+    guard.observeToolUse('u1', 'bash', { command });
+    expect(guard.observeToolResult('u1', false, envelope)).toBeNull();
+    guard.observeToolUse('u2', 'bash', { command });
+    expect(guard.observeToolResult('u2', false, envelope)).toBeNull();
+    // 同一动作真的成功了 → 计数清零,再失败两次也不触发
+    guard.observeToolUse('u3', 'bash', { command });
+    expect(guard.observeToolResult('u3', false, '{"ok":true,"out":"index.pptx"}')).toBeNull();
+    guard.observeToolUse('u4', 'bash', { command });
+    expect(guard.observeToolResult('u4', false, envelope)).toBeNull();
+    guard.observeToolUse('u5', 'bash', { command });
+    expect(guard.observeToolResult('u5', false, envelope)).toBeNull();
   });
 });

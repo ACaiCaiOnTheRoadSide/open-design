@@ -327,6 +327,42 @@ export function displayToolSignature(signature: string): string {
 }
 
 /**
+ * Detects an od CLI failure whose non-zero exit code was laundered by shell
+ * plumbing. `exitWithStructuredError` (cli.ts) prints exactly one
+ * `{"error":{"code":…,"message":…}}` envelope line to stderr and exits
+ * non-zero — but `od … 2>&1 | cat` merges that line into stdout and the
+ * pipeline exits with cat's 0, so the tool_result reaches this guard flagged
+ * as a success. Only shell-like tools are sniffed (a Read of a source file
+ * that happens to contain the same JSON must not count), and only the tail
+ * lines (the envelope is the process's dying breath; matching anywhere would
+ * false-positive on commands that merely PRINT logs containing envelopes).
+ */
+export function maskedOdCliFailure(toolName: string, content: unknown): boolean {
+  if (typeof content !== 'string' || content.length === 0) return false;
+  if (!/bash|shell|terminal|exec|command|run/i.test(toolName)) return false;
+  const lines = content.split('\n');
+  let inspected = 0;
+  for (let i = lines.length - 1; i >= 0 && inspected < 5; i -= 1) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+    inspected += 1;
+    const start = line.indexOf('{"error":{"code":');
+    if (start === -1) continue;
+    try {
+      const parsed = JSON.parse(line.slice(start)) as {
+        error?: { code?: unknown; message?: unknown };
+      };
+      if (typeof parsed?.error?.code === 'string' && typeof parsed?.error?.message === 'string') {
+        return true;
+      }
+    } catch {
+      // 行内嵌了别的字节、不是干净的信封 —— 不算。
+    }
+  }
+  return false;
+}
+
+/**
  * Create a run-scoped tool-loop guard. See the module docblock for the
  * detection model. Usage in the run loop:
  *
@@ -380,6 +416,18 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
 
       const use = toolUseId ? uses.get(toolUseId) : undefined;
       if (toolUseId) uses.delete(toolUseId);
+
+      // Shell-masked od CLI failures still count as failures. The CLI reports
+      // errors correctly (structured envelope on stderr + non-zero exit), but a
+      // model habit like `od ... 2>&1 | cat` folds the envelope into stdout and
+      // the pipeline exits with cat's 0 — the tool_result arrives flagged as a
+      // success and this guard goes blind. Motivating incident: an agent
+      // re-ran a 501-ing `od export` 20+ times, every attempt green-checked
+      // (2026-07-09). Sniff shell-tool result tails for the envelope so the
+      // masking cannot hide the loop.
+      if (!isError && use && maskedOdCliFailure(use.name, content)) {
+        isError = true;
+      }
 
       // A success always breaks the strictly-consecutive error streak. Whether
       // it also clears the per-signature failure tally depends on whether it was

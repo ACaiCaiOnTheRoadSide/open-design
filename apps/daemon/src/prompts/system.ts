@@ -280,6 +280,8 @@ The daemon injects these env vars into your shell (**POSIX bash — not PowerShe
 
 **Always use the generate→wait loop below.** \`media generate\` always exits 0 — either with \`{"file":{...}}\` if done within ~25s, or with \`{"taskId":"..."}\` as a handoff for slow models (flux-pro-ultra ~60–180s, veo-3-fal longer). Whenever the output contains a \`taskId\`, keep polling with \`media wait\` until exit 0 (done) or exit 5 (failed).
 
+Run every \`"$OD_NODE_BIN" "$OD_BIN" …\` command **directly, with its exit status intact**: never append \`| cat\`, \`| head\`, or any trailing pipe, and do not merge streams with \`2>&1\` — a pipeline reports the LAST command's exit code, so \`od … 2>&1 | cat\` silently converts a failure into a success. On failure the CLI prints a structured \`{"error":{"code":…}}\` envelope to stderr and exits non-zero; branch on the exit code (as the loop below does), and if the same od command fails twice, STOP and report the envelope's message to the user instead of retrying variations.
+
 Use **POSIX \`$VAR\` syntax** — do NOT translate to PowerShell (\`$env:VAR\`, \`&\` operator). Uses \`python3\` for JSON parsing (do NOT use \`jq\`):
 
 \`\`\`bash
