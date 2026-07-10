@@ -5794,55 +5794,6 @@ export async function startServer({
         ? await stageAmrImagePaths(cwd ?? PROJECT_ROOT, safeImages, UPLOAD_DIR)
         : safeImages;
 
-    // Make skill side files reachable through three layers, in order of
-    // preference. The skill preamble emitted by `withSkillRootPreamble()`
-    // advertises both the cwd-relative path (1) and the absolute path
-    // (2/3) so the agent can pick whichever works.
-    //
-    //   1. CWD-relative copy. Stage every active/composed skill into
-    //      `<cwd>/.od-skills/<folder>/` so any agent CLI — not just the
-    //      ones that honour `--add-dir` — can reach those files via a
-    //      path inside its working directory. We copy (not symlink) so
-    //      each staged directory is a true write barrier — agents cannot
-    //      mutate the shipped repo resource through their cwd.
-    //   2. `--add-dir` allowlist. For non-Codex agents, pass `SKILLS_DIR`
-    //      and `DESIGN_SYSTEMS_DIR` so the absolute fallback path in the
-    //      preamble is reachable when staging fails (e.g. the project has
-    //      no on-disk cwd, or fs.cp errored). Codex treats `--add-dir`
-    //      entries as writable, so Codex receives only the narrow
-    //      `${CODEX_HOME:-$HOME/.codex}/generated_images` output folder
-    //      for allowlisted gpt-image image projects.
-    //   3. PROJECT_ROOT cwd. When `cwd` is null, the agent runs with
-    //      `cwd: PROJECT_ROOT` — there the absolute path is already an
-    //      in-cwd path, so neither (1) nor (2) is required for it to
-    //      resolve.
-    //
-    // Design systems are *not* staged here. Their bodies are read by the
-    // daemon and folded into the system prompt directly (see
-    // `readDesignSystem`), so an agent never has to open them via the
-    // filesystem.
-    //
-    // MUST run BEFORE the pre-run sync barrier below: sandboxed runtimes
-    // (huskbox) restore their workspace from the flushed manifest, so a
-    // skill staged after the flush would exist on the daemon's disk but
-    // never reach the sandbox — the agent then falls back to network
-    // fetches it has no credentials for (API_TOKEN_REQUIRED loops).
-    if (cwd && activeSkillDirs.length > 0) {
-      for (const skillDir of activeSkillDirs) {
-        const result = await stageActiveSkill(
-          cwd,
-          skillCwdAliasSegment(skillDir),
-          skillDir,
-          (msg) => console.warn(msg),
-        );
-        if (!result.staged) {
-          console.warn(
-            `[od] skill-stage skipped: ${result.reason ?? 'unknown reason'}; falling back to absolute paths`,
-          );
-        }
-      }
-    }
-
     // Pre-run sync barrier: make the backend manifest reflect this daemon's
     // disk before the sandbox restores from it — including attachments
     // uploaded moments ago. Content is event-driven in the background (blob
@@ -6052,6 +6003,73 @@ export async function startServer({
     run.designSystemRequestedId = designSystemSelection?.requestedId ?? null;
     run.designSystemSelectionSource = designSystemSelection?.source ?? 'none';
     run.designSystemDigest = designSystemSelection?.digest ?? null;
+
+    // Make skill side files reachable through three layers, in order of
+    // preference. The skill preamble emitted by `withSkillRootPreamble()`
+    // advertises both the cwd-relative path (1) and the absolute path
+    // (2/3) so the agent can pick whichever works.
+    //
+    //   1. CWD-relative copy. Stage every active/composed skill into
+    //      `<cwd>/.od-skills/<folder>/` so any agent CLI — not just the
+    //      ones that honour `--add-dir` — can reach those files via a
+    //      path inside its working directory. We copy (not symlink) so
+    //      each staged directory is a true write barrier — agents cannot
+    //      mutate the shipped repo resource through their cwd.
+    //   2. `--add-dir` allowlist. For non-Codex agents, pass `SKILLS_DIR`
+    //      and `DESIGN_SYSTEMS_DIR` so the absolute fallback path in the
+    //      preamble is reachable when staging fails (e.g. the project has
+    //      no on-disk cwd, or fs.cp errored). Codex treats `--add-dir`
+    //      entries as writable, so Codex receives only the narrow
+    //      `${CODEX_HOME:-$HOME/.codex}/generated_images` output folder
+    //      for allowlisted gpt-image image projects.
+    //   3. PROJECT_ROOT cwd. When `cwd` is null, the agent runs with
+    //      `cwd: PROJECT_ROOT` — there the absolute path is already an
+    //      in-cwd path, so neither (1) nor (2) is required for it to
+    //      resolve.
+    //
+    // Design systems are *not* staged here. Their bodies are read by the
+    // daemon and folded into the system prompt directly (see
+    // `readDesignSystem`), so an agent never has to open them via the
+    // filesystem.
+    if (cwd && activeSkillDirs.length > 0) {
+      let stagedAny = false;
+      for (const skillDir of activeSkillDirs) {
+        const result = await stageActiveSkill(
+          cwd,
+          skillCwdAliasSegment(skillDir),
+          skillDir,
+          (msg) => console.warn(msg),
+        );
+        if (result.staged) {
+          stagedAny = true;
+        } else {
+          console.warn(
+            `[od] skill-stage skipped: ${result.reason ?? 'unknown reason'}; falling back to absolute paths`,
+          );
+        }
+      }
+      // Staging happens AFTER the pre-run sync barrier above (it needs
+      // `activeSkillDirs`, which the prompt composer only just produced), but
+      // sandboxed runtimes (huskbox) restore their workspace from the flushed
+      // manifest — a skill staged only on the daemon's disk never reaches the
+      // sandbox, and the agent then falls back to network fetches it has no
+      // credentials for (API_TOKEN_REQUIRED loops). Re-flush so the staged
+      // `.od-skills/` files are part of the manifest the sandbox pulls; like
+      // the pre-run barrier, a failure here must fail the round rather than
+      // hand the agent a workspace missing the skill it was told to follow.
+      if (stagedAny && typeof projectId === 'string' && projectId) {
+        try {
+          await syncEngineFlush(projectId);
+        } catch (err: any) {
+          console.error(`[sync] post-skill-stage flush failed: ${err?.message || err}`);
+          return design.runs.fail(
+            run,
+            'PROJECT_SYNC_FAILED',
+            `project file sync failed, please retry: ${err?.message || err}`,
+          );
+        }
+      }
+    }
 
     // Resolve the agent's effective working directory once and use it
     // everywhere the agent could read it (buildArgs runtimeContext, spawn
