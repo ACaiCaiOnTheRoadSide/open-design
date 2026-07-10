@@ -81,14 +81,20 @@ BROWSER="$(command -v chromium-browser || command -v chromium || true)"
 echo "export PLAYWRIGHT_BROWSERS_PATH=\"$WORKDIR/browsers\"" > "$WORKDIR/env.sh"
 if [ -z "$BROWSER" ] && [ -f /etc/alpine-release ]; then
   # musl (Alpine) without root: Playwright's glibc browser can NEVER run here
-  # ("Error relocating ..."). Instead, userspace-install Alpine's own musl
-  # Chromium: `apk fetch` only downloads (no root needed), .apk files are
-  # plain tar.gz, and LD_LIBRARY_PATH makes the extracted tree self-contained.
+  # ("Error relocating ..."). Download the prebuilt self-contained musl
+  # Chromium bundle (Alpine 3.20 chromium + CJK fonts + the full dependency
+  # closure, repacked as one tarball) — no apk tooling involved, one HTTP GET.
   PREFIX="$WORKDIR/chromium-root"
-  mkdir -p "$PREFIX" "$WORKDIR/apks" "$WORKDIR/fc-cache"
-  apk --no-cache fetch --recursive --output "$WORKDIR/apks" \
-    chromium font-noto-cjk ttf-dejavu fontconfig
-  for f in "$WORKDIR"/apks/*.apk; do tar -xzf "$f" -C "$PREFIX" 2>/dev/null || true; done
+  BUNDLE_URL="https://github.com/ACaiCaiOnTheRoadSide/ai-design-ppt/releases/download/chromium-alpine3.20-x86_64/chromium-alpine3.20-x86_64.tar.gz"
+  BUNDLE_SHA256="140e35183c490e21caeb239cff54ec2fbb4caf89a8310f31877b86161c5ccdb4"
+  mkdir -p "$PREFIX" "$WORKDIR/fc-cache"
+  if [ ! -f "$PREFIX/usr/lib/chromium/chrome" ]; then
+    curl -fsSL --retry 3 -o "$WORKDIR/chromium-bundle.tar.gz" "$BUNDLE_URL"
+    got="$(sha256sum "$WORKDIR/chromium-bundle.tar.gz" | cut -d' ' -f1)"
+    [ "$got" = "$BUNDLE_SHA256" ] || { echo "chromium bundle checksum mismatch: $got" >&2; exit 1; }
+    tar -xzf "$WORKDIR/chromium-bundle.tar.gz" -C "$PREFIX"
+    rm -f "$WORKDIR/chromium-bundle.tar.gz"
+  fi
   printf '%s\n' '<?xml version="1.0"?>' \
     '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">' '<fontconfig>' \
     "  <dir>$PREFIX/usr/share/fonts</dir>" \
@@ -108,8 +114,8 @@ fi
 # else: a system chromium exists — the render script auto-detects it.
 ```
 
-The apk download is ~250MB from the image's configured mirror; run it once per
-session (`$WORKDIR` persists — never re-download on a retry).
+The bundle is a single ~320MB download; run it once per session (`$WORKDIR`
+persists — the `chrome` existence check above makes a retry skip the download).
 
 ## Step 3 — get the render script into the workspace
 
@@ -181,11 +187,19 @@ and Chromium; an uncapped Node heap invites the OOM killer.
 - **Chromium fails to launch with missing shared libraries / `Error
   relocating`**: `Error relocating` means a glibc browser is being run on a
   musl (Alpine) system — installing dependencies can never fix that. You are
-  on the wrong branch of Step 2: run its Alpine branch (userspace apk
-  install) and render again via `env.sh`. If `apk fetch` itself fails
-  (no network to the mirror), STOP and report. On glibc systems you may try
+  on the wrong branch of Step 2: run its Alpine branch (prebuilt bundle
+  download) and render again via `env.sh`. On glibc systems you may try
   `npx playwright install-deps chromium` (needs root/apt). Never silently
   produce a different artifact.
+- **Bundle download fails (URL unreachable / checksum mismatch after
+  retries)**: retry the download ONCE. If it fails again, fall back to the
+  userspace apk install (`apk fetch` only downloads — no root needed — and
+  .apk files are plain tar.gz that the same env.sh layout points at):
+  `mkdir -p "$WORKDIR/apks" && apk --no-cache fetch --recursive --output
+  "$WORKDIR/apks" chromium font-noto-cjk ttf-dejavu fontconfig && for f in
+  "$WORKDIR"/apks/*.apk; do tar -xzf "$f" -C "$PREFIX" 2>/dev/null || true;
+  done`, then continue Step 2 from the fonts.conf line. If BOTH paths fail,
+  STOP and report — do not try Playwright's glibc browser on Alpine.
 - **Output uses wrong/fallback fonts while layout is otherwise correct**: the
   deck references remote webfonts (e.g. fonts.googleapis.com) that this
   sandbox cannot reach. The script forwards `HTTPS_PROXY` to Chromium
