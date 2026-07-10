@@ -101,8 +101,18 @@ function resolveContext(flags: Map<string, string | boolean>): CliContext {
   };
 }
 
+/**
+ * Pull-state location. `OD_SYNC_STATE_DIR` moves it off the default
+ * `$OD_DATA_DIR/.od/sync` — sandboxed runs set it to a path outside the
+ * agent-visible workspace, because the state is a single-line JSON of the
+ * whole project manifest and an agent that wanders into it and reads it
+ * floods its own model context. Losing the state is always safe: push
+ * degrades to the conservative no-deletes merge (see module docblock).
+ */
 function stateFileOf(ctx: CliContext): string {
-  return path.join(ctx.dataDir, '.od', 'sync', `${ctx.projectId}.json`);
+  const override = process.env.OD_SYNC_STATE_DIR?.trim();
+  const dir = override || path.join(ctx.dataDir, '.od', 'sync');
+  return path.join(dir, `${ctx.projectId}.json`);
 }
 
 async function writeState(ctx: CliContext, state: PullState): Promise<void> {

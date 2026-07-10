@@ -105,4 +105,29 @@ describe('od sync / od file CLI', () => {
     // report.md is locally absent but must survive remotely: no base, no deletes.
     expect(remote.files['report.md']).toBeDefined();
   });
+
+  it('OD_SYNC_STATE_DIR relocates the pull base off $OD_DATA_DIR/.od/sync', async () => {
+    // Sandboxed runs point this outside the agent-visible workspace so an
+    // agent cannot wander into the single-line whole-manifest JSON and flood
+    // its own context by reading it.
+    await fsp.rm(join(dataDir, '.od', 'sync', `${projectId}.json`), { force: true });
+    const stateDir = join(dataDir, 'hidden-state');
+    process.env.OD_SYNC_STATE_DIR = stateDir;
+    try {
+      await runSync(['pull', '--json']);
+      const state = JSON.parse(
+        await fsp.readFile(join(stateDir, `${projectId}.json`), 'utf8'),
+      );
+      expect(state.baseVersion).toBeGreaterThanOrEqual(3);
+      await expect(
+        fsp.access(join(dataDir, '.od', 'sync', `${projectId}.json`)),
+      ).rejects.toThrow(); // default location must stay empty
+      // Round-trip: push must read the same relocated base.
+      await fsp.writeFile(join(projectDir(), 'relocated.txt'), 'via-state-dir');
+      await runSync(['push', '--json']);
+      expect(backend.manifests.get(projectId)!.files['relocated.txt']).toBeDefined();
+    } finally {
+      delete process.env.OD_SYNC_STATE_DIR;
+    }
+  });
 });
