@@ -1906,6 +1906,10 @@ export interface DesignToolboxClickProps {
 //     agent/model dropdown (`agent_id` / `model_id`).
 //   - `context_remove`: removed a staged context chip (`resource_kind` +
 //     `resource_id`).
+//   - `new_chat`: the composer-bar new-conversation button next to the "+"
+//     menu — starts a fresh conversation so the next message carries no
+//     history. Same element name as chat_panel's history-menu `new_chat` so
+//     one dashboard counts the intent across both entry points.
 export interface ComposerBarClickProps {
   page_name: 'chat_panel';
   area: 'chat_composer';
@@ -1920,7 +1924,8 @@ export interface ComposerBarClickProps {
     | 'agent_selector_open'
     | 'agent_select'
     | 'agent_model_select'
-    | 'context_remove';
+    | 'context_remove'
+    | 'new_chat';
   resource_kind?:
     | 'connector'
     | 'plugin'

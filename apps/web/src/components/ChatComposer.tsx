@@ -204,6 +204,12 @@ interface Props {
   // ChatPane → ProjectView → App. Omitted → the add rows are hidden.
   onBrowsePlugins?: () => void;
   onOpenConnectors?: () => void;
+  // Reports whether the composer holds unsent content that would be lost on
+  // a remount (staged attachments, visual comments, context chips — NOT the
+  // text draft, which persists per-conversation in localStorage). ChatPane
+  // uses it to gate destructive conversation switches (the new-conversation
+  // entry points) while something is staged.
+  onPendingContentChange?: (hasPendingContent: boolean) => void;
   // Optional pet wiring. The composer no longer renders a visible pet
   // entry, but existing manual `/pet` commands still route here.
   petConfig?: AppConfig['pet'];
@@ -353,6 +359,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       onOpenMcpSettings,
       onBrowsePlugins,
       onOpenConnectors,
+      onPendingContentChange,
       petConfig,
       onAdoptPet,
       onTogglePet,
@@ -426,6 +433,17 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const [designToolboxOpen, setDesignToolboxOpen] = useState(false);
     const [stagedMcpServers, setStagedMcpServers] = useState<McpServerConfig[]>([]);
     const [stagedConnectors, setStagedConnectors] = useState<ConnectorDetail[]>([]);
+    // Anything here dies with a remount (conversation switch); the text draft
+    // is deliberately excluded — it persists per-conversation in localStorage.
+    const hasPendingContent =
+      staged.length > 0 ||
+      stagedVisualComments.length > 0 ||
+      stagedSkills.length > 0 ||
+      stagedMcpServers.length > 0 ||
+      stagedConnectors.length > 0;
+    useEffect(() => {
+      onPendingContentChange?.(hasPendingContent);
+    }, [hasPendingContent, onPendingContentChange]);
     const [stagedWorkspaceContexts, setStagedWorkspaceContexts] = useState<WorkspaceContextItem[]>([]);
     const [dismissedWorkspaceContextId, setDismissedWorkspaceContextId] = useState<string | null>(null);
     const activeWorkspaceContextId = activeWorkspaceContext?.id ?? null;

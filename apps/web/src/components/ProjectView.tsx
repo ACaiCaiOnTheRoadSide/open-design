@@ -1454,7 +1454,19 @@ export function ProjectView({
           return { ...queuedItem, meta: item.meta };
         })
     : [];
-  const newConversationDisabled = creatingConversation;
+  // Mirror every no-op/hazard branch of handleNewConversation so all entry
+  // points (header "+", history menu, composer button) grey out instead of
+  // silently doing nothing: creation already in flight, a live stream (the
+  // conversation-switch cleanup aborts the client stream — in API/BYOK mode
+  // that stream IS the run, so switching kills generation and strands the
+  // old conversation's assistant row), an already-empty conversation (the
+  // handler early-returns), or queued sends (switching away only hides them;
+  // they would auto-drain unprompted when the conversation is next opened).
+  const newConversationDisabled =
+    creatingConversation ||
+    streaming ||
+    currentConversationQueuedItems.length > 0 ||
+    (messagesConversationId === activeConversationId && messages.length === 0);
   const activeCompletionNotificationRunsRef = useRef<Set<string>>(new Set());
   const completedNotificationRunsRef = useRef<Set<string>>(new Set());
 
@@ -6959,6 +6971,7 @@ export function ProjectView({
           onRenameConversation={handleRenameConversation}
           onConversationSessionModeChange={handleConversationSessionModeChange}
           onNewConversation={handleNewConversation}
+          newConversationDisabled={newConversationDisabled}
           activeConversationChat={activeConversationChatState}
           onActiveContextChange={handleActiveWorkspaceContextChange}
           onWorkspaceContextsChange={handleWorkspaceContextsChange}

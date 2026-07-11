@@ -14,9 +14,10 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from '@open-design/components';
 import { useAnalytics } from '../analytics/provider';
 import { getResolvedDeviceId } from '../analytics/client';
-import { trackChatPanelClick, trackMessageQueueClick, trackRunFailedToastSurfaceView } from '../analytics/events';
+import { trackChatPanelClick, trackComposerBarClick, trackMessageQueueClick, trackRunFailedToastSurfaceView } from '../analytics/events';
 import { amrHandoffDeviceId, attributedAmrUrl, recordAmrEntry } from '../analytics/amr-attribution';
 import { useT } from '../i18n';
 import { patchProject } from '../state/projects';
@@ -974,6 +975,11 @@ export function ChatPane({
   } | null>(null);
   const [composerSlotHeight, setComposerSlotHeight] = useState(0);
   const [editingQueuedSendId, setEditingQueuedSendId] = useState<string | null>(null);
+  // Composer-reported unsent content (staged attachments/comments/chips —
+  // they die with the remount a conversation switch causes). Together with
+  // queued sends and attached comments this blocks the new-conversation
+  // entry points so "reset" can't silently discard work in progress.
+  const [composerHasPendingContent, setComposerHasPendingContent] = useState(false);
   // Reverse scan (no array copy) + memo so this and the maps below don't
   // recompute on every non-`messages` render (scroll, hover, toggles).
   const lastAssistantId = useMemo(() => {
@@ -1890,6 +1896,47 @@ export function ChatPane({
       )
     ) : null;
 
+  // Blocks every in-pane new-conversation entry point (composer button and
+  // history menu) while switching away would discard user work: unsent
+  // composer content, queued sends waiting on the busy run, or attached
+  // preview comments — on top of the caller's own disabled conditions
+  // (creation in flight, live stream, already-empty conversation).
+  const newConversationBlocked =
+    newConversationDisabled ||
+    composerHasPendingContent ||
+    queuedItems.length > 0 ||
+    attachedComments.length > 0;
+
+  // New-conversation button in the composer bar, immediately right of the
+  // "+" menu via ChatComposer's leadingAccessory slot. Same handler and
+  // disabled flag as the history menu's "New" — the next message in the
+  // fresh conversation carries no history, which is what makes this read
+  // as "reset" to the user.
+  const composerNewConversationButton = onNewConversation ? (
+    <Button
+      size="icon"
+      variant="ghost"
+      className="od-tooltip"
+      data-testid="chat-composer-new-conversation"
+      disabled={newConversationBlocked}
+      title={t('chat.newConversation')}
+      data-tooltip={t('chat.newConversation')}
+      aria-label={t('chat.newConversation')}
+      onClick={() => {
+        if (newConversationBlocked) return;
+        trackComposerBarClick(analytics.track, {
+          page_name: 'chat_panel',
+          area: 'chat_composer',
+          ...(projectId ? { project_id: projectId } : {}),
+          element: 'new_chat',
+        });
+        onNewConversation();
+      }}
+    >
+      <Icon name="refresh" size={16} />
+    </Button>
+  ) : null;
+
   const composerNode = (
     <>
       {templateRecNode}
@@ -1941,6 +1988,7 @@ export function ChatPane({
       onOpenMcpSettings={onOpenMcpSettings}
       onBrowsePlugins={onBrowsePlugins}
       onOpenConnectors={onOpenConnectors}
+      onPendingContentChange={setComposerHasPendingContent}
       petConfig={petConfig}
       onAdoptPet={onAdoptPet}
       onTogglePet={onTogglePet}
@@ -1963,7 +2011,14 @@ export function ChatPane({
       onProjectSkillChange={onProjectSkillChange}
       pinnedPluginId={activePluginSnapshot?.pluginId ?? null}
       footerAccessory={composerFooterAccessory}
-      leadingAccessory={composerLeadingAccessory}
+      leadingAccessory={
+        composerNewConversationButton || composerLeadingAccessory ? (
+          <>
+            {composerNewConversationButton}
+            {composerLeadingAccessory}
+          </>
+        ) : undefined
+      }
       currentDesignSystemId={currentDesignSystemId}
       onActiveDesignSystemChange={onActiveDesignSystemChange}
       onShowToast={onShowToast}
@@ -2046,9 +2101,9 @@ export function ChatPane({
                     type="button"
                     className="chat-history-new"
                     data-testid="conversation-history-new"
-                    disabled={newConversationDisabled}
+                    disabled={newConversationBlocked}
                     onClick={() => {
-                      if (newConversationDisabled) return;
+                      if (newConversationBlocked) return;
                       trackChatPanelClick(analytics.track, {
                         page_name: 'chat_panel',
                         area: 'chat_panel',

@@ -2395,28 +2395,42 @@ export function DesignSystemDetailView({
     setChatStreaming(false);
   }, []);
 
+  // Re-entrancy guard mirroring ProjectView's creatingConversationRef: the
+  // async body awaits two network round-trips, and the always-visible
+  // new-conversation entry points make rapid double-clicks easy — without
+  // the guard each click creates its own conversation.
+  const creatingChatConversationRef = useRef(false);
+  const [creatingChatConversation, setCreatingChatConversation] = useState(false);
   const createProjectChatConversation = useCallback(() => {
+    if (creatingChatConversationRef.current) return;
+    creatingChatConversationRef.current = true;
+    setCreatingChatConversation(true);
     void (async () => {
-      const projectId = workspaceProjectId ?? await ensureWorkspaceProject({
-        suppressInitialConversation: true,
-      });
-      if (!projectId) {
-        setChatError('Could not open the design system workspace.');
-        return;
+      try {
+        const projectId = workspaceProjectId ?? await ensureWorkspaceProject({
+          suppressInitialConversation: true,
+        });
+        if (!projectId) {
+          setChatError('Could not open the design system workspace.');
+          return;
+        }
+        const fresh = await createConversation(projectId, 'Design system');
+        if (!fresh) {
+          setChatError('Could not create a design system conversation.');
+          return;
+        }
+        setConversations((current) => [fresh, ...current]);
+        setActiveConversationId(fresh.id);
+        setProjectChatMessages([]);
+        setChatError(null);
+        setChatSeed({
+          id: `general-${Date.now()}`,
+          text: 'Update this design system: ',
+        });
+      } finally {
+        creatingChatConversationRef.current = false;
+        setCreatingChatConversation(false);
       }
-      const fresh = await createConversation(projectId, 'Design system');
-      if (!fresh) {
-        setChatError('Could not create a design system conversation.');
-        return;
-      }
-      setConversations((current) => [fresh, ...current]);
-      setActiveConversationId(fresh.id);
-      setProjectChatMessages([]);
-      setChatError(null);
-      setChatSeed({
-        id: `general-${Date.now()}`,
-        text: 'Update this design system: ',
-      });
     })();
   }, [ensureWorkspaceProject, workspaceProjectId]);
 
@@ -2530,6 +2544,12 @@ export function DesignSystemDetailView({
             onSelectConversation={setActiveConversationId}
             onDeleteConversation={() => {}}
             onNewConversation={createProjectChatConversation}
+            // Mid-stream conversation swaps leave chatStreaming pointing at
+            // the old run (Stop would abort it from the new empty view) —
+            // grey the entry points out instead, matching the streaming prop.
+            newConversationDisabled={
+              creatingChatConversation || generationActive || saving || chatStreaming
+            }
           />
         </div>
       </aside>

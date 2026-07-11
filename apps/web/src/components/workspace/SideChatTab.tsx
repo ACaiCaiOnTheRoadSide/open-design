@@ -79,6 +79,7 @@ interface Props {
   onRenameConversation?: (id: string, title: string) => void;
   onSessionModeChange?: (id: string, mode: ChatSessionMode) => void;
   onNewConversation?: () => void;
+  newConversationDisabled?: boolean;
   /** Live ProjectView state for the primary conversation when this tab mirrors it. */
   activeConversationChat?: ActiveConversationChatState;
   /** Forward produced-file / tool-card open requests to the workspace. */
@@ -103,6 +104,7 @@ export function SideChatTab({
   onRenameConversation,
   onSessionModeChange,
   onNewConversation,
+  newConversationDisabled,
   activeConversationChat,
   onRequestOpenFile,
 }: Props) {
@@ -161,6 +163,7 @@ export function SideChatTab({
           onSelectConversation={onSelectConversation}
           onDeleteConversation={onDeleteConversation}
           onNewConversation={onNewConversation}
+          newConversationDisabled={newConversationDisabled}
           researchAvailable={config.mode === 'daemon'}
           config={config}
         />

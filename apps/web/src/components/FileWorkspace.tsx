@@ -219,6 +219,7 @@ interface Props {
   onRenameConversation?: (id: string, title: string) => void;
   onConversationSessionModeChange?: (id: string, mode: ChatSessionMode) => void;
   onNewConversation?: () => void;
+  newConversationDisabled?: boolean;
   activeConversationChat?: ActiveConversationChatState;
   onActiveContextChange?: (context: WorkspaceContextItem | null) => void;
   onWorkspaceContextsChange?: (contexts: WorkspaceContextItem[]) => void;
@@ -461,6 +462,7 @@ export function FileWorkspace({
   onRenameConversation,
   onConversationSessionModeChange,
   onNewConversation,
+  newConversationDisabled,
   activeConversationChat,
   onActiveContextChange,
   onWorkspaceContextsChange,
@@ -2304,6 +2306,7 @@ export function FileWorkspace({
             onRenameConversation={onRenameConversation}
             onSessionModeChange={onConversationSessionModeChange}
             onNewConversation={onNewConversation}
+            newConversationDisabled={newConversationDisabled}
             activeConversationChat={activeConversationChat}
             onRequestOpenFile={openFile}
           />
