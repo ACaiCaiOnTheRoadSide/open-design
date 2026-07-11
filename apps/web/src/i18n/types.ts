@@ -1114,6 +1114,7 @@ export interface Dict {
   'handoff.notInstalled': string;
   'handoff.notDetectedTitle': string;
   'templateRec.button': string;
+  'templateRec.entryHint': string;
   'templateRec.loading': string;
   'templateRec.title': string;
   'templateRec.use': string;

@@ -721,6 +721,7 @@ export const fa: Dict = {
   'designSystemPicker.searchPlaceholder': 'جستجوی سیستم‌های طراحی (عنوان / دسته‌بندی / خلاصه)',
   'designSystemPicker.searchCompactPlaceholder': 'جستجوی سیستم‌های طراحی',
   'templateRec.button': 'پیشنهاد قالب',
+  'templateRec.entryHint': 'ابتدا نیاز خود را شرح دهید تا پیشنهاد قالب بگیرید',
   'templateRec.loading': 'در حال یافتن قالب‌ها…',
   'templateRec.title': 'پیشنهادی برای شما',
   'templateRec.use': 'استفاده از این قالب',

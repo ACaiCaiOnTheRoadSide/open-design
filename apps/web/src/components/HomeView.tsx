@@ -64,7 +64,7 @@ import {
   type TemplateRecommendation,
   type TemplateRecommendResponse,
 } from '../state/templateRecommend';
-import { TemplateRecommendCard, TemplateRecommendEntry } from './TemplateRecommendCard';
+import { TemplateRecommendGallery } from './TemplateRecommendGallery';
 import { isOpenDesignHostAvailable, pickHostWorkingDir } from '@open-design/host';
 import type {
   DesignSystemSummary,
@@ -301,8 +301,37 @@ export function HomeView({
   const [recLoading, setRecLoading] = useState(false);
   const [recRound, setRecRound] = useState(0);
   const [recHidden, setRecHidden] = useState(false);
+  // 每轮成功推荐 +1:强制展开新用户折叠态的模板画廊(结果渲染在画廊顶部
+  // 的「为你推荐」分组,不展开的话入口点了像没反应)。
+  const [recRevealSignal, setRecRevealSignal] = useState(0);
   const recSeenIdsRef = useRef<string[]>([]);
   const designTemplateCatalogRef = useRef<SkillSummary[] | null>(null);
+  // 推荐条目 → 画廊插件记录:design-template 条目在推荐索引里顶替了孪生
+  // example-* 插件(见 scripts/build-template-index.mjs 的 dedupe),画廊瓦片
+  // 要按孪生名回查;两个命名不规则的孪生单列别名。查不到记录的条目由
+  // TemplateRecommendGallery 渲染成文字兜底卡。
+  const recGalleryItems = useMemo(() => {
+    if (!recResult) return [];
+    const byName = new Map<string, InstalledPluginRecord>();
+    for (const p of plugins) {
+      byName.set(p.id, p);
+      const manifestName = (p.manifest as { name?: unknown } | undefined)?.name;
+      if (typeof manifestName === 'string') byName.set(manifestName, p);
+      if (p.sourceMarketplaceEntryName) byName.set(p.sourceMarketplaceEntryName, p);
+    }
+    const TWIN_ALIASES: Record<string, string> = {
+      'magazine-web-ppt': 'example-guizang-ppt',
+      'html-ppt-presenter-mode': 'example-html-ppt-presenter-mode-reveal',
+    };
+    return recResult.recommendations.map((rec) => ({
+      rec,
+      record:
+        byName.get(rec.id) ??
+        byName.get(`example-${rec.id}`) ??
+        byName.get(TWIN_ALIASES[rec.id] ?? '') ??
+        null,
+    }));
+  }, [recResult, plugins]);
   const [selectedPluginContexts, setSelectedPluginContexts] = useState<SelectedPluginContext[]>([]);
   const [selectedMcpContexts, setSelectedMcpContexts] = useState<SelectedMcpContext[]>([]);
   const [selectedConnectorContexts, setSelectedConnectorContexts] = useState<SelectedConnectorContext[]>([]);
@@ -1410,6 +1439,7 @@ export function HomeView({
       ];
       setRecResult(result);
       setRecRound((n) => n + 1);
+      setRecRevealSignal((n) => n + 1);
       // design-template 的"使用"需要 SkillSummary,目录懒加载一次备用。
       if (designTemplateCatalogRef.current == null) {
         void fetchDesignTemplates().then((list) => {
@@ -1919,6 +1949,20 @@ export function HomeView({
         onPromptChange={handlePromptChange}
         onSubmit={submit}
         onSubmitScenario={submitScenario}
+        templateRecommend={
+          recHidden
+            ? null
+            : {
+                enabled: prompt.trim().length >= 4,
+                loading: recLoading,
+                onClick: () => {
+                  // 入口点击 = 开新一轮(重置"换一批"的已见集);
+                  // "换一批"走 TemplateRecommendGallery 的 onRefresh。
+                  recSeenIdsRef.current = [];
+                  void runTemplateRecommend();
+                },
+              }
+        }
         submitting={sending}
         activePluginTitle={activeBadgeTitle}
         activePluginIsExplicit={activePluginIsExplicit}
@@ -2003,29 +2047,6 @@ export function HomeView({
         executionSwitcher={executionSwitcher}
       />
 
-      {/* 模板推荐(baizhi fork):输入需求后出现入口;卡片展示候选供三选一。 */}
-      {!recHidden && prompt.trim().length >= 4 ? (
-        recResult ? (
-          <TemplateRecommendCard
-            key={recRound}
-            recommendations={recResult.recommendations}
-            degraded={recResult.degraded}
-            busy={recLoading}
-            onUse={useRecommendedTemplate}
-            onExhausted={() => void runTemplateRecommend(recSeenIdsRef.current)}
-            onDismiss={() => {
-              setRecResult(null);
-              recSeenIdsRef.current = [];
-            }}
-          />
-        ) : (
-          <TemplateRecommendEntry
-            loading={recLoading}
-            onClick={() => void runTemplateRecommend()}
-          />
-        )
-      ) : null}
-
       <RecentProjectsStrip
         projects={projects}
         designSystems={designSystems}
@@ -2059,7 +2080,24 @@ export function HomeView({
 
       <HomeTemplatesReveal
         enabled={!projectsLoading && projects.length === 0}
+        revealSignal={recRevealSignal}
       >
+        {recResult && recGalleryItems.length > 0 ? (
+          <TemplateRecommendGallery
+            key={recRound}
+            items={recGalleryItems}
+            degraded={recResult.degraded}
+            busy={recLoading}
+            pendingApplyId={pendingApplyId}
+            onUse={useRecommendedTemplate}
+            onOpenDetails={handleCommunityOpenDetails}
+            onRefresh={() => void runTemplateRecommend(recSeenIdsRef.current)}
+            onDismiss={() => {
+              setRecResult(null);
+              recSeenIdsRef.current = [];
+            }}
+          />
+        ) : null}
         <PluginsHomeSection
           plugins={plugins}
           loading={pluginsLoading}

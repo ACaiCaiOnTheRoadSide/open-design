@@ -721,6 +721,7 @@ export const ar: Dict = {
   'designSystemPicker.searchPlaceholder': 'البحث في أنظمة التصميم (العنوان / الفئة / الملخص)',
   'designSystemPicker.searchCompactPlaceholder': 'البحث في أنظمة التصميم',
   'templateRec.button': 'اقتراح قالب',
+  'templateRec.entryHint': 'صف احتياجك أولاً للحصول على اقتراحات القوالب',
   'templateRec.loading': 'جارٍ البحث عن قوالب…',
   'templateRec.title': 'موصى به لك',
   'templateRec.use': 'استخدام هذا القالب',

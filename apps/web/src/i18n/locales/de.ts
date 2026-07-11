@@ -721,6 +721,7 @@ export const de: Dict = {
   'designSystemPicker.searchPlaceholder': 'Designsysteme durchsuchen (Titel / Kategorie / Zusammenfassung)',
   'designSystemPicker.searchCompactPlaceholder': 'Designsysteme durchsuchen',
   'templateRec.button': 'Vorlage empfehlen',
+  'templateRec.entryHint': 'Beschreibe zuerst deinen Bedarf, dann Vorlagen empfehlen lassen',
   'templateRec.loading': 'Vorlagen werden gesucht…',
   'templateRec.title': 'Für dich empfohlen',
   'templateRec.use': 'Diese Vorlage verwenden',

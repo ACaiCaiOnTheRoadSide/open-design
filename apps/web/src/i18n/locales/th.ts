@@ -721,6 +721,7 @@ export const th: Dict = {
   'designSystemPicker.searchPlaceholder': 'ค้นหาดีไซน์ซิสเต็ม (ชื่อ / หมวดหมู่ / สรุป)',
   'designSystemPicker.searchCompactPlaceholder': 'ค้นหาดีไซน์ซิสเต็ม',
   'templateRec.button': 'แนะนำเทมเพลต',
+  'templateRec.entryHint': 'อธิบายความต้องการก่อนเพื่อรับเทมเพลตแนะนำ',
   'templateRec.loading': 'กำลังค้นหาเทมเพลต…',
   'templateRec.title': 'แนะนำสำหรับคุณ',
   'templateRec.use': 'ใช้เทมเพลตนี้',

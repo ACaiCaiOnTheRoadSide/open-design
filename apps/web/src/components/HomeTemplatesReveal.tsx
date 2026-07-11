@@ -18,12 +18,23 @@ import { useT } from '../i18n';
 interface Props {
   /** Collapse + hint behavior is only engaged for brand-new users. */
   enabled: boolean;
+  /**
+   * Monotonic counter: each increment force-expands the gallery. Used by the
+   * template-recommend flow — its results render inside this gallery, so a
+   * collapsed new-user state must open before the recommendations can scroll
+   * into view (otherwise the entry button appears to do nothing).
+   */
+  revealSignal?: number;
   children: ReactNode;
 }
 
-export function HomeTemplatesReveal({ enabled, children }: Props) {
+export function HomeTemplatesReveal({ enabled, revealSignal = 0, children }: Props) {
   const t = useT();
   const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    if (revealSignal > 0) setRevealed(true);
+  }, [revealSignal]);
 
   // Reveal on an upward scroll gesture while still collapsed. "Scroll up"
   // means pushing two fingers up so the content scrolls upward and the lower

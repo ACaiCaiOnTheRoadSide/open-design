@@ -1,0 +1,75 @@
+.root {
+  width: 100%;
+  margin: 18px 0 6px;
+  /* scrollIntoView 的落点留出头部呼吸空间 */
+  scroll-margin-top: 24px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong, var(--text));
+}
+
+.degraded {
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+}
+
+.actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 网格排布复用 plugins-home__grid--gallery;子项换成「瓦片+理由」的包装 */
+.grid {
+  align-items: start;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reason {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted, var(--text));
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.fallbackCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  min-height: 120px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: var(--radius, 8px);
+  background: var(--bg-subtle, transparent);
+}
+
+.fallbackName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong, var(--text));
+}

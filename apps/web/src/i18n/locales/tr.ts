@@ -721,6 +721,7 @@ export const tr: Dict = {
   'designSystemPicker.searchPlaceholder': 'Tasarım sistemlerinde ara (başlık / kategori / özet)',
   'designSystemPicker.searchCompactPlaceholder': 'Tasarım sistemlerinde ara',
   'templateRec.button': 'Şablon öner',
+  'templateRec.entryHint': 'Öneri almak için önce ihtiyacını açıkla',
   'templateRec.loading': 'Şablonlar aranıyor…',
   'templateRec.title': 'Sizin için önerilen',
   'templateRec.use': 'Bu şablonu kullan',

@@ -721,6 +721,7 @@ export const zhCN: Dict = {
   'designSystemPicker.searchPlaceholder': '搜索设计系统（标题 / 分类 / 摘要）',
   'designSystemPicker.searchCompactPlaceholder': '搜索设计系统',
   'templateRec.button': '推荐模板',
+  'templateRec.entryHint': '先描述你的需求，再获取模板推荐',
   'templateRec.loading': '正在为你挑选模板…',
   'templateRec.title': '为你推荐',
   'templateRec.use': '使用此模板',

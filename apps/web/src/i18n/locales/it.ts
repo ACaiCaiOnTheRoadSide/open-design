@@ -721,6 +721,7 @@ export const it: Dict = {
   'designSystemPicker.searchPlaceholder': 'Cerca design system (titolo / categoria / riepilogo)',
   'designSystemPicker.searchCompactPlaceholder': 'Cerca design system',
   'templateRec.button': 'Consiglia un modello',
+  'templateRec.entryHint': 'Descrivi prima ciò che ti serve per ricevere consigli',
   'templateRec.loading': 'Ricerca modelli…',
   'templateRec.title': 'Consigliato per te',
   'templateRec.use': 'Usa questo modello',

@@ -721,6 +721,7 @@ export const fr: Dict = {
   'designSystemPicker.searchPlaceholder': 'Rechercher des systèmes de design (titre / catégorie / résumé)',
   'designSystemPicker.searchCompactPlaceholder': 'Rechercher des systèmes de design',
   'templateRec.button': 'Recommander un modèle',
+  'templateRec.entryHint': 'Décrivez d’abord votre besoin pour obtenir des recommandations',
   'templateRec.loading': 'Recherche de modèles…',
   'templateRec.title': 'Recommandé pour vous',
   'templateRec.use': 'Utiliser ce modèle',

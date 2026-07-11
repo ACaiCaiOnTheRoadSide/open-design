@@ -721,6 +721,7 @@ export const ja: Dict = {
   'designSystemPicker.searchPlaceholder': 'デザインシステムを検索（タイトル / カテゴリ / 概要）',
   'designSystemPicker.searchCompactPlaceholder': 'デザインシステムを検索',
   'templateRec.button': 'テンプレートを提案',
+  'templateRec.entryHint': '先にご要望を入力すると、テンプレートを提案します',
   'templateRec.loading': 'テンプレートを探しています…',
   'templateRec.title': 'おすすめ',
   'templateRec.use': 'このテンプレートを使う',

@@ -721,6 +721,7 @@ export const ru: Dict = {
   'designSystemPicker.searchPlaceholder': 'Поиск дизайн-систем (название / категория / описание)',
   'designSystemPicker.searchCompactPlaceholder': 'Поиск дизайн-систем',
   'templateRec.button': 'Подобрать шаблон',
+  'templateRec.entryHint': 'Сначала опишите задачу, чтобы получить подбор шаблонов',
   'templateRec.loading': 'Подбираем шаблоны…',
   'templateRec.title': 'Рекомендуем вам',
   'templateRec.use': 'Использовать этот шаблон',

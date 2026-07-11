@@ -1199,6 +1199,39 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* 模板推荐入口 — 设计系统选择器右侧的常驻按钮。用 accent 着色让它在
+   工具栏里可被注意到(推荐结果渲染在下方画廊的「为你推荐」分组)。 */
+.home-hero__rec-trigger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--accent-tint, var(--border));
+  border-radius: var(--radius-pill, 999px);
+  background: var(--accent-tint, transparent);
+  color: var(--accent, var(--text-strong));
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--ease-out),
+    border-color 140ms var(--ease-out),
+    color 140ms var(--ease-out);
+}
+.home-hero__rec-trigger:hover:not(:disabled),
+.home-hero__rec-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+.home-hero__rec-trigger:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.home-hero__rec-trigger-icon {
+  flex: 0 0 auto;
+}
 .home-hero__ds-row-trigger-icon {
   flex: 0 0 auto;
   opacity: 0.75;

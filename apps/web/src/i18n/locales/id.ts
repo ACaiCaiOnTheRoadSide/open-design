@@ -721,6 +721,7 @@ export const id: Dict = {
   'designSystemPicker.searchPlaceholder': 'Cari sistem desain (judul / kategori / ringkasan)',
   'designSystemPicker.searchCompactPlaceholder': 'Cari sistem desain',
   'templateRec.button': 'Rekomendasikan templat',
+  'templateRec.entryHint': 'Jelaskan dulu kebutuhan Anda untuk mendapatkan rekomendasi',
   'templateRec.loading': 'Mencari templat…',
   'templateRec.title': 'Direkomendasikan untuk Anda',
   'templateRec.use': 'Gunakan templat ini',

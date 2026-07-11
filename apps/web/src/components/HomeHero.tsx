@@ -127,6 +127,14 @@ interface Props {
   prompt: string;
   onPromptChange: (value: string) => void;
   onSubmit: HomeHeroSubmitHandler;
+  // 模板推荐入口(工具栏常驻,设计系统选择器右侧)。缺省/null = 不渲染
+  // (推荐服务不可达时由上层隐藏);enabled=false 时按钮置灰并提示先输入
+  // 需求。结果渲染在下方官方模板画廊的「为你推荐」分组,见 HomeView。
+  templateRecommend?: {
+    enabled: boolean;
+    loading: boolean;
+    onClick: () => void;
+  } | null;
   // Send pressed on an EMPTY composer while the placeholder carousel is
   // showing: the host seeds the prompt with `scenario.text`, binds the
   // scenario's template, and creates the project -- one-click "just start".
@@ -265,6 +273,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     prompt,
     onPromptChange,
     onSubmit,
+    templateRecommend = null,
     onSubmitScenario = () => undefined,
     firstRunGuide,
     activePluginTitle,
@@ -1651,7 +1660,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         </div>
       </div>
 
-      {onDesignSystemChange || onPickWorkingDir ? (
+      {onDesignSystemChange || onPickWorkingDir || templateRecommend ? (
         <div className="home-hero__workdir-row">
           {onDesignSystemChange ? (
             <DesignSystemPicker
@@ -1660,6 +1669,30 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               selectedId={selectedDesignSystemId}
               onChange={onDesignSystemChange}
             />
+          ) : null}
+          {templateRecommend ? (
+            <button
+              type="button"
+              className="home-hero__rec-trigger"
+              data-testid="home-hero-template-recommend"
+              disabled={!templateRecommend.enabled || templateRecommend.loading}
+              aria-busy={templateRecommend.loading}
+              title={
+                templateRecommend.enabled
+                  ? t('templateRec.button')
+                  : t('templateRec.entryHint')
+              }
+              onClick={templateRecommend.onClick}
+            >
+              <Icon
+                name={templateRecommend.loading ? 'spinner' : 'sparkles'}
+                size={13}
+                className="home-hero__rec-trigger-icon"
+              />
+              <span>
+                {templateRecommend.loading ? t('templateRec.loading') : t('templateRec.button')}
+              </span>
+            </button>
           ) : null}
         </div>
       ) : null}

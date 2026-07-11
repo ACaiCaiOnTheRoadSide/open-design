@@ -721,6 +721,7 @@ export const hu: Dict = {
   'designSystemPicker.searchPlaceholder': 'Tervezési rendszerek keresése (cím / kategória / összegzés)',
   'designSystemPicker.searchCompactPlaceholder': 'Tervezési rendszerek keresése',
   'templateRec.button': 'Sablon ajánlása',
+  'templateRec.entryHint': 'Előbb írd le, mire van szükséged, majd kérj ajánlást',
   'templateRec.loading': 'Sablonok keresése…',
   'templateRec.title': 'Neked ajánljuk',
   'templateRec.use': 'Sablon használata',

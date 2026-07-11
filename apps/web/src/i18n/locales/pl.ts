@@ -721,6 +721,7 @@ export const pl: Dict = {
   'designSystemPicker.searchPlaceholder': 'Szukaj systemów projektowych (tytuł / kategoria / podsumowanie)',
   'designSystemPicker.searchCompactPlaceholder': 'Szukaj systemów projektowych',
   'templateRec.button': 'Poleć szablon',
+  'templateRec.entryHint': 'Najpierw opisz, czego potrzebujesz, aby otrzymać rekomendacje',
   'templateRec.loading': 'Szukanie szablonów…',
   'templateRec.title': 'Polecane dla Ciebie',
   'templateRec.use': 'Użyj tego szablonu',

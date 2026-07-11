@@ -721,6 +721,7 @@ export const esES: Dict = {
   'designSystemPicker.searchPlaceholder': 'Buscar sistemas de diseño (título / categoría / resumen)',
   'designSystemPicker.searchCompactPlaceholder': 'Buscar sistemas de diseño',
   'templateRec.button': 'Recomendar plantilla',
+  'templateRec.entryHint': 'Describe primero lo que necesitas para recibir recomendaciones',
   'templateRec.loading': 'Buscando plantillas…',
   'templateRec.title': 'Recomendado para ti',
   'templateRec.use': 'Usar esta plantilla',
