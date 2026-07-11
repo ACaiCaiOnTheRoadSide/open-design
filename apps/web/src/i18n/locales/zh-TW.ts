@@ -1661,6 +1661,8 @@ export const zhTW: Dict = {
   'chat.conversationsTitle': '對話紀錄',
   'chat.conversationsAria': '對話紀錄',
   'chat.newConversation': '新建對話',
+  'chat.resetConversation': '重置對話',
+  'chat.resetConversationHint': '重置對話:清空聊天記錄,AI 不再受先前內容干擾,從頭開始處理你的新需求',
   'chat.newConversationsTitle': '新建對話',
   'chat.conversationsHeading': '對話',
   'chat.new': '新建',

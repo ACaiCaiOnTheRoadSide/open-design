@@ -1661,6 +1661,8 @@ export const fa: Dict = {
   'chat.conversationsTitle': 'مکالمات',
   'chat.conversationsAria': 'تاریخچه مکالمات',
   'chat.newConversation': 'مکالمه جدید',
+  'chat.resetConversation': 'بازنشانی گفتگو',
+  'chat.resetConversationHint': 'بازنشانی گفتگو: تاریخچه چت پاک می‌شود و هوش مصنوعی بدون تأثیر پیام‌های قبلی از نو شروع می‌کند',
   'chat.newConversationsTitle': 'مکالمه جدید',
   'chat.conversationsHeading': 'مکالمات',
   'chat.new': 'جدید',

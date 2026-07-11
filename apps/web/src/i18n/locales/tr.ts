@@ -1661,6 +1661,8 @@ export const tr: Dict = {
   'chat.conversationsTitle': 'Konuşmalar',
   'chat.conversationsAria': 'Konuşma geçmişi',
   'chat.newConversation': 'Yeni konuşma',
+  'chat.resetConversation': 'Konuşmayı sıfırla',
+  'chat.resetConversationHint': 'Konuşmayı sıfırla: sohbet geçmişi temizlenir — yapay zeka önceki mesajlardan etkilenmeden baştan başlar',
   'chat.newConversationsTitle': 'Yeni Konuşma',
   'chat.conversationsHeading': 'Konuşmalar',
   'chat.new': 'Yeni',

@@ -1661,6 +1661,8 @@ export const it: Dict = {
   'chat.conversationsTitle': 'Conversazioni',
   'chat.conversationsAria': 'Cronologia delle conversazioni',
   'chat.newConversation': 'Nuova conversazione',
+  'chat.resetConversation': 'Reimposta conversazione',
+  'chat.resetConversationHint': 'Reimposta la conversazione: la cronologia viene svuotata e l’IA riparte da zero, senza l’influenza dei messaggi precedenti',
   'chat.newConversationsTitle': 'Nuova conversazione',
   'chat.conversationsHeading': 'Conversazioni',
   'chat.new': 'Nuova',

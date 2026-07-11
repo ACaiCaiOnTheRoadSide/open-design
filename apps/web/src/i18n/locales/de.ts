@@ -1661,6 +1661,8 @@ export const de: Dict = {
   'chat.conversationsTitle': 'Konversationen',
   'chat.conversationsAria': 'Konversationsverlauf',
   'chat.newConversation': 'Neue Konversation',
+  'chat.resetConversation': 'Unterhaltung zurücksetzen',
+  'chat.resetConversationHint': 'Unterhaltung zurücksetzen: Der Chatverlauf wird geleert — die KI startet neu, unbeeinflusst von früheren Nachrichten',
   'chat.newConversationsTitle': 'Neue Konversation',
   'chat.conversationsHeading': 'Konversationen',
   'chat.new': 'Neu',

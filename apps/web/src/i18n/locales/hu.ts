@@ -1661,6 +1661,8 @@ export const hu: Dict = {
   'chat.conversationsTitle': 'Beszélgetések',
   'chat.conversationsAria': 'Beszélgetések előzménye',
   'chat.newConversation': 'Új beszélgetés',
+  'chat.resetConversation': 'Beszélgetés visszaállítása',
+  'chat.resetConversationHint': 'Beszélgetés visszaállítása: a csevegési előzmények törlődnek — az MI elölről kezdi, a korábbi üzenetek hatása nélkül',
   'chat.newConversationsTitle': 'Új beszélgetés',
   'chat.conversationsHeading': 'Beszélgetések',
   'chat.new': 'Új',

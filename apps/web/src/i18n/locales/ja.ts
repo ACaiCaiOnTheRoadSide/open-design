@@ -1661,6 +1661,8 @@ export const ja: Dict = {
   'chat.conversationsTitle': '会話',
   'chat.conversationsAria': '会話履歴',
   'chat.newConversation': '新しい会話',
+  'chat.resetConversation': '会話をリセット',
+  'chat.resetConversationHint': '会話をリセット:チャット履歴をクリアし、AIが以前の内容に影響されず最初からやり直します',
   'chat.newConversationsTitle': '新しい会話',
   'chat.conversationsHeading': '会話',
   'chat.new': '新規',

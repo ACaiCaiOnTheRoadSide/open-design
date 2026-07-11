@@ -1661,6 +1661,8 @@ export const pl: Dict = {
   'chat.conversationsTitle': 'Rozmowy',
   'chat.conversationsAria': 'Historia rozmów',
   'chat.newConversation': 'Nowa rozmowa',
+  'chat.resetConversation': 'Zresetuj rozmowę',
+  'chat.resetConversationHint': 'Reset rozmowy: historia czatu zostaje wyczyszczona — AI zaczyna od nowa, bez wpływu wcześniejszych wiadomości',
   'chat.newConversationsTitle': 'Nowa rozmowa',
   'chat.conversationsHeading': 'Rozmowy',
   'chat.new': 'Nowa',

@@ -1907,11 +1907,12 @@ export function ChatPane({
     queuedItems.length > 0 ||
     attachedComments.length > 0;
 
-  // New-conversation button in the composer bar, immediately right of the
+  // Reset-conversation button in the composer bar, immediately right of the
   // "+" menu via ChatComposer's leadingAccessory slot. Same handler and
-  // disabled flag as the history menu's "New" — the next message in the
-  // fresh conversation carries no history, which is what makes this read
-  // as "reset" to the user.
+  // disabled flag as the history menu's "New" — under the hood it starts a
+  // fresh conversation, but it is presented as "reset" with a tooltip
+  // explaining that the visible history is cleared and the next message
+  // carries none of it.
   const composerNewConversationButton = onNewConversation ? (
     <Button
       size="icon"
@@ -1919,9 +1920,9 @@ export function ChatPane({
       className="od-tooltip"
       data-testid="chat-composer-new-conversation"
       disabled={newConversationBlocked}
-      title={t('chat.newConversation')}
-      data-tooltip={t('chat.newConversation')}
-      aria-label={t('chat.newConversation')}
+      title={t('chat.resetConversationHint')}
+      data-tooltip={t('chat.resetConversationHint')}
+      aria-label={t('chat.resetConversation')}
       onClick={() => {
         if (newConversationBlocked) return;
         trackComposerBarClick(analytics.track, {

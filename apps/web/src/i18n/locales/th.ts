@@ -1661,6 +1661,8 @@ export const th: Dict = {
   'chat.conversationsTitle': 'การสนทนา',
   'chat.conversationsAria': 'ประวัติ',
   'chat.newConversation': 'สนทนาใหม่',
+  'chat.resetConversation': 'รีเซ็ตการสนทนา',
+  'chat.resetConversationHint': 'รีเซ็ตการสนทนา: ล้างประวัติแชท ให้ AI เริ่มต้นใหม่โดยไม่ถูกรบกวนจากข้อความก่อนหน้า',
   'chat.newConversationsTitle': 'เริ่มใหม่',
   'chat.conversationsHeading': 'บทสนทนาทั้งหมด',
   'chat.new': 'ใหม่',

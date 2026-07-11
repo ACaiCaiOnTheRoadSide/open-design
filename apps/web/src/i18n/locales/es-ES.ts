@@ -1661,6 +1661,8 @@ export const esES: Dict = {
   'chat.conversationsTitle': 'Conversaciones',
   'chat.conversationsAria': 'Historial de conversaciones',
   'chat.newConversation': 'Nueva conversación',
+  'chat.resetConversation': 'Restablecer conversación',
+  'chat.resetConversationHint': 'Restablecer la conversación: se vacía el historial y la IA empieza de cero, sin la influencia de los mensajes anteriores',
   'chat.newConversationsTitle': 'Nueva conversación',
   'chat.conversationsHeading': 'Conversaciones',
   'chat.new': 'Nueva',

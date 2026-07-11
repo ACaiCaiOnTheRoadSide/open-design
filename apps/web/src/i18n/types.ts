@@ -2412,6 +2412,8 @@ export interface Dict {
   'chat.conversationsTitle': string;
   'chat.conversationsAria': string;
   'chat.newConversation': string;
+  'chat.resetConversation': string;
+  'chat.resetConversationHint': string;
   'chat.newConversationsTitle': string;
   'chat.conversationsHeading': string;
   'chat.new': string;

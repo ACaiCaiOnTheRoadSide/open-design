@@ -1661,6 +1661,8 @@ export const ptBR: Dict = {
   'chat.conversationsTitle': 'Conversas',
   'chat.conversationsAria': 'Histórico de conversas',
   'chat.newConversation': 'Nova conversa',
+  'chat.resetConversation': 'Redefinir conversa',
+  'chat.resetConversationHint': 'Redefinir a conversa: o histórico é limpo e a IA recomeça do zero, sem a influência das mensagens anteriores',
   'chat.newConversationsTitle': 'Nova conversa',
   'chat.conversationsHeading': 'Conversas',
   'chat.new': 'Nova',

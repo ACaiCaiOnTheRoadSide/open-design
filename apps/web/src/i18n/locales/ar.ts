@@ -1661,6 +1661,8 @@ export const ar: Dict = {
   'chat.conversationsTitle': 'المحادثات',
   'chat.conversationsAria': 'سجل المحادثات',
   'chat.newConversation': 'محادثة جديدة',
+  'chat.resetConversation': 'إعادة تعيين المحادثة',
+  'chat.resetConversationHint': 'إعادة تعيين المحادثة: يتم مسح سجل الدردشة ليبدأ الذكاء الاصطناعي من جديد دون تأثير الرسائل السابقة',
   'chat.newConversationsTitle': 'محادثة جديدة',
   'chat.conversationsHeading': 'المحادثات',
   'chat.new': 'جديد',

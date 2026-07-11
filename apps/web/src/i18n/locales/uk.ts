@@ -1661,6 +1661,8 @@ export const uk: Dict = {
   'chat.conversationsTitle': 'Розмови',
   'chat.conversationsAria': 'Історія розмов',
   'chat.newConversation': 'Нова розмова',
+  'chat.resetConversation': 'Скинути розмову',
+  'chat.resetConversationHint': 'Скидання розмови: історію чату буде очищено — ШІ почне заново, без впливу попередніх повідомлень',
   'chat.newConversationsTitle': 'Нова розмова',
   'chat.conversationsHeading': 'Розмови',
   'chat.new': 'Нова',

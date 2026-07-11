@@ -1661,6 +1661,8 @@ export const id: Dict = {
   'chat.conversationsTitle': 'Percakapan',
   'chat.conversationsAria': 'Buka percakapan',
   'chat.newConversation': 'Percakapan baru',
+  'chat.resetConversation': 'Atur ulang percakapan',
+  'chat.resetConversationHint': 'Atur ulang percakapan: riwayat obrolan dikosongkan — AI mulai dari awal tanpa terpengaruh pesan sebelumnya',
   'chat.newConversationsTitle': 'Mulai percakapan baru',
   'chat.conversationsHeading': 'Percakapan',
   'chat.new': 'Baru',

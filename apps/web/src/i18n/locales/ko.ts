@@ -1661,6 +1661,8 @@ export const ko: Dict = {
   'chat.conversationsTitle': '대화 목록',
   'chat.conversationsAria': '대화 내역',
   'chat.newConversation': '새 대화 시작',
+  'chat.resetConversation': '대화 초기화',
+  'chat.resetConversationHint': '대화 초기화: 채팅 기록을 지워 AI가 이전 내용의 영향 없이 처음부터 다시 시작합니다',
   'chat.newConversationsTitle': '새 대화',
   'chat.conversationsHeading': '대화 목록',
   'chat.new': '새로 만들기',
