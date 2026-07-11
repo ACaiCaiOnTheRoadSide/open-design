@@ -1,9 +1,13 @@
 // 模板推荐卡片(baizhi fork)。
 //
-// 新建项目(首页 composer)与对话中两处共用:展示当前候选的名称/推荐理由/
-// 实时预览(design-template 走共享的 /api/skills/:id/example 路由),提供
-// 「使用此模板 / 换一个 / 不使用」三个动作。候选队列在前端翻页——接口一次
-// 返回 top 3~5,"换一个"先翻本地候选,翻尽由宿主带 excludeIds 重调。
+// 对话中展示候选的名称/推荐理由/实时预览(design-template 走共享的
+// /api/skills/:id/example 路由),提供「使用此模板 / 换一个 / 不使用」三个
+// 动作。候选队列在前端翻页——接口一次返回 top 3~5,"换一个"先翻本地候选,
+// 翻尽由宿主带 excludeIds 重调。
+//
+// 入口按钮不在本文件:首页在 HomeHero 工具栏(设计系统选择器右侧),对话中
+// 在 composer 的 staged-context 行(同样在设计系统选择器右侧);首页的结果
+// 展示也已改走 TemplateRecommendGallery(官方模板画廊「为你推荐」分组)。
 import { useMemo, useState } from 'react';
 import { Button } from '@open-design/components';
 // 只用 useT 不用 useI18n:宿主组件的部分测试 vi.mock 了 i18n 模块且只提供
@@ -11,24 +15,6 @@ import { Button } from '@open-design/components';
 import { useT } from '../i18n';
 import { appLocale, type TemplateRecommendation } from '../state/templateRecommend';
 import styles from './TemplateRecommendCard.module.css';
-
-// 推荐入口按钮:与卡片同文件同样式作用域,宿主(首页/对话区)只负责摆位。
-export function TemplateRecommendEntry({
-  loading,
-  onClick,
-}: {
-  loading: boolean;
-  onClick: () => void;
-}) {
-  const t = useT();
-  return (
-    <div className={styles.entry}>
-      <Button variant="subtle" onClick={onClick} disabled={loading} data-testid="template-recommend-entry">
-        {loading ? t('templateRec.loading') : t('templateRec.button')}
-      </Button>
-    </div>
-  );
-}
 
 interface Props {
   recommendations: TemplateRecommendation[];

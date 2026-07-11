@@ -1,0 +1,38 @@
+/* accent 胶囊皮肤,覆盖 Button subtle 变体的底色/边框。双类名抬高
+   specificity——与 button.module.css 同为单类选择器时不赌加载顺序。 */
+.trigger.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--accent-tint, var(--border));
+  border-radius: var(--radius-pill, 999px);
+  background: var(--accent-tint, transparent);
+  color: var(--accent, var(--text-strong));
+  font-size: 13px;
+  transition:
+    border-color 140ms var(--ease-out),
+    background-color 140ms var(--ease-out),
+    color 140ms var(--ease-out);
+}
+
+.trigger.trigger:hover:not(:disabled),
+.trigger.trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--accent-tint, transparent);
+}
+
+.trigger.trigger:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* 对话 staged 行的 22px 紧凑规格 */
+.compact.compact {
+  gap: 4px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}

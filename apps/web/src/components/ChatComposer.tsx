@@ -255,6 +255,12 @@ interface Props {
   // the textarea). The former standalone chrome header row was removed;
   // ProjectView owns the project record so it renders the picker as a slot.
   designSystemPicker?: ReactNode;
+  // Host accessory rendered in the staged-context row right of the
+  // design-system picker (e.g. ChatPane's template-recommend entry). A
+  // dedicated slot — NOT merged into designSystemPicker — so the picker
+  // slot keeps its semantics, the accessory wraps as an independent row
+  // child, and hosts opt in per surface.
+  stagedRowAccessory?: ReactNode;
   // Project's current `designSystemId`. The mid-chat design-system picker
   // uses this to surface a "current" indicator and to no-op a redundant
   // switch. Optional so test/screenshot harnesses can omit it.
@@ -384,6 +390,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       footerAccessory,
       leadingAccessory,
       designSystemPicker,
+      stagedRowAccessory,
       currentDesignSystemId = null,
       onActiveDesignSystemChange,
       onShowToast,
@@ -2281,9 +2288,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               }}
             />
           ) : null}
-          {designSystemPicker || selectedWorkspaceContexts.length > 0 || stagedSkills.length > 0 || stagedMcpServers.length > 0 || stagedConnectors.length > 0 || staged.length > 0 || activeAppliedPlugin ? (
+          {designSystemPicker || stagedRowAccessory || selectedWorkspaceContexts.length > 0 || stagedSkills.length > 0 || stagedMcpServers.length > 0 || stagedConnectors.length > 0 || staged.length > 0 || activeAppliedPlugin ? (
             <StagedRunContexts
               designSystemPicker={designSystemPicker}
+              stagedRowAccessory={stagedRowAccessory}
               workspaceItems={selectedWorkspaceContexts}
               currentWorkspaceContextId={visibleWorkspaceContext?.id ?? null}
               skills={stagedSkills}
@@ -2968,6 +2976,7 @@ function workspaceContextKindLabel(kind: WorkspaceContextItem['kind']): string {
 
 function StagedRunContexts({
   designSystemPicker,
+  stagedRowAccessory,
   workspaceItems,
   currentWorkspaceContextId,
   skills,
@@ -2986,6 +2995,7 @@ function StagedRunContexts({
   t,
 }: {
   designSystemPicker?: ReactNode;
+  stagedRowAccessory?: ReactNode;
   workspaceItems: WorkspaceContextItem[];
   currentWorkspaceContextId: string | null;
   skills: SkillSummary[];
@@ -3027,6 +3037,11 @@ function StagedRunContexts({
         <div className="staged-context-picker staged-context-picker--design-system">
           {designSystemPicker}
         </div>
+      ) : null}
+      {stagedRowAccessory ? (
+        // Independent row child (not inside the picker wrapper): wraps on
+        // its own line in narrow panes and inherits the row's 5px gap.
+        <div className="staged-context-picker">{stagedRowAccessory}</div>
       ) : null}
       {pluginChip ? (
         <div className="staged-chip staged-context staged-context--plugin">

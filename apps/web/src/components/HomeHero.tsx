@@ -31,6 +31,7 @@ import type {
   McpServerConfig,
 } from '@open-design/contracts';
 import { DesignSystemPicker } from './DesignSystemPicker';
+import { TemplateRecommendTrigger } from './TemplateRecommendTrigger';
 import type { SkillSummary } from '../types';
 import { Icon, type IconName } from './Icon';
 import { useAnalytics } from '../analytics/provider';
@@ -1671,28 +1672,12 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
             />
           ) : null}
           {templateRecommend ? (
-            <button
-              type="button"
-              className="home-hero__rec-trigger"
+            <TemplateRecommendTrigger
               data-testid="home-hero-template-recommend"
-              disabled={!templateRecommend.enabled || templateRecommend.loading}
-              aria-busy={templateRecommend.loading}
-              title={
-                templateRecommend.enabled
-                  ? t('templateRec.button')
-                  : t('templateRec.entryHint')
-              }
+              enabled={templateRecommend.enabled}
+              loading={templateRecommend.loading}
               onClick={templateRecommend.onClick}
-            >
-              <Icon
-                name={templateRecommend.loading ? 'spinner' : 'sparkles'}
-                size={13}
-                className="home-hero__rec-trigger-icon"
-              />
-              <span>
-                {templateRecommend.loading ? t('templateRec.loading') : t('templateRec.button')}
-              </span>
-            </button>
+            />
           ) : null}
         </div>
       ) : null}

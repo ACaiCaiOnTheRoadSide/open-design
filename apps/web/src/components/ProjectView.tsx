@@ -6878,6 +6878,7 @@ export function ProjectView({
                   onChange={handleChangeDesignSystemId}
                 />
               )}
+              templateRecommendEnabled
             />
           ) : (
             <div className="pane" data-testid="chat-pane-loading">

@@ -1,10 +1,4 @@
 /* 模板推荐卡片(baizhi fork)。跟随全局 token,浅/深色两适配。 */
-.entry {
-  display: flex;
-  justify-content: center;
-  margin-top: 10px;
-}
-
 .card {
   display: flex;
   flex-direction: column;

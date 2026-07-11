@@ -27,7 +27,8 @@ import {
   type TemplateRecommendation,
   type TemplateRecommendResponse,
 } from '../state/templateRecommend';
-import { TemplateRecommendCard, TemplateRecommendEntry } from './TemplateRecommendCard';
+import { TemplateRecommendCard } from './TemplateRecommendCard';
+import { TemplateRecommendTrigger } from './TemplateRecommendTrigger';
 import {
   FEATURED_DESIGN_TOOLBOX_ACTION_IDS,
   findDesignToolboxSkill,
@@ -640,6 +641,10 @@ interface Props {
   backLabel?: string;
   projectHeader?: ReactNode;
   designSystemPicker?: ReactNode;
+  // 模板推荐入口/卡片的宿主开关(默认关)。只有 ProjectView 的项目主对话
+  // 打开;SideChatTab、DesignSystemFlow 等复用 ChatPane 的界面里换模板
+  // 没有意义(甚至有害:DS 编辑流里会 PATCH 项目 skillId),不得渗入。
+  templateRecommendEnabled?: boolean;
   config?: AppConfig;
 }
 
@@ -793,6 +798,7 @@ export function ChatPane({
   backLabel,
   projectHeader,
   designSystemPicker,
+  templateRecommendEnabled = false,
   config,
 }: Props) {
   const t = useT();
@@ -1873,27 +1879,42 @@ export function ChatPane({
     onSend(t('templateRec.switchPrompt').replace(/\{name\}/g, displayName), [], []);
   }
 
+  // 推荐入口位于 composer 的 staged-context 行(设计系统选择器右侧,经
+  // ChatComposer 的 stagedRowAccessory 专用槽),与首页入口同位对齐、常驻
+  // 可发现;结果卡片仍展示在 composer 上方。置灰条件:没有可推荐依据
+  // (还没有用户消息)、流式回复中,或结果卡片已打开——卡片打开时再开新
+  // 一轮会清空"换一个"的已见集、把用户刚拒过的候选原样端回来,翻页动作
+  // 归卡片自己的"换一个"。
+  const templateRecEntryNode =
+    templateRecommendEnabled && projectId && !chatRecHidden ? (
+      <TemplateRecommendTrigger
+        size="compact"
+        data-testid="chat-template-recommend"
+        enabled={Boolean(lastUserMessageText) && !streaming && !chatRecResult}
+        loading={chatRecLoading}
+        {...(lastUserMessageText ? { disabledHint: t('templateRec.button') } : {})}
+        onClick={() => {
+          // 入口点击 = 开新一轮(重置"换一个"的已见集)。
+          chatRecSeenIdsRef.current = [];
+          void runChatTemplateRecommend();
+        }}
+      />
+    ) : null;
+
   const templateRecNode =
-    projectId && !streaming && !chatRecHidden && lastUserMessageText ? (
-      chatRecResult ? (
-        <TemplateRecommendCard
-          key={chatRecRound}
-          recommendations={chatRecResult.recommendations}
-          degraded={chatRecResult.degraded}
-          busy={chatRecLoading}
-          onUse={(rec, displayName) => void useChatRecommendedTemplate(rec, displayName)}
-          onExhausted={() => void runChatTemplateRecommend(chatRecSeenIdsRef.current)}
-          onDismiss={() => {
-            setChatRecResult(null);
-            chatRecSeenIdsRef.current = [];
-          }}
-        />
-      ) : (
-        <TemplateRecommendEntry
-          loading={chatRecLoading}
-          onClick={() => void runChatTemplateRecommend()}
-        />
-      )
+    templateRecommendEnabled && projectId && !streaming && !chatRecHidden && lastUserMessageText && chatRecResult ? (
+      <TemplateRecommendCard
+        key={chatRecRound}
+        recommendations={chatRecResult.recommendations}
+        degraded={chatRecResult.degraded}
+        busy={chatRecLoading}
+        onUse={(rec, displayName) => void useChatRecommendedTemplate(rec, displayName)}
+        onExhausted={() => void runChatTemplateRecommend(chatRecSeenIdsRef.current)}
+        onDismiss={() => {
+          setChatRecResult(null);
+          chatRecSeenIdsRef.current = [];
+        }}
+      />
     ) : null;
 
   // Blocks every in-pane new-conversation entry point (composer button and
@@ -1944,6 +1965,7 @@ export function ChatPane({
       <ChatComposer
       ref={composerRef}
       designSystemPicker={designSystemPicker}
+      stagedRowAccessory={templateRecEntryNode ?? undefined}
       projectId={projectId}
       projectFiles={projectFiles}
       activeProjectFileName={activeProjectFileName}
