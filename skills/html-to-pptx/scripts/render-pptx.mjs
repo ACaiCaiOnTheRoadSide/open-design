@@ -19,7 +19,9 @@
 //
 // Exit codes: 0 ok, 2 usage, 3 input not found, 4 no slide surfaces (not a
 // deck), 5 editable engine missing or failed (retry without --editable for
-// the screenshot fallback).
+// the screenshot fallback), 6 browser failed to launch (environment not
+// prepared for this system — run the skill's scripts/setup-env.sh and source
+// the env.sh it writes; do not install a browser by hand).
 
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -110,7 +112,34 @@ const proxyServer =
 const proxyBypass = process.env.NO_PROXY || process.env.no_proxy || undefined;
 
 const t0 = Date.now();
-const browser = await chromium.launch({
+// Launch failures are an environment problem, not a deck problem — the prose
+// layers (SKILL.md, export prompt) can be bypassed or fall out of a compacted
+// context, so the guidance must also live here, on the only path every export
+// executes. Do NOT "fix" a relocation error by installing dependencies: it
+// means a glibc browser on a musl system, and only setup-env.sh's bundle can
+// resolve that.
+async function launchOrExplain(options) {
+  try {
+    return await chromium.launch(options);
+  } catch (err) {
+    const msg = String((err && err.message) || err);
+    console.error(`chromium failed to launch: ${msg.split('\n')[0]}`);
+    if (/Error relocating|error while loading shared libraries/i.test(msg)) {
+      console.error(
+        'a glibc browser is being run on a musl (Alpine) system — installing dependencies can never fix this. ' +
+          "Run: OD_PPTX_FORCE_BUNDLE=1 sh <skill-root>/scripts/setup-env.sh, then source /tmp/od-pptx-export/env.sh and retry.",
+      );
+    } else {
+      console.error(
+        "environment not prepared for this system — run the skill's bundled setup script " +
+          '(sh <skill-root>/scripts/setup-env.sh), then source /tmp/od-pptx-export/env.sh in the same command and retry. ' +
+          'Do not install a browser by hand.',
+      );
+    }
+    process.exit(6);
+  }
+}
+const browser = await launchOrExplain({
   ...(systemChromium ? { executablePath: systemChromium } : {}),
   ...(proxyServer ? { proxy: { server: proxyServer, bypass: proxyBypass } } : {}),
   args: [

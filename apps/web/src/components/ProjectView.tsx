@@ -5137,7 +5137,7 @@ export function ProjectView({
       // filename — otherwise exporting the second mode finds the first mode's
       // file already on disk and the agent skips the render, reporting a file
       // the user did not ask for. Chinese markers match the SaaS audience and
-      // the skill's own Step 4 naming rule.
+      // the skill's own Step 3 naming rule.
       const baseLabel = deckLabel.replace(/\.pptx$/i, '').replace(/\.html?$/i, '');
       const outputName = `${baseLabel}${editable ? '-可编辑版' : '-截图版'}.pptx`;
       // The user picked a mode in the export dialog; the skill's render script
@@ -5152,7 +5152,9 @@ export function ProjectView({
         : 'The user chose the SCREENSHOT mode: render WITHOUT the --editable flag (one image per slide). ';
       const prompt =
         `Export the HTML deck "${fileName}" in this project to a .pptx file using the html-to-pptx skill. ` +
-        'Follow the skill exactly — set up the dependency workspace OUTSIDE the project directory, ' +
+        'Follow the skill exactly — prepare the environment ONLY by running the skill\'s bundled ' +
+        'scripts/setup-env.sh (do NOT hand-roll npm/apk/playwright browser installs; the script encodes ' +
+        'the musl-vs-glibc branch that improvised setups get wrong), ' +
         'render with the bundled render-pptx.mjs script, and write the resulting .pptx INTO the project ' +
         `directory named exactly "${outputName}" so it appears in my file list. ` +
         modeInstruction +

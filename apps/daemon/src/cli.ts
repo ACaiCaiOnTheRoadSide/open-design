@@ -500,8 +500,9 @@ async function runExport(args) {
       code: 'renderer-unavailable',
       message:
         'export rendering is not available in this deployment (HTTP 501). Do NOT retry `od export` — ' +
-        'it cannot succeed here. To produce a .pptx, use the html-to-pptx skill instead: set up its ' +
-        'dependency workspace OUTSIDE the project directory, render with the bundled render-pptx.mjs, ' +
+        'it cannot succeed here. To produce a .pptx, use the html-to-pptx skill instead: prepare the ' +
+        'environment ONLY by running the bundled scripts/setup-env.sh from the skill root (never ' +
+        'hand-roll npm/apk/playwright browser installs), render with the bundled render-pptx.mjs, ' +
         'and write the resulting .pptx INTO the project directory.',
     });
   }
