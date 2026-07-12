@@ -22,6 +22,7 @@ import { amrHandoffDeviceId, attributedAmrUrl, recordAmrEntry } from '../analyti
 import { useT } from '../i18n';
 import { patchProject } from '../state/projects';
 import {
+  appLocale,
   recommendTemplates,
   templateRecommendUnavailable,
   type TemplateRecommendation,
@@ -37,7 +38,7 @@ import {
 } from '../runtime/design-toolbox';
 import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
-import { projectRawUrl } from '../providers/registry';
+import { fetchDesignTemplates, projectRawUrl } from '../providers/registry';
 import { takeComposerSeedFor } from '../state/libraryHandoff';
 import type { TodoItem } from '../runtime/todos';
 import type { AppliedPluginSnapshot, ChatSessionMode, WorkspaceContextItem } from '@open-design/contracts';
@@ -1880,14 +1881,46 @@ export function ChatPane({
     }
   }
 
+  // 「使用此模板」不替用户发消息:走 @-mention 选技能的同一条路径(composer
+  // 的 stageSkill = 持久换绑项目 skillId + 输入框挂芯片 + 插入 @pill),用户
+  // 在输入框看到已选模板、补完自己的内容再发送;发送时模板随 meta.skillIds/
+  // context 上行,气泡上方展示模板徽标(见 UserMessageImpl 的 skill 芯片)。
+  const chatRecCatalogRef = useRef<SkillSummary[] | null>(null);
+  // 气泡模板徽标的 id→展示名解析:技能列表 → 推荐目录缓存,displayName 按
+  // 当前 locale 取;都查不到时由气泡组件按 id 折算可读名。
+  const resolveSkillNameForBubble = useCallback((id: string): string | null => {
+    const found =
+      skills.find((s) => s.id === id) ??
+      chatRecCatalogRef.current?.find((s) => s.id === id) ??
+      null;
+    if (!found) return null;
+    const loc = appLocale();
+    return (loc && found.displayName?.[loc]) || found.name || found.id;
+  }, [skills]);
   async function useChatRecommendedTemplate(rec: TemplateRecommendation, displayName: string) {
     if (!projectId) return;
     setChatRecResult(null);
     chatRecSeenIdsRef.current = [];
-    const patched = await patchProject(projectId, { skillId: rec.id });
-    if (!patched) return;
-    // 换绑后自动开新一轮:这一轮 daemon 重组 system prompt 时带上新模板。
-    onSend(t('templateRec.switchPrompt').replace(/\{name\}/g, displayName), [], []);
+    let summary = chatRecCatalogRef.current?.find((s) => s.id === rec.id) ?? null;
+    if (!summary) {
+      const list = await fetchDesignTemplates().catch(() => null);
+      if (list) {
+        chatRecCatalogRef.current = list;
+        summary = list.find((s) => s.id === rec.id) ?? null;
+      }
+    }
+    // 目录查不到的兜底:用推荐条目自带的名称构造最小摘要,换绑/芯片/@pill
+    // 仍然可用,只是缺 i18n 展示名。
+    const skill =
+      summary ??
+      ({
+        id: rec.id,
+        name: displayName || rec.name,
+        description: rec.reason,
+        triggers: [],
+      } as unknown as SkillSummary);
+    composerRef.current?.stageSkill(skill);
+    composerRef.current?.focus();
   }
 
   // 推荐入口位于 composer 的 staged-context 行(设计系统选择器右侧,经
@@ -2323,6 +2356,7 @@ export function ChatPane({
                 liveToolInput={liveToolInput}
                 connectionNotices={connectionNotices}
                 projectId={projectId}
+                resolveSkillName={resolveSkillNameForBubble}
                 projectKindForTracking={projectKindForTracking}
                 activeConversationId={activeConversationId}
                 activeConversationKey={activeConversationId ?? 'no-conversation'}
@@ -2718,6 +2752,7 @@ function ChatRows({
   liveToolInput,
   connectionNotices,
   projectId,
+  resolveSkillName,
   projectKindForTracking,
   activeConversationId,
   activeConversationKey,
@@ -2766,6 +2801,7 @@ function ChatRows({
   liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
   connectionNotices?: Record<string, string>;
   projectId: string | null;
+  resolveSkillName?: (id: string) => string | null;
   projectKindForTracking: TrackingProjectKind | null;
   activeConversationId: string | null;
   activeConversationKey: string;
@@ -2848,6 +2884,7 @@ function ChatRows({
         <UserMessage
           message={m}
           projectId={projectId}
+          resolveSkillName={resolveSkillName}
           projectFileNames={projectFileNames}
           onRequestOpenFile={onRequestOpenFile}
           onRequestPluginDetails={onRequestPluginDetails}
@@ -3748,6 +3785,15 @@ function ConversationRow({
 // props, so it skips re-render while a later turn streams.
 const UserMessage = memo(UserMessageImpl);
 
+// runContext 只持久化 skill id;技能列表/推荐目录都查不到时按 id 折算可读名
+// (html-ppt-zhangzara-grove → Html Ppt Zhangzara Grove)。
+function prettifySkillId(id: string): string {
+  return id
+    .split(/[-_]/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 function UserMessageImpl({
   message,
   projectId,
@@ -3758,6 +3804,7 @@ function UserMessageImpl({
   t,
   activePluginSnapshot,
   activeDesignSystem,
+  resolveSkillName,
 }: {
   message: ChatMessage;
   projectId: string | null;
@@ -3766,16 +3813,24 @@ function UserMessageImpl({
   onRequestPluginDetails?: (pluginId: string) => void;
   onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
   t: TranslateFn;
+  // runContext 只持久化 skill id;宿主给一个 id→展示名解析器(技能列表 +
+  // 设计模板目录),解析不到时本组件用 id 折算可读名。
+  resolveSkillName?: (id: string) => string | null;
   activePluginSnapshot?: AppliedPluginSnapshot | null;
   activeDesignSystem?: DesignSystemSummary | null;
 }) {
   const attachments = sortChatAttachmentsForDisplay(message.attachments ?? []);
   const commentAttachments = message.commentAttachments ?? [];
   const workspaceItems = message.runContext?.workspaceItems ?? [];
+  // 随消息上行的模板/技能(推荐卡片"使用此模板"或 @-mention 选入),在
+  // 气泡上方展示徽标——与新建项目携带模板的气泡同一位置,让用户看到这条
+  // 消息确实带着模板发出去了。
+  const skillIds = message.runContext?.skillIds ?? [];
   const messagePluginSnapshot = message.appliedPluginSnapshot ?? activePluginSnapshot ?? null;
   const hasRunContext = Boolean(
     message.sessionMode ||
       workspaceItems.length > 0 ||
+      skillIds.length > 0 ||
       messagePluginSnapshot ||
       activeDesignSystem,
   );
@@ -3817,6 +3872,23 @@ function UserMessageImpl({
               onOpen={onRequestOpenFile}
             />
           ))}
+          {skillIds.map((id) => {
+            const name = resolveSkillName?.(id) ?? prettifySkillId(id);
+            return (
+              <div
+                key={`skill:${id}`}
+                className="msg-plugin-chip"
+                data-testid="msg-template-chip"
+                title={name}
+              >
+                <span className="msg-plugin-chip__dot" aria-hidden />
+                <span className="msg-plugin-chip__label">
+                  <span className="msg-plugin-chip__kind">Template</span>
+                  <span className="msg-plugin-chip__title">{name}</span>
+                </span>
+              </div>
+            );
+          })}
           {messagePluginSnapshot ? (
             <ActivePluginChip
               snapshot={messagePluginSnapshot}

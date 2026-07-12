@@ -283,6 +283,12 @@ export interface ChatComposerHandle {
   setDraft: (text: string) => void;
   /** 当前输入框草稿(模板推荐入口用它作为优先的推荐依据)。 */
   getDraft: () => string;
+  /**
+   * 从宿主(如模板推荐卡片)选入一个技能/模板——与 @-mention 选技能同一条
+   * 路径:持久换绑项目 skillId、挂 staged 芯片、草稿里插入 @pill;不发送,
+   * 用户补完内容后随下一条消息上行。
+   */
+  stageSkill: (skill: SkillSummary) => void;
   restoreDraft: (draft: {
     text: string;
     attachments?: ChatAttachment[];
@@ -950,6 +956,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           seededRef.current = true;
         },
         getDraft: () => draftRef.current,
+        stageSkill: (skill: SkillSummary) => {
+          void insertSkillMention(skill);
+        },
         restoreDraft: ({ text, attachments = [], commentAttachments = [], meta }) => {
           setDraft(text);
           const orderedAttachments = normalizeChatAttachmentOrders(attachments);
