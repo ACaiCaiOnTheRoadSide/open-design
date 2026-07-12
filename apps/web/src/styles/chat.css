@@ -1090,7 +1090,11 @@
   contain: layout style;
   transform: translateZ(0);
 }
-.chat-composer-fixed-layer .composer {
+/* 固定层默认穿透(空白区不能挡住身后的消息流),真实内容逐个恢复点击:
+   composer 本体 + 随 composerNode 渲染的模板推荐卡片(全局钩子类,挂在
+   TemplateRecommendCard 根节点上)。漏恢复的内容 = 可见但不可点。 */
+.chat-composer-fixed-layer .composer,
+.chat-composer-fixed-layer .template-recommend-card {
   pointer-events: auto;
 }
 .composer-shell {

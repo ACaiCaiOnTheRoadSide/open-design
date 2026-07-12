@@ -64,7 +64,14 @@ export function TemplateRecommendCard({
   };
 
   return (
-    <section className={styles.card} data-testid="template-recommend-card">
+    // `template-recommend-card` 是稳定的全局钩子类(非样式):对话里本卡片
+    // 随 composerNode 渲染进 .chat-composer-fixed-layer(整层 pointer-events:
+    // none,真实内容需逐个恢复,见 chat.css 的固定层规则)——没有这个钩子,
+    // 卡片可见但三个按钮全部点不到,点击穿透到身后的消息流。
+    <section
+      className={`template-recommend-card ${styles.card}`}
+      data-testid="template-recommend-card"
+    >
       <header className={styles.head}>
         <span className={styles.title}>{t('templateRec.title')}</span>
         <span className={styles.counter}>
