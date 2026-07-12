@@ -6879,6 +6879,7 @@ export function ProjectView({
                 />
               )}
               templateRecommendEnabled
+              designTemplates={designTemplates}
             />
           ) : (
             <div className="pane" data-testid="chat-pane-loading">

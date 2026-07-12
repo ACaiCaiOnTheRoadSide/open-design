@@ -185,6 +185,10 @@ interface Props {
   // the composer still works on surfaces that don't show a skills picker
   // (e.g. tests, screenshot harnesses).
   skills?: SkillSummary[];
+  // 设计模板目录(与 skills 分属两个注册表)。restoreDraft 解析排队消息的
+  // ctx.skillIds 时同时查这份,否则「使用此模板」staged 的模板在编辑排队
+  // 消息时会被静默丢弃(芯片消失而 @pill 文本还在)。
+  designTemplates?: SkillSummary[];
   onSend: (
     prompt: string,
     attachments: ChatAttachment[],
@@ -285,10 +289,13 @@ export interface ChatComposerHandle {
   getDraft: () => string;
   /**
    * 从宿主(如模板推荐卡片)选入一个技能/模板——与 @-mention 选技能同一条
-   * 路径:持久换绑项目 skillId、挂 staged 芯片、草稿里插入 @pill;不发送,
-   * 用户补完内容后随下一条消息上行。
+   * 路径:**持久换绑项目 skillId**(名字里的 apply 指的就是这次写入)、挂
+   * staged 芯片、草稿里插入 @pill;不发送,用户补完内容后随下一条消息上行。
+   * 返回 false = patch 失败且未做任何 UI 变更,宿主必须给出反馈。
+   * 只要 stage 不要持久写入的场景用 ChatComposer 内部的
+   * stageSkillForCurrentTurn,不要复用本方法。
    */
-  stageSkill: (skill: SkillSummary) => void;
+  applyAndStageSkill: (skill: SkillSummary) => Promise<boolean>;
   restoreDraft: (draft: {
     text: string;
     attachments?: ChatAttachment[];
@@ -368,6 +375,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       commentAttachments = [],
       onRemoveCommentAttachment,
       skills = [],
+      designTemplates = [],
       onSend,
       onStop,
       onOpenMcpSettings,
@@ -534,6 +542,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // host. Replaces the old textareaRef + manual selection plumbing. IME
     // composition guarding now lives inside the editor's command handlers.
     const editorRef = useRef<LexicalComposerInputHandle | null>(null);
+    // 同下方 applyDesignToolboxActionRef:handle 的 deps 不追踪 projectId 等,
+    // applyAndStageSkill 经 ref 取最新闭包,避免拿旧 projectId 去 PATCH。
+    const insertSkillMentionRef = useRef<(skill: SkillSummary) => Promise<boolean>>(
+      async () => false,
+    );
     // Always points at the latest `applyDesignToolboxAction` closure so the
     // imperative handle (whose deps array doesn't track `draft`/`t`) never seeds
     // the composer from a stale draft when the next-step card fires an action.
@@ -956,9 +969,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           seededRef.current = true;
         },
         getDraft: () => draftRef.current,
-        stageSkill: (skill: SkillSummary) => {
-          void insertSkillMention(skill);
-        },
+        applyAndStageSkill: (skill: SkillSummary) => insertSkillMentionRef.current(skill),
         restoreDraft: ({ text, attachments = [], commentAttachments = [], meta }) => {
           setDraft(text);
           const orderedAttachments = normalizeChatAttachmentOrders(attachments);
@@ -975,7 +986,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           setStagedSkills(
             ctx?.skillIds
               ? ctx.skillIds
-                  .map((id) => skills.find((s) => s.id === id))
+                  // 技能与设计模板分属两个注册表,排队消息里的模板 id 只在
+                  // designTemplates 里——两份都查,查不到的照旧丢弃。
+                  .map(
+                    (id) =>
+                      skills.find((s) => s.id === id) ??
+                      designTemplates.find((s) => s.id === id),
+                  )
                   .filter((s): s is SkillSummary => Boolean(s))
               : [],
           );
@@ -1171,9 +1188,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       editorRef.current?.setText(text);
     }
 
-    async function insertSkillMention(skill: SkillSummary) {
+    async function insertSkillMention(skill: SkillSummary): Promise<boolean> {
       const applied = await applyProjectSkill(skill);
-      if (!applied) return;
+      if (!applied) return false;
       // Stage the skill so it rides this turn's skillIds, then insert an
       // atomic `@<name>` pill carrying the skill's real id. The onChange
       // prune keys on `skill:<id>` being present in the editor text, so the
@@ -1186,7 +1203,12 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         entity: { id: skill.id, kind: 'skill', label: skill.name },
       });
       setMention(null);
+      return true;
     }
+    // 供 imperative handle 调用的稳定引用:handle 的 deps 不含 projectId/
+    // onProjectSkillChange,直接闭包会陆岚(applyProjectSkill 拿旧 projectId
+    // 去 PATCH 错项目)——与 applyDesignToolboxActionRef 同一处理。
+    insertSkillMentionRef.current = insertSkillMention;
 
     function stageSkillForCurrentTurn(skill: SkillSummary) {
       setStagedSkills((prev) =>

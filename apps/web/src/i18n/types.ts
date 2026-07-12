@@ -1116,6 +1116,7 @@ export interface Dict {
   'templateRec.button': string;
   'templateRec.entryHint': string;
   'templateRec.emptyToast': string;
+  'templateRec.applyFailed': string;
   'templateRec.hoverTip': string;
   'templateRec.loading': string;
   'templateRec.title': string;
@@ -1123,8 +1124,7 @@ export interface Dict {
   'templateRec.next': string;
   'templateRec.dismiss': string;
   'templateRec.degraded': string;
-  'templateRec.switchPrompt': string;
-  'designSystemPicker.select': string;
+    'designSystemPicker.select': string;
   'designSystemPicker.loading': string;
   'designSystemPicker.searchPlaceholder': string;
   'designSystemPicker.searchCompactPlaceholder': string;
