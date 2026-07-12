@@ -722,6 +722,8 @@ export const ar: Dict = {
   'designSystemPicker.searchCompactPlaceholder': 'البحث في أنظمة التصميم',
   'templateRec.button': 'اقتراح قالب',
   'templateRec.entryHint': 'صف احتياجك أولاً للحصول على اقتراحات القوالب',
+  'templateRec.emptyToast': 'لم يتم العثور على قوالب مناسبة — جرّب وصفًا مختلفًا',
+  'templateRec.hoverTip': 'صف احتياجك في مربع الإدخال ثم انقر للحصول على اقتراحات القوالب',
   'templateRec.loading': 'جارٍ البحث عن قوالب…',
   'templateRec.title': 'موصى به لك',
   'templateRec.use': 'استخدام هذا القالب',

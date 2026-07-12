@@ -722,6 +722,8 @@ export const de: Dict = {
   'designSystemPicker.searchCompactPlaceholder': 'Designsysteme durchsuchen',
   'templateRec.button': 'Vorlage empfehlen',
   'templateRec.entryHint': 'Beschreibe zuerst deinen Bedarf, dann Vorlagen empfehlen lassen',
+  'templateRec.emptyToast': 'Keine passenden Vorlagen gefunden – beschreibe deinen Bedarf anders',
+  'templateRec.hoverTip': 'Beschreibe deinen Bedarf im Eingabefeld und klicke für Vorlagen-Empfehlungen',
   'templateRec.loading': 'Vorlagen werden gesucht…',
   'templateRec.title': 'Für dich empfohlen',
   'templateRec.use': 'Diese Vorlage verwenden',

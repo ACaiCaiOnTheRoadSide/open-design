@@ -36,16 +36,20 @@ export function TemplateRecommendTrigger({
 }: Props) {
   const t = useT();
   const label = loading ? t('templateRec.loading') : t('templateRec.button');
-  const hint =
-    !enabled && !loading ? disabledHint ?? t('templateRec.entryHint') : t('templateRec.button');
+  // 悬浮 tips 走全局 od-tooltip 层(TooltipLayer 读 data-tooltip):可用态
+  // 展示使用指引("在输入框描述需求再点击"),置灰态解释原因。title 保留
+  // 作为兜底(disabled 按钮不触发 JS 悬浮事件时仍有原生提示)。
+  const tip =
+    !enabled && !loading ? disabledHint ?? t('templateRec.entryHint') : t('templateRec.hoverTip');
   return (
     <Button
       variant="subtle"
-      className={size === 'compact' ? `${styles.trigger} ${styles.compact}` : styles.trigger}
+      className={`od-tooltip ${size === 'compact' ? `${styles.trigger} ${styles.compact}` : styles.trigger}`}
       disabled={!enabled || loading}
       aria-busy={loading}
-      title={hint}
-      aria-label={hint}
+      data-tooltip={tip}
+      title={tip}
+      aria-label={tip}
       onClick={onClick}
       {...(testid ? { 'data-testid': testid } : {})}
     >

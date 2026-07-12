@@ -722,6 +722,8 @@ export const zhTW: Dict = {
   'designSystemPicker.searchCompactPlaceholder': '搜尋設計系統',
   'templateRec.button': '推薦模板',
   'templateRec.entryHint': '先描述你的需求，再取得模板推薦',
+  'templateRec.emptyToast': '暫時沒有找到匹配的模板，換個描述再試試',
+  'templateRec.hoverTip': '在輸入框裡描述你的需求，點擊即可獲得模板推薦',
   'templateRec.loading': '正在為你挑選模板…',
   'templateRec.title': '為你推薦',
   'templateRec.use': '使用此模板',

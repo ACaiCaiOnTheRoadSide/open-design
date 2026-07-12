@@ -281,6 +281,8 @@ interface Props {
 // push text into the composer without owning its draft state.
 export interface ChatComposerHandle {
   setDraft: (text: string) => void;
+  /** 当前输入框草稿(模板推荐入口用它作为优先的推荐依据)。 */
+  getDraft: () => string;
   restoreDraft: (draft: {
     text: string;
     attachments?: ChatAttachment[];
@@ -947,6 +949,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           editorRef.current?.focus();
           seededRef.current = true;
         },
+        getDraft: () => draftRef.current,
         restoreDraft: ({ text, attachments = [], commentAttachments = [], meta }) => {
           setDraft(text);
           const orderedAttachments = normalizeChatAttachmentOrders(attachments);

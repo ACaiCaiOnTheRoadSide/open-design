@@ -722,6 +722,8 @@ export const it: Dict = {
   'designSystemPicker.searchCompactPlaceholder': 'Cerca design system',
   'templateRec.button': 'Consiglia un modello',
   'templateRec.entryHint': 'Descrivi prima ciò che ti serve per ricevere consigli',
+  'templateRec.emptyToast': 'Nessun modello adatto trovato: prova una descrizione diversa',
+  'templateRec.hoverTip': 'Descrivi la tua esigenza nel campo di testo e clicca per ricevere modelli',
   'templateRec.loading': 'Ricerca modelli…',
   'templateRec.title': 'Consigliato per te',
   'templateRec.use': 'Usa questo modello',

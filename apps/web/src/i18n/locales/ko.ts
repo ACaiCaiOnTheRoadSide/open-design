@@ -722,6 +722,8 @@ export const ko: Dict = {
   'designSystemPicker.searchCompactPlaceholder': '디자인 시스템 검색',
   'templateRec.button': '템플릿 추천',
   'templateRec.entryHint': '먼저 필요한 내용을 입력하면 템플릿을 추천해 드려요',
+  'templateRec.emptyToast': '맞는 템플릿을 찾지 못했어요 — 다른 표현으로 시도해 보세요',
+  'templateRec.hoverTip': '입력창에 필요한 내용을 적고 클릭하면 템플릿을 추천해 드려요',
   'templateRec.loading': '템플릿을 찾는 중…',
   'templateRec.title': '추천',
   'templateRec.use': '이 템플릿 사용',

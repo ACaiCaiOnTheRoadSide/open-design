@@ -1842,12 +1842,21 @@ export function ChatPane({
     return '';
   }, [messages]);
 
-  async function runChatTemplateRecommend(excludeIds?: string[]) {
-    if (!lastUserMessageText || chatRecLoading) return;
+  // 本轮推荐的依据文本:入口点击时解析(草稿优先于最后一条已发消息)并
+  // 固定在这里——"换一个"翻尽后的 excludeIds 重调必须沿用同一段依据,
+  // 否则新草稿/新消息会和旧排除集混在同一次分页里。
+  const chatRecPromptRef = useRef('');
+
+  async function runChatTemplateRecommend(excludeIds?: string[], promptText?: string) {
+    const prompt = promptText ?? chatRecPromptRef.current;
+    if (!prompt || chatRecLoading) return;
     setChatRecLoading(true);
     try {
       const result = await recommendTemplates({
-        prompt: lastUserMessageText,
+        prompt,
+        // 对话内只有 design-template 能换绑(patchProject skillId),而索引
+        // 里过半候选是 plugin 类——多要几条再过滤,避免整批被滤空。
+        topN: 8,
         ...(excludeIds && excludeIds.length > 0 ? { excludeIds } : {}),
       });
       const templatesOnly = result
@@ -1856,6 +1865,8 @@ export function ChatPane({
       if (!result || templatesOnly.length === 0) {
         if (templateRecommendUnavailable()) setChatRecHidden(true);
         setChatRecResult(null);
+        // 静默返回是事故:入口点了必须有反馈,否则用户以为按钮是坏的。
+        onShowToast?.(t('templateRec.emptyToast'));
         return;
       }
       chatRecSeenIdsRef.current = [
@@ -1881,28 +1892,35 @@ export function ChatPane({
 
   // 推荐入口位于 composer 的 staged-context 行(设计系统选择器右侧,经
   // ChatComposer 的 stagedRowAccessory 专用槽),与首页入口同位对齐、常驻
-  // 可发现;结果卡片仍展示在 composer 上方。置灰条件:没有可推荐依据
-  // (还没有用户消息)、流式回复中,或结果卡片已打开——卡片打开时再开新
-  // 一轮会清空"换一个"的已见集、把用户刚拒过的候选原样端回来,翻页动作
-  // 归卡片自己的"换一个"。
+  // 可发现。推荐依据:输入框草稿优先(用户"打完字就点"是主流程),退回
+  // 最后一条已发消息;两者皆空点了就 toast 提示,不静默。置灰只剩两种:
+  // 流式回复中、结果卡片已打开(卡片开着再开新一轮会清空"换一个"的已见
+  // 集、把刚拒过的候选原样端回来,翻页动作归卡片自己的"换一个")。
   const templateRecEntryNode =
     templateRecommendEnabled && projectId && !chatRecHidden ? (
       <TemplateRecommendTrigger
         size="compact"
         data-testid="chat-template-recommend"
-        enabled={Boolean(lastUserMessageText) && !streaming && !chatRecResult}
+        enabled={!streaming && !chatRecResult}
         loading={chatRecLoading}
-        {...(lastUserMessageText ? { disabledHint: t('templateRec.button') } : {})}
+        disabledHint={t('templateRec.button')}
         onClick={() => {
-          // 入口点击 = 开新一轮(重置"换一个"的已见集)。
+          const draft = composerRef.current?.getDraft().trim() ?? '';
+          const promptText = draft || lastUserMessageText;
+          if (!promptText) {
+            onShowToast?.(t('templateRec.entryHint'));
+            return;
+          }
+          // 入口点击 = 开新一轮(重置"换一个"的已见集,固定本轮依据)。
           chatRecSeenIdsRef.current = [];
-          void runChatTemplateRecommend();
+          chatRecPromptRef.current = promptText;
+          void runChatTemplateRecommend(undefined, promptText);
         }}
       />
     ) : null;
 
   const templateRecNode =
-    templateRecommendEnabled && projectId && !streaming && !chatRecHidden && lastUserMessageText && chatRecResult ? (
+    templateRecommendEnabled && projectId && !streaming && !chatRecHidden && chatRecResult ? (
       <TemplateRecommendCard
         key={chatRecRound}
         recommendations={chatRecResult.recommendations}

@@ -722,6 +722,8 @@ export const en: Dict = {
   'designSystemPicker.searchCompactPlaceholder': 'Search design systems',
   'templateRec.button': 'Recommend a template',
   'templateRec.entryHint': 'Describe what you need first, then get recommendations',
+  'templateRec.emptyToast': 'No matching templates found — try describing your need differently',
+  'templateRec.hoverTip': 'Describe your need in the input box, then click to get template picks',
   'templateRec.loading': 'Finding templates…',
   'templateRec.title': 'Recommended for you',
   'templateRec.use': 'Use this template',

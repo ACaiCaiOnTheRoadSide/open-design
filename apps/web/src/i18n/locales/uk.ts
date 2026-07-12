@@ -722,6 +722,8 @@ export const uk: Dict = {
   'designSystemPicker.searchCompactPlaceholder': 'Пошук дизайн-систем',
   'templateRec.button': 'Підібрати шаблон',
   'templateRec.entryHint': 'Спочатку опишіть завдання, щоб отримати підбір шаблонів',
+  'templateRec.emptyToast': 'Відповідних шаблонів не знайдено — спробуйте інший опис',
+  'templateRec.hoverTip': 'Опишіть завдання в полі введення й натисніть, щоб отримати шаблони',
   'templateRec.loading': 'Підбираємо шаблони…',
   'templateRec.title': 'Рекомендовано для вас',
   'templateRec.use': 'Використати цей шаблон',

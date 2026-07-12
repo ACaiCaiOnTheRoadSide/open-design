@@ -722,6 +722,8 @@ export const ja: Dict = {
   'designSystemPicker.searchCompactPlaceholder': 'デザインシステムを検索',
   'templateRec.button': 'テンプレートを提案',
   'templateRec.entryHint': '先にご要望を入力すると、テンプレートを提案します',
+  'templateRec.emptyToast': '該当するテンプレートが見つかりません。別の表現でお試しください',
+  'templateRec.hoverTip': '入力欄にご要望を書いてクリックすると、テンプレートを提案します',
   'templateRec.loading': 'テンプレートを探しています…',
   'templateRec.title': 'おすすめ',
   'templateRec.use': 'このテンプレートを使う',
