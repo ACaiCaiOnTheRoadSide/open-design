@@ -257,6 +257,11 @@ function SkillPluginCandidateCard({
 
 interface Props {
   message: ChatMessage;
+  // App's effective agent id. Used only for the role icon when the message
+  // itself carries no agent (daemon-seeded transcript, or a turn stamped before
+  // config resolved), so the avatar shows the running agent instead of the
+  // hardcoded Claude fallback.
+  fallbackAgentId?: string | null;
   streaming: boolean;
   // Live-only streaming tool-input partials keyed by tool-use id (raw,
   // mid-token JSON accumulated from `input_json_delta`). Used to render an
@@ -348,6 +353,10 @@ interface Props {
 // cheap.
 const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   'message',
+  // Compared so a late config resolve (agentId null → opencode) re-renders the
+  // role icon on already-rendered empty-slot messages instead of leaving them
+  // on the stale Claude fallback.
+  'fallbackAgentId',
   'streaming',
   'showConversationTodoCard',
   'conversationTodoInput',
@@ -408,6 +417,7 @@ export const AssistantMessage = memo(AssistantMessageImpl, areAssistantMessagePr
  */
 function AssistantMessageImpl({
   message,
+  fallbackAgentId = null,
   streaming,
   liveToolInput,
   connectionNotice,
@@ -573,7 +583,7 @@ function AssistantMessageImpl({
     | Extract<AgentEvent, { kind: "usage" }>
     | undefined;
   const roleName = assistantRoleName(message, t);
-  const roleIconId = agentIconId(message.agentId, message.agentName);
+  const roleIconId = agentIconId(message.agentId, message.agentName, fallbackAgentId);
   const hasEmptyResponse = events.some(
     (e) => e.kind === "status" && e.label === "empty_response"
   );

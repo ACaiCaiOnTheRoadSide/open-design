@@ -4791,6 +4791,17 @@ export async function startServer({
         const available = agents.find((agent) => agent.available);
         agentId = available?.id ?? null;
         detectedAgentName = available?.name ?? null;
+        // Pin the detected default back into app-config. The web only reads the
+        // stored `agentId` (mergeDaemonConfig) and has no detection fallback of
+        // its own, so without this its own turns are stamped with an empty
+        // agent and fall back to the hardcoded Claude icon while the daemon-seeded
+        // transcript (which uses this resolver) correctly shows the detected
+        // agent. Writing it once makes both surfaces agree. Only fills an empty
+        // slot; never overrides an explicit user choice.
+        if (agentId) {
+          await writeAppConfig(RUNTIME_DATA_DIR, { agentId }).catch((err) =>
+            console.warn('[brands] pin detected transcript agent failed:', err?.message || err));
+        }
       }
       if (!agentId) return null;
       return {

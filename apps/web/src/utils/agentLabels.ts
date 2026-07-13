@@ -41,6 +41,10 @@ const AGENT_ALIASES: Record<string, string> = {
 export function agentDisplayName(
   agentId?: string | null,
   fallbackName?: string | null,
+  // App's effective agent, used only when the message carries no agent of its
+  // own (empty slot). Keeps daemon-seeded / timing-raced messages from reading
+  // as a different agent than the one actually running.
+  fallbackAgentId?: string | null,
 ): string | null {
   for (const raw of [agentId, fallbackName]) {
     const known = knownAgentLabel(raw);
@@ -48,6 +52,12 @@ export function agentDisplayName(
   }
   for (const raw of [fallbackName, agentId]) {
     const fallback = safeFallbackLabel(raw);
+    if (fallback) return fallback;
+  }
+  if (!agentId && !fallbackName) {
+    const known = knownAgentLabel(fallbackAgentId);
+    if (known) return known;
+    const fallback = safeFallbackLabel(fallbackAgentId);
     if (fallback) return fallback;
   }
   return null;
@@ -59,8 +69,16 @@ export function agentDisplayName(
 export function agentIconId(
   agentId?: string | null,
   fallbackName?: string | null,
+  // App's effective agent id, used only when the message has no agent of its
+  // own. Without it the final fallback is a hardcoded 'claude', which mislabels
+  // empty-slot messages (daemon-seeded transcripts, timing races) — and is
+  // actively wrong in a de-branded build where Claude is never the agent.
+  fallbackAgentId?: string | null,
 ): string {
-  for (const raw of [agentId, fallbackName]) {
+  // Only consult fallbackAgentId when the message has no agent of its own, so a
+  // real-but-unknown agentId is never overridden by the app default.
+  const candidates = agentId || fallbackName ? [agentId, fallbackName] : [agentId, fallbackName, fallbackAgentId];
+  for (const raw of candidates) {
     if (!raw) continue;
     const base = raw.split(' · ')[0]?.trim() || raw;
     const key = normalizeKey(base);
@@ -71,7 +89,7 @@ export function agentIconId(
       if (alias.includes(id)) return id;
     }
   }
-  const fallback = normalizeKey(agentId ?? fallbackName ?? '');
+  const fallback = normalizeKey(agentId ?? fallbackName ?? fallbackAgentId ?? '');
   return fallback || 'claude';
 }
 

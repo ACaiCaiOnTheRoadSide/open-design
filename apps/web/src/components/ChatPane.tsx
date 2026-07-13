@@ -2357,6 +2357,7 @@ export function ChatPane({
               ) : null}
               <ChatRows
                 messages={displayMessages}
+                fallbackAgentId={config?.agentId ?? null}
                 streaming={streaming}
                 liveToolInput={liveToolInput}
                 connectionNotices={connectionNotices}
@@ -2800,6 +2801,7 @@ function ChatRows({
   t,
   onOpenQuestions,
   scrollContainerRef,
+  fallbackAgentId,
 }: {
   messages: ChatMessage[];
   streaming: boolean;
@@ -2849,6 +2851,9 @@ function ChatRows({
   t: TranslateFn;
   onOpenQuestions?: (request?: QuestionFormOpenRequest) => void;
   scrollContainerRef: MutableRefObject<HTMLDivElement | null>;
+  // App's effective agent id (from config), used as the role-icon fallback for
+  // messages that carry no agent of their own.
+  fallbackAgentId?: string | null;
 }) {
   const conversationTodoInput = useMemo(
     () => latestTodoWriteInputForPinnedCard(messages),
@@ -2911,6 +2916,7 @@ function ChatRows({
     return (
       <AssistantMessage
         message={m}
+        fallbackAgentId={fallbackAgentId}
         streaming={messageStreaming}
         // Only the streaming row consumes live tool input. Non-streaming rows
         // get a stable `undefined`, so adding `liveToolInput` to the memo
