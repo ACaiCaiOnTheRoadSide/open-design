@@ -1557,17 +1557,36 @@ a.avatar-item:visited {
   outline: none;
 }
 
-/* -------- Theme quick menu ------------------------------------------ */
-/* Appearance-only control pinned to the viewport's top-right corner
-   (ThemeQuickMenu.tsx). Owns its class names on purpose: the SaaS
-   white-label build hides `.entry-main__topbar` and `.settings-icon-btn`,
-   and this control must survive that pass. */
-.theme-quick-menu {
+/* -------- Quick entry cluster (top-right) ---------------------------- */
+/* Viewport top-right control cluster: feedback entry + theme quick menu
+   (App.tsx). Owns its class names on purpose: the SaaS white-label build
+   hides `.entry-main__topbar` and `.settings-icon-btn`, and these controls
+   must survive that pass. Children are laid out by the cluster (no
+   per-child fixed offsets); .workspace-tabs-chrome reserves matching
+   right padding so overflowing tabs / the sticky "+" button never slide
+   underneath. */
+.quick-entry-cluster {
   position: fixed;
   top: 3px;
   right: 8px;
   z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   -webkit-app-region: no-drag;
+}
+.theme-quick-menu {
+  /* Anchor for .theme-quick-menu__popover (absolute, right:0). */
+  position: relative;
+}
+/* Reserve the cluster's footprint in the tabs chrome so overflowing tabs
+   and the sticky "+" button never slide underneath the cluster's click
+   targets. Pinned as a longhand with [data-client-type] (always present on
+   .workspace-shell) for higher specificity: both the base chrome rule above
+   and the project-view override in viewer/routines.css set the `padding`
+   shorthand, and routines.css loads after this file. */
+.workspace-shell[data-client-type] .workspace-tabs-chrome.app-chrome-header {
+  padding-right: 72px;
 }
 .theme-quick-menu__trigger {
   width: 28px;
@@ -1606,4 +1625,29 @@ a.avatar-item:visited {
 }
 .theme-quick-menu__swatches {
   padding: 0 2px;
+}
+
+/* -------- Feedback quick entry --------------------------------------- */
+/* 问题反馈入口(FeedbackQuickButton.tsx),quick-entry-cluster 内、主题菜单
+   左侧。弹窗内部样式在组件旁 FeedbackQuickButton.module.css。 */
+.feedback-quick-entry {
+  position: relative;
+}
+.feedback-quick-entry__trigger {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 100ms var(--ease-out), color 100ms var(--ease-out);
+}
+.feedback-quick-entry__trigger:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
 }

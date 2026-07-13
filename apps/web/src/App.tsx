@@ -29,6 +29,7 @@ import { ProjectView } from './components/ProjectView';
 import { TooltipLayer } from './components/TooltipLayer';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
 import { ThemeQuickMenu } from './components/ThemeQuickMenu';
+import { FeedbackQuickButton } from './components/FeedbackQuickButton';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -2292,11 +2293,14 @@ function AppInner() {
           projects={projects}
           onboardingCompleted={config.onboardingCompleted === true}
         />
-        <ThemeQuickMenu
-          config={config}
-          onThemeChange={handleThemeChange}
-          onAccentColorChange={handleAccentColorChange}
-        />
+        <div className="quick-entry-cluster">
+          <FeedbackQuickButton />
+          <ThemeQuickMenu
+            config={config}
+            onThemeChange={handleThemeChange}
+            onAccentColorChange={handleAccentColorChange}
+          />
+        </div>
         <div className="workspace-shell__body">
           {appMain}
         </div>
