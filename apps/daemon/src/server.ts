@@ -239,6 +239,8 @@ import { createDesignSystemGenerationJobStore } from './design-systems/generatio
 import { createDesignSystemServerServices } from './design-systems/server-services.js';
 import { prepareDesignTokenContractRebuild } from './design-systems/token-contract-rebuild.js';
 import { registerBrandRoutes } from './brand-routes.js';
+// 品牌归属 backfill 用:扫存量品牌目录 + 读 meta/brand.json 回溯归属。
+import { listBrandIds, readBrand as readBrandJson, readMeta as readBrandMeta } from './brands/store.js';
 import {
   applyDiffReviewDecisionToCwd,
   applyPlugin,
@@ -477,6 +479,7 @@ import { ArtifactPublicationBlockedError } from './artifacts/publication-guard.j
 import {
   appendMessageAgentEvent,
   appendMessageStatusEvent,
+  backfillBrandRow,
   backfillDesignSystemRow,
   deleteConversation,
   deletePreviewComment,
@@ -490,8 +493,10 @@ import {
   getProject,
   getProjectOwnerUnscoped,
   getTemplate,
+  insertBrandRow,
   insertConversation,
   insertDesignSystem,
+  isBrandRowOwned,
   insertMessageTokenUsage,
   insertProject,
   insertRoutine,
@@ -500,7 +505,9 @@ import {
   insertTemplate,
   findTemplateByNameAndProject,
   updateTemplate,
+  listAllBrandRowIds,
   listAllDesignSystemIds,
+  listBrandRowIds,
   listDesignSystemRows,
   listProjectsAwaitingInput,
   listConversations,
@@ -519,7 +526,9 @@ import {
   deleteRoutine as dbDeleteRoutine,
   openDatabase,
   setTabs,
+  softDeleteBrandRow,
   softDeleteDesignSystem,
+  touchBrandRow,
   touchDesignSystem,
   updateConversation,
   updatePreviewCommentStatus,
@@ -908,6 +917,14 @@ const DESIGN_SYSTEM_SYNC_PREFIX = 'dsys--';
 function markUserDesignSystemDirty(dirId: string): void {
   if (!dirId) return;
   markSyncDirty(`${DESIGN_SYSTEM_SYNC_PREFIX}${dirId}`);
+}
+
+// 品牌目录的 sync 命名空间:`brnd--<brandId>` → BRANDS_DIR/<brandId>。
+const BRAND_SYNC_PREFIX = 'brnd--';
+
+function markBrandDirty(brandId: string): void {
+  if (!brandId) return;
+  markSyncDirty(`${BRAND_SYNC_PREFIX}${brandId}`);
 }
 
 /** 用户设计体系目录落盘后登记归属行(租户/创建者取调用点的 ALS 上下文,
@@ -3781,6 +3798,28 @@ export async function startServer({
   } catch (err) {
     console.warn('[design-systems] legacy backfill failed:', err);
   }
+  // 存量品牌 backfill:同上,归属从品牌的提取项目行(meta.projectId,
+  // 兜底 brand-<id>)回溯,回溯不到归 __legacy__。
+  try {
+    const registeredBrandIds = await listAllBrandRowIds(db);
+    for (const brandId of listBrandIds(BRANDS_DIR)) {
+      if (registeredBrandIds.has(brandId)) continue;
+      const meta = readBrandMeta(BRANDS_DIR, brandId);
+      const backingProjectId = meta?.projectId || `brand-${brandId}`;
+      const owner = await getProjectOwnerUnscoped(db, backingProjectId);
+      const brandName = readBrandJson(BRANDS_DIR, brandId)?.name;
+      await backfillBrandRow(db, {
+        id: brandId,
+        name: typeof brandName === 'string' && brandName ? brandName : brandId,
+        tenantId: owner?.tenantId ?? LEGACY_TENANT,
+        creatorId: owner?.creatorId ?? null,
+        createdAt: typeof meta?.createdAt === 'number' ? meta.createdAt : Date.now(),
+        updatedAt: typeof meta?.updatedAt === 'number' ? meta.updatedAt : Date.now(),
+      });
+    }
+  } catch (err) {
+    console.warn('[brands] legacy backfill failed:', err);
+  }
   // Restore paired browser-extension origins into the in-memory allowlist the
   // /api origin middleware above consults, so a paired clipper survives daemon
   // restarts without re-pairing.
@@ -4055,9 +4094,11 @@ export async function startServer({
     hasActiveRun: (projectId) =>
       design.runs.list({ projectId, status: 'active' }).length > 0,
   });
-  // 用户设计体系目录同样以 OSS 为准、本地盘为缓存,复用同一套 manifest+blob
-  // 通道(sync id `dsys--<dirId>`)。不参与冷淘汰——列表直接读盘,淘汰会缺项。
+  // 用户设计体系/品牌目录同样以 OSS 为准、本地盘为缓存,复用同一套
+  // manifest+blob 通道(sync id `dsys--<dirId>` / `brnd--<brandId>`)。
+  // 都不参与冷淘汰——列表直接读盘,淘汰会缺项。
   registerSyncNamespace(DESIGN_SYSTEM_SYNC_PREFIX, USER_DESIGN_SYSTEMS_DIR);
+  registerSyncNamespace(BRAND_SYNC_PREFIX, BRANDS_DIR);
   if (manifestSyncEnabled()) {
     const cacheTtlHours = Number(process.env.OD_PROJECT_CACHE_TTL_HOURS || '72') || 72;
     setInterval(() => {
@@ -4071,6 +4112,11 @@ export async function startServer({
         for (const dirId of aliveIds) {
           await hydrateProjectFromManifest(`${DESIGN_SYSTEM_SYNC_PREFIX}${dirId}`, { ifMissing: true })
             .catch((err) => console.error(`[design-systems] hydrate ${dirId} failed:`, err?.message || err));
+        }
+        const aliveBrandIds = await listAllBrandRowIds(db, { aliveOnly: true });
+        for (const brandId of aliveBrandIds) {
+          await hydrateProjectFromManifest(`${BRAND_SYNC_PREFIX}${brandId}`, { ifMissing: true })
+            .catch((err) => console.error(`[brands] hydrate ${brandId} failed:`, err?.message || err));
         }
       } catch (err) {
         console.error('[design-systems] startup hydrate sweep failed:', err);
@@ -4086,6 +4132,15 @@ export async function startServer({
           for (const entry of dirents) {
             if (!entry.isDirectory()) continue;
             markUserDesignSystemDirty(entry.name);
+          }
+        } catch {
+          // 目录还没建时静默。
+        }
+        try {
+          const brandDirents = await fsp.readdir(BRANDS_DIR, { withFileTypes: true });
+          for (const entry of brandDirents) {
+            if (!entry.isDirectory()) continue;
+            markBrandDirty(entry.name);
           }
         } catch {
           // 目录还没建时静默。
@@ -4662,6 +4717,26 @@ export async function startServer({
         ? designSystemId.slice('user:'.length)
         : designSystemId;
       await softDeleteDesignSystem(db, dirId);
+    },
+    // 品牌本体的归属登记:列表按租户过滤、按 id 访问验归属(顺手 OSS
+    // hydrate 自愈)、删除软删,与设计体系同一套口径。
+    brandRegistration: {
+      register: async ({ id, name }) => {
+        await insertBrandRow(db, { id, name: name || id });
+        markBrandDirty(id);
+      },
+      allowedIds: () => listBrandRowIds(db),
+      isOwned: async (id) => {
+        const owned = await isBrandRowOwned(db, id);
+        if (owned && manifestSyncEnabled()) {
+          await hydrateProjectFromManifest(`${BRAND_SYNC_PREFIX}${id}`, { ifMissing: true })
+            .catch((err) => console.error(`[brands] hydrate ${id} failed:`, err?.message || err));
+        }
+        return owned;
+      },
+      touch: (id, name) => touchBrandRow(db, id, name !== undefined ? { name } : undefined),
+      softDelete: (id) => softDeleteBrandRow(db, id),
+      markDirty: (id) => markBrandDirty(id),
     },
     resolveTranscriptAgent: async () => {
       const config = await readAppConfig(RUNTIME_DATA_DIR);

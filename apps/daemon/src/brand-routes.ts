@@ -35,7 +35,7 @@ import {
   resolveBrandLogoPath,
   startBrandExtraction,
 } from './brands/index.js';
-import { patchMeta } from './brands/store.js';
+import { patchMeta, readMeta } from './brands/store.js';
 import type { BrandDetailResponse, BrandMeta, BrandSummary } from '@open-design/contracts';
 
 export interface BrandRoutesDeps {
@@ -78,6 +78,22 @@ export interface BrandRoutesDeps {
   /** SaaS 软删覆写:删品牌时对其设计体系只软删归属行、保留文件,
    *  替代默认的硬删目录。 */
   removeDesignSystem?: (designSystemId: string) => Promise<unknown>;
+  /** SaaS 多租户:品牌归属登记表(daemon PG brands 表)。不传(上游/单租户
+   *  形态)时列表不过滤、按 id 访问不验归属、删除走硬删目录的原行为。 */
+  brandRegistration?: {
+    /** 品牌目录落盘后登记归属行(租户/创建者取 ALS)。 */
+    register: (entry: { id: string; name?: string }) => Promise<void>;
+    /** 当前租户存活品牌 id 集(列表过滤)。 */
+    allowedIds: () => Promise<Set<string>>;
+    /** 归属闸:属于当前租户且未删(宿主实现顺手做 OSS hydrate 自愈)。 */
+    isOwned: (id: string) => Promise<boolean>;
+    /** 改名/内容更新后刷新行(name 可选)。 */
+    touch: (id: string, name?: string) => Promise<void>;
+    /** 软删归属行;false = 当前租户名下无此行(路由回 404)。 */
+    softDelete: (id: string) => Promise<boolean>;
+    /** 品牌目录有写动作,标脏推 OSS。 */
+    markDirty: (id: string) => void;
+  };
 }
 
 const LOGO_EXT_PRIORITY = ['.svg', '.png', '.webp', '.jpg', '.jpeg', '.gif', '.ico'];
@@ -87,12 +103,24 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   const { brandsRoot, userDesignSystemsRoot, projectsRoot, skillsRoot, dataDir, db, randomId } = deps;
   const activeProgrammaticBrandExtractions = new Map<string, AbortController>();
 
+  /** 多租户归属闸:按 id 访问品牌的路由必须先过这道;未配注册表时放行。 */
+  async function isBrandOwned(id: string): Promise<boolean> {
+    if (!deps.brandRegistration) return true;
+    return deps.brandRegistration.isOwned(id);
+  }
+
   // GET /api/brands — list every stored brand as a summary.
+  // 多租户形态下只展示当前租户登记且未软删的品牌。
   app.get('/api/brands', async (_req: Request, res: Response) => {
     try {
       const statusContext = await createBrandStatusContext(deps);
+      let summaries = listBrandSummaries(brandsRoot);
+      if (deps.brandRegistration) {
+        const allowed = await deps.brandRegistration.allowedIds();
+        summaries = summaries.filter((summary) => allowed.has(summary.meta.id));
+      }
       res.json({
-        brands: listBrandSummaries(brandsRoot).map((summary) =>
+        brands: summaries.map((summary) =>
           reconcileBrandSummaryStatus(brandsRoot, summary, statusContext),
         ),
       });
@@ -141,6 +169,9 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       const transcriptAgent = await deps.resolveTranscriptAgent?.().catch(() => null);
       if (transcriptAgent) startOptions.transcriptAgent = transcriptAgent;
       const result = await startBrandExtraction(startOptions);
+      // 目录已落盘,立刻登记归属行——列表按注册表过滤,不登记这个品牌
+      // 对发起租户自己都不可见。名字后续 finalize 时用 brand.json 的刷新。
+      await deps.brandRegistration?.register({ id: result.id });
       const backgroundExtraction = backgroundExtractionRef.current;
       if (backgroundExtraction) {
         activeProgrammaticBrandExtractions.set(result.id, programmaticAbortController);
@@ -167,9 +198,13 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   // programmatic-first pass. This mirrors chat Stop for the synthetic transcript
   // row: the web marks the message canceled locally, while the daemon aborts
   // pending harvest/finalize work and moves the brand out of extracting.
-  app.post('/api/brands/:id/cancel-extraction', (req: Request, res: Response) => {
+  app.post('/api/brands/:id/cancel-extraction', async (req: Request, res: Response) => {
     const id = String(req.params.id);
     try {
+      if (!(await isBrandOwned(id))) {
+        res.status(404).json({ error: 'brand not found' });
+        return;
+      }
       const detail = readBrandDetail(brandsRoot, id);
       if (!detail) {
         res.status(404).json({ error: 'brand not found' });
@@ -211,6 +246,10 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
         ? String(req.body.locale)
         : undefined;
     try {
+      if (!(await isBrandOwned(id))) {
+        res.status(404).json({ error: 'brand not found' });
+        return;
+      }
       const renderOptions: Parameters<typeof renderBrandPreviewIntoProject>[0] = {
         id,
         brandsRoot,
@@ -220,6 +259,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       if (projectId) renderOptions.projectId = projectId;
       if (locale) renderOptions.locale = locale;
       const result = await renderBrandPreviewIntoProject(renderOptions);
+      deps.brandRegistration?.markDirty(id);
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -242,6 +282,10 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
         ? String(req.body.locale)
         : undefined;
     try {
+      if (!(await isBrandOwned(id))) {
+        res.status(404).json({ error: 'brand not found' });
+        return;
+      }
       const finalizeOptions: Parameters<typeof finalizeBrand>[0] = {
         id,
         brandsRoot,
@@ -256,6 +300,12 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       if (randomId) finalizeOptions.randomId = randomId;
       if (deps.onDesignSystemRegistered) finalizeOptions.onDesignSystemRegistered = deps.onDesignSystemRegistered;
       const result = await finalizeBrand(finalizeOptions);
+      // finalize 写了 brand.json/BRAND.md/资产:刷新行名(取品牌真名)并标脏推 OSS。
+      if (deps.brandRegistration) {
+        const brandName = readBrandDetail(brandsRoot, id)?.brand?.name;
+        await deps.brandRegistration.touch(id, typeof brandName === 'string' && brandName ? brandName : undefined);
+        deps.brandRegistration.markDirty(id);
+      }
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -278,6 +328,10 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       return;
     }
     try {
+      if (!(await isBrandOwned(id))) {
+        res.status(404).json({ error: 'brand not found' });
+        return;
+      }
       const meta = readBrandDetail(brandsRoot, id)?.meta;
       if (!meta) {
         res.status(404).json({ error: 'brand not found' });
@@ -306,6 +360,11 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
           .json({ error: 'Could not extract a design system from the provided page.' });
         return;
       }
+      if (deps.brandRegistration) {
+        const brandName = readBrandDetail(brandsRoot, id)?.brand?.name;
+        await deps.brandRegistration.touch(id, typeof brandName === 'string' && brandName ? brandName : undefined);
+        deps.brandRegistration.markDirty(id);
+      }
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -316,6 +375,10 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   // GET /api/brands/:id — full detail (meta + brand + guide). 404 if missing.
   app.get('/api/brands/:id', async (req: Request, res: Response) => {
     try {
+      if (!(await isBrandOwned(String(req.params.id)))) {
+        res.status(404).json({ error: 'brand not found' });
+        return;
+      }
       const detail = readBrandDetail(brandsRoot, String(req.params.id));
       if (!detail) {
         res.status(404).json({ error: 'brand not found' });
@@ -328,12 +391,28 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   });
 
   // DELETE /api/brands/:id — remove the brand and its registered design system.
+  // 多租户形态全软删:品牌行 + 关联设计体系行都只置 deleted_at,目录文件保留;
+  // 上游形态维持原硬删目录行为。
   app.delete('/api/brands/:id', async (req: Request, res: Response) => {
+    const id = String(req.params.id);
     try {
+      if (deps.brandRegistration) {
+        const ok = await deps.brandRegistration.softDelete(id);
+        if (!ok) {
+          res.status(404).json({ error: 'brand not found' });
+          return;
+        }
+        const designSystemId = readMeta(brandsRoot, id)?.designSystemId;
+        if (designSystemId && deps.removeDesignSystem) {
+          await deps.removeDesignSystem(designSystemId).catch(() => {});
+        }
+        res.json({ ok: true });
+        return;
+      }
       await removeBrand(
         brandsRoot,
         userDesignSystemsRoot,
-        String(req.params.id),
+        id,
         deps.removeDesignSystem ? { removeDesignSystem: deps.removeDesignSystem } : undefined,
       );
       res.json({ ok: true });
@@ -344,6 +423,10 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
 
   // GET /api/brands/:id/logo — serve the primary logo image. 404 if none.
   app.get('/api/brands/:id/logo', async (req: Request, res: Response) => {
+    if (!(await isBrandOwned(String(req.params.id)))) {
+      res.status(404).type('text/plain').send('not found');
+      return;
+    }
     try {
       const id = String(req.params.id);
       const logoPath =

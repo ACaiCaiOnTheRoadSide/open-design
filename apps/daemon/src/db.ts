@@ -738,6 +738,96 @@ export async function getProjectOwnerUnscoped(
   return { tenantId: String(item.tenantId), creatorId: item.creatorId ?? null };
 }
 
+// ---------- brands ----------
+// 品牌归属登记(文件本体在 BRANDS_DIR,见 20260713000002 迁移头注释)。
+// 与 design_systems 同一套语义:按 ALS 租户过滤、软删、creator 仅归因。
+
+export async function insertBrandRow(
+  db: SqliteDb,
+  entry: { id: string; name: string; createdAt?: number },
+): Promise<void> {
+  const now = Date.now();
+  await db.prepare(
+    `INSERT INTO brands (id, tenant_id, creator_id, name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO NOTHING`,
+  ).run(entry.id, currentTenantId(), currentUserId() ?? null, entry.name, entry.createdAt ?? now, now);
+}
+
+/** 当前租户存活品牌 id 集(列表过滤用)。 */
+export async function listBrandRowIds(db: SqliteDb): Promise<Set<string>> {
+  const tenantId = currentTenantId();
+  const items = (await db
+    .prepare(`SELECT id FROM brands WHERE tenant_id = ? AND deleted_at IS NULL`)
+    .all(tenantId)) as DbRow[];
+  return new Set(items.map((r) => String(r.id)));
+}
+
+/** 品牌是否属于当前租户且未删(详情/logo/finalize/删除的归属闸)。 */
+export async function isBrandRowOwned(db: SqliteDb, id: string): Promise<boolean> {
+  const tenantId = currentTenantId();
+  const item = await db
+    .prepare(`SELECT 1 FROM brands WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`)
+    .get(id, tenantId);
+  return Boolean(item);
+}
+
+export async function touchBrandRow(db: SqliteDb, id: string, patch?: { name?: string }): Promise<void> {
+  const tenantId = currentTenantId();
+  if (patch?.name !== undefined) {
+    await db.prepare(
+      `UPDATE brands SET name = ?, updated_at = ?
+        WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+    ).run(patch.name, Date.now(), id, tenantId);
+    return;
+  }
+  await db.prepare(
+    `UPDATE brands SET updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+  ).run(Date.now(), id, tenantId);
+}
+
+/** 软删:行与磁盘文件保留。返回是否删到了行(跨租户/已删/不存在 = false → 404)。 */
+export async function softDeleteBrandRow(db: SqliteDb, id: string): Promise<boolean> {
+  const tenantId = currentTenantId();
+  const result = await db.prepare(
+    `UPDATE brands SET deleted_at = ?
+      WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+  ).run(Date.now(), id, tenantId);
+  return result.changes > 0;
+}
+
+/** 不带租户过滤的全量品牌 id 集;aliveOnly 供启动 OSS 回灌。 */
+export async function listAllBrandRowIds(
+  db: SqliteDb,
+  opts?: { aliveOnly?: boolean },
+): Promise<Set<string>> {
+  const sql = opts?.aliveOnly
+    ? `SELECT id FROM brands WHERE deleted_at IS NULL`
+    : `SELECT id FROM brands`;
+  const items = (await db.prepare(sql).all()) as DbRow[];
+  return new Set(items.map((r) => String(r.id)));
+}
+
+/** 启动 backfill 专用:显式租户/创建者,不走 ALS。幂等。 */
+export async function backfillBrandRow(
+  db: SqliteDb,
+  entry: {
+    id: string;
+    name: string;
+    tenantId: string;
+    creatorId: string | null;
+    createdAt: number;
+    updatedAt: number;
+  },
+): Promise<void> {
+  await db.prepare(
+    `INSERT INTO brands (id, tenant_id, creator_id, name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO NOTHING`,
+  ).run(entry.id, entry.tenantId, entry.creatorId, entry.name, entry.createdAt, entry.updatedAt);
+}
+
 // ---------- templates ----------
 
 export async function listTemplates(db: SqliteDb) {
