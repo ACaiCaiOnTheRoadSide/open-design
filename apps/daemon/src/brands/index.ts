@@ -996,13 +996,16 @@ async function finalizeBrandCore(opts: FinalizeBrandCoreOptions): Promise<BrandF
     },
   });
   const designSystemId = summary.id;
+  // 先把品牌资产同步进设计体系目录(真正的产品产物),再登记归属行。若登记因
+  // 瞬时库错抛出,文件也已就位(产品可用、可被 backfill / 重 finalize 补登记);
+  // 且登记里的 markDirty 此刻目录已完整,不会把半成品推到 OSS。
+  syncBrandSystemToUserDesignSystem(userDesignSystemsRoot, designSystemId, brandsRoot, id, body);
   if (opts.onDesignSystemRegistered) {
     await opts.onDesignSystemRegistered({
       id: summary.id,
       ...(typeof summary.title === 'string' ? { title: summary.title } : {}),
     });
   }
-  syncBrandSystemToUserDesignSystem(userDesignSystemsRoot, designSystemId, brandsRoot, id, body);
   throwIfProgrammaticExtractionAborted(opts.abortSignal);
 
   const finalizeMetadata: ProjectMetadata = {

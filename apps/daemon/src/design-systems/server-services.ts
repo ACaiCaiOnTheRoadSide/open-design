@@ -61,6 +61,8 @@ export interface DesignSystemRegistry {
   allowedDirIds: () => Promise<Set<string>>;
   /** 单个目录 id 是否属于当前租户(未软删)。 */
   isAllowed: (dirId: string) => Promise<boolean>;
+  /** 把这些目录 id 里盘上缺失的从 OSS 回灌(冷盘自愈)。可选:不实现则不回灌。 */
+  ensureDirsPresent?: (dirIds: string[]) => Promise<void>;
 }
 
 export function createDesignSystemServerServices({
@@ -152,6 +154,26 @@ export function createDesignSystemServerServices({
     }
     if (registry) {
       const allowed = await registry.allowedDirIds();
+      // 冷盘自愈:pod 重建后盘是空的,list 取「盘 ∩ 登记表」会把租户自有的存活
+      // 体系整体漏掉。先把 allowed 里当前不在盘上的按需从 OSS 回灌,再重列一次,
+      // 消除自有数据在后台回灌完成前的消失窗口。缺失集通常为空(热盘 → 零开销)。
+      if (registry.ensureDirsPresent) {
+        const present = new Set(installed.map((s) => userDirIdOf(String(s.id))));
+        const missing = [...allowed].filter((id) => !present.has(id));
+        if (missing.length) {
+          await registry.ensureDirsPresent(missing);
+          try {
+            installed = await designSystems.listDesignSystems(paths.USER_DESIGN_SYSTEMS_DIR, {
+              idPrefix: 'user:',
+              source: 'user',
+              isEditable: true,
+              defaultStatus: 'draft',
+            });
+          } catch {
+            // 回灌后仍读不到目录就维持原样。
+          }
+        }
+      }
       installed = installed.filter((s) => allowed.has(userDirIdOf(String(s.id))));
     }
     const seen = new Set(builtIn.map((s) => s.id));

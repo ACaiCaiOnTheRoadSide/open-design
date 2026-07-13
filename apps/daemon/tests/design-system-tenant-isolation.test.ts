@@ -8,7 +8,13 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startServer } from '../src/server.js';
-import { openDatabase } from '../src/db.js';
+import {
+  getDesignSystemRow,
+  insertDesignSystem,
+  openDatabase,
+  softDeleteDesignSystem,
+} from '../src/db.js';
+import { runWithTenant } from '../src/multitenant.js';
 
 const TENANT_A = `tenant-a-${randomUUID().slice(0, 8)}`;
 const TENANT_B = `tenant-b-${randomUUID().slice(0, 8)}`;
@@ -131,6 +137,39 @@ describe('design system tenant isolation', () => {
       headers: headersFor(TENANT_A),
     });
     expect(again.status).toBe(404);
+  });
+
+  it('re-registering a soft-deleted id revives it (clears deleted_at), same tenant', async () => {
+    // 品牌重新 finalize 会复用同一 designSystemId,走 insertDesignSystem 撞
+    // 已软删行。ON CONFLICT DO NOTHING 会让 deleted_at 残留、体系永不可见;
+    // 现在同租户复用应复活并刷新 name。
+    const db = await openDatabase(process.cwd());
+    const id = `revive-${randomUUID().slice(0, 6)}`;
+    await runWithTenant(TENANT_A, () => insertDesignSystem(db, { id, name: 'V1', source: 'created' }));
+    await runWithTenant(TENANT_A, () => softDeleteDesignSystem(db, id));
+    expect(await runWithTenant(TENANT_A, () => getDesignSystemRow(db, id))).toBeNull();
+
+    const revived = await runWithTenant(TENANT_A, () =>
+      insertDesignSystem(db, { id, name: 'V2', source: 'brand' }));
+    expect(revived).not.toBeNull();
+    expect(revived?.name).toBe('V2');
+    const row = await runWithTenant(TENANT_A, () => getDesignSystemRow(db, id));
+    expect(row).not.toBeNull();
+  });
+
+  it('re-registering an id owned by another tenant does not steal it', async () => {
+    // 跨租户撞 id:B 的 insert 不能改到 A 的行(WHERE tenant 限定)。A 保持原样,
+    // B 视角看不到(insertDesignSystem 返回 null)。
+    const db = await openDatabase(process.cwd());
+    const id = `nosteal-${randomUUID().slice(0, 6)}`;
+    await runWithTenant(TENANT_A, () => insertDesignSystem(db, { id, name: 'OwnedByA', source: 'created' }));
+
+    const bView = await runWithTenant(TENANT_B, () =>
+      insertDesignSystem(db, { id, name: 'StolenByB', source: 'created' }));
+    expect(bView).toBeNull(); // B 看不到这行
+
+    const aRow = await runWithTenant(TENANT_A, () => getDesignSystemRow(db, id));
+    expect(aRow?.name).toBe('OwnedByA'); // A 的行没被 B 改动
   });
 
   it('keeps built-in design systems visible to every tenant', async () => {

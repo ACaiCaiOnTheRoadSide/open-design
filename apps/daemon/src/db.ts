@@ -631,10 +631,21 @@ export async function insertDesignSystem(
 ): Promise<DesignSystemRow | null> {
   const now = Date.now();
   const createdAt = entry.createdAt ?? now;
+  // ON CONFLICT DO UPDATE(限同租户)复活软删行:同一 id 被重新登记(品牌
+  // 重新 finalize 复用 designSystemId、或删后再建)时清掉 deleted_at 并刷新
+  // name/source/updated_at,否则 DO NOTHING 会让 deleted_at 永远留着、重生的
+  // 体系永不可见。WHERE 限定同租户——冲突行属别的租户时不动它(跨租户占用
+  // 由 slug 分配的 designSystemIdExistsUnscoped 提前挡掉,这里是纵深防御)。
   await db.prepare(
     `INSERT INTO design_systems (id, tenant_id, creator_id, name, source, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET
+       deleted_at = NULL,
+       name = excluded.name,
+       source = excluded.source,
+       updated_at = excluded.updated_at,
+       creator_id = COALESCE(design_systems.creator_id, excluded.creator_id)
+     WHERE design_systems.tenant_id = excluded.tenant_id`,
   ).run(entry.id, currentTenantId(), currentUserId() ?? null, entry.name, entry.source, createdAt, now);
   return getDesignSystemRow(db, entry.id);
 }
@@ -705,6 +716,14 @@ export async function listAllDesignSystemIds(
   return new Set(items.map((r) => String(r.id)));
 }
 
+/** 全局(跨租户、含已软删)判某设计体系 dir id 是否已被占用。slug 分配用:
+ *  盘是缓存、OSS 才是真相,空盘时不能只 stat 本地就发号,否则两个租户会拿到
+ *  同一 id 撞进同一 OSS 键。含软删——软删目录/blob 可能还在,复用会污染。 */
+export async function designSystemIdExistsUnscoped(db: SqliteDb, id: string): Promise<boolean> {
+  const item = await db.prepare(`SELECT 1 FROM design_systems WHERE id = ?`).get(id);
+  return Boolean(item);
+}
+
 /** 启动 backfill 专用:显式传租户/创建者(从关联 workspace 项目回溯到的
  *  归属),不走 ALS——启动上下文只有 LEGACY_TENANT。幂等(ON CONFLICT 忽略)。 */
 export async function backfillDesignSystemRow(
@@ -747,10 +766,17 @@ export async function insertBrandRow(
   entry: { id: string; name: string; createdAt?: number },
 ): Promise<void> {
   const now = Date.now();
+  // 同 design_systems:ON CONFLICT DO UPDATE(限同租户)复活软删行,避免重新
+  // 登记同 id 时 deleted_at 残留导致品牌永不可见。跨租户冲突行不动。
   await db.prepare(
     `INSERT INTO brands (id, tenant_id, creator_id, name, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET
+       deleted_at = NULL,
+       name = excluded.name,
+       updated_at = excluded.updated_at,
+       creator_id = COALESCE(brands.creator_id, excluded.creator_id)
+     WHERE brands.tenant_id = excluded.tenant_id`,
   ).run(entry.id, currentTenantId(), currentUserId() ?? null, entry.name, entry.createdAt ?? now, now);
 }
 

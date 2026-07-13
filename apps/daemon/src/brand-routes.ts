@@ -35,7 +35,7 @@ import {
   resolveBrandLogoPath,
   startBrandExtraction,
 } from './brands/index.js';
-import { patchMeta, readMeta } from './brands/store.js';
+import { deleteBrandDir, patchMeta, readMeta } from './brands/store.js';
 import type { BrandDetailResponse, BrandMeta, BrandSummary } from '@open-design/contracts';
 
 export interface BrandRoutesDeps {
@@ -93,6 +93,8 @@ export interface BrandRoutesDeps {
     softDelete: (id: string) => Promise<boolean>;
     /** 品牌目录有写动作,标脏推 OSS。 */
     markDirty: (id: string) => void;
+    /** 把这些品牌 id 里盘上缺失的从 OSS 回灌(冷盘 list 自愈)。 */
+    ensureIdsPresent: (ids: string[]) => Promise<void>;
   };
 }
 
@@ -117,6 +119,14 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       let summaries = listBrandSummaries(brandsRoot);
       if (deps.brandRegistration) {
         const allowed = await deps.brandRegistration.allowedIds();
+        // 冷盘自愈:pod 重建后盘空,存活品牌会整体从列表漏掉。先把 allowed 里
+        // 不在盘上的按需回灌再重列,消除自有品牌短暂消失窗口(热盘=零开销)。
+        const present = new Set(summaries.map((summary) => summary.meta.id));
+        const missing = [...allowed].filter((id) => !present.has(id));
+        if (missing.length) {
+          await deps.brandRegistration.ensureIdsPresent(missing);
+          summaries = listBrandSummaries(brandsRoot);
+        }
         summaries = summaries.filter((summary) => allowed.has(summary.meta.id));
       }
       res.json({
@@ -169,9 +179,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       const transcriptAgent = await deps.resolveTranscriptAgent?.().catch(() => null);
       if (transcriptAgent) startOptions.transcriptAgent = transcriptAgent;
       const result = await startBrandExtraction(startOptions);
-      // 目录已落盘,立刻登记归属行——列表按注册表过滤,不登记这个品牌
-      // 对发起租户自己都不可见。名字后续 finalize 时用 brand.json 的刷新。
-      await deps.brandRegistration?.register({ id: result.id });
+      // 先挂 AbortController,保证即便随后登记失败也能取消已启动的后台提取。
       const backgroundExtraction = backgroundExtractionRef.current;
       if (backgroundExtraction) {
         activeProgrammaticBrandExtractions.set(result.id, programmaticAbortController);
@@ -184,6 +192,21 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
             activeProgrammaticBrandExtractions.delete(result.id);
           }
         });
+      }
+      // 目录已落盘,登记归属行——列表按注册表过滤,不登记这个品牌对发起租户
+      // 自己都不可见。登记失败则回滚(取消后台提取 + 删目录),避免留下不可见
+      // 又不可删的孤儿目录;名字后续 finalize 用 brand.json 刷新。
+      try {
+        await deps.brandRegistration?.register({ id: result.id });
+      } catch (registerErr) {
+        programmaticAbortController.abort();
+        activeProgrammaticBrandExtractions.delete(result.id);
+        try {
+          deleteBrandDir(brandsRoot, result.id);
+        } catch {
+          // best-effort:回滚删目录失败不掩盖原始登记错误。
+        }
+        throw registerErr;
       }
       res.json(result);
     } catch (err) {

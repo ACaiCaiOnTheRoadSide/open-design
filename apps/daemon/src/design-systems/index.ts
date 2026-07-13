@@ -1116,9 +1116,10 @@ async function readManifestJsonOptional(
 export async function createUserDesignSystem(
   root: string,
   input: UserDesignSystemInput,
+  opts?: { isIdTaken?: (id: string) => Promise<boolean> },
 ): Promise<DesignSystemSummary> {
   const title = normalizeTitle(input.title);
-  const dirId = await uniqueSlug(root, slugify(title));
+  const dirId = await uniqueSlug(root, slugify(title), opts?.isIdTaken);
   const now = new Date().toISOString();
   const provenance = normalizeProvenance(input.provenance, {
     ...(input.summary ? { companyBlurb: input.summary } : {}),
@@ -2655,16 +2656,26 @@ function sanitizeRevisionId(raw: string | undefined): string | null {
   return /^[a-zA-Z0-9-]+$/.test(value) ? value : null;
 }
 
-async function uniqueSlug(root: string, base: string): Promise<string> {
+async function uniqueSlug(
+  root: string,
+  base: string,
+  isIdTaken?: (id: string) => Promise<boolean>,
+): Promise<string> {
   let candidate = base || 'design-system';
   let index = 2;
   for (;;) {
+    let taken = false;
     try {
       await stat(path.join(root, candidate));
-      candidate = `${base}-${index++}`;
+      taken = true; // exists on the local disk cache
     } catch {
-      return candidate;
+      // Not on disk. But under OSS-as-truth the disk can be a cold cache, so a
+      // free-looking slug may already belong to another tenant's design system.
+      // Consult the global registry before handing it out.
+      taken = isIdTaken ? await isIdTaken(candidate) : false;
     }
+    if (!taken) return candidate;
+    candidate = `${base}-${index++}`;
   }
 }
 

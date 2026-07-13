@@ -353,6 +353,7 @@ import {
   registerSyncNamespace,
   syncEnabled as manifestSyncEnabled,
 } from './sync/engine.js';
+import { BRAND_SYNC_PREFIX, DESIGN_SYSTEM_SYNC_PREFIX } from './sync/core.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
 import { readAnalyticsContext } from './analytics.js';
 import {
@@ -493,6 +494,7 @@ import {
   getProject,
   getProjectOwnerUnscoped,
   getTemplate,
+  designSystemIdExistsUnscoped,
   insertBrandRow,
   insertConversation,
   insertDesignSystem,
@@ -908,10 +910,9 @@ for (const dir of [USER_SKILLS_DIR, USER_DESIGN_SYSTEMS_DIR, BRANDS_DIR, USER_DE
 }
 fs.mkdirSync(CRITIQUE_ARTIFACTS_DIR, { recursive: true });
 const orbitService = new OrbitService(RUNTIME_DATA_DIR);
-// 用户设计体系在 manifest+blob 同步通道里的 sync id 前缀:
-// `dsys--<dirId>` → USER_DESIGN_SYSTEMS_DIR/<dirId>(见 registerSyncNamespace)。
-// 与项目 id 共用后端 manifest 键空间,前缀足够怪以避免撞真实项目 id。
-const DESIGN_SYSTEM_SYNC_PREFIX = 'dsys--';
+// sync id 前缀常量集中在 sync/core.ts(DESIGN_SYSTEM_SYNC_PREFIX /
+// BRAND_SYNC_PREFIX),isSafeId 从同一处拒绝这些前缀,项目 id 不会撞进
+// 设计体系/品牌的 OSS 键空间。
 
 /** 设计体系目录有写动作后标脏,debounce 推送到 OSS。sync 未启用时是 no-op。 */
 function markUserDesignSystemDirty(dirId: string): void {
@@ -920,11 +921,16 @@ function markUserDesignSystemDirty(dirId: string): void {
 }
 
 // 品牌目录的 sync 命名空间:`brnd--<brandId>` → BRANDS_DIR/<brandId>。
-const BRAND_SYNC_PREFIX = 'brnd--';
-
 function markBrandDirty(brandId: string): void {
   if (!brandId) return;
   markSyncDirty(`${BRAND_SYNC_PREFIX}${brandId}`);
+}
+
+/** slug 分配的全局占用判定:盘上没有不代表 OSS 上没有(空盘=冷缓存),
+ *  查登记表(跨租户、含软删)才不会让两个租户拿到同一 dir id 撞进同一 OSS 键。 */
+async function designSystemDirIdTaken(dirId: string): Promise<boolean> {
+  const dbHandle = await openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
+  return designSystemIdExistsUnscoped(dbHandle, dirId);
 }
 
 /** 用户设计体系目录落盘后登记归属行(租户/创建者取调用点的 ALS 上下文,
@@ -957,7 +963,7 @@ const designSystemGenerationJobs = createDesignSystemGenerationJobStore({
   root: USER_DESIGN_SYSTEMS_DIR,
   // 生成任务在发起请求的 ALS 延续里执行,归属行记到发起租户名下。
   createDesignSystem: async (root, input) => {
-    const created = await createUserDesignSystem(root, input);
+    const created = await createUserDesignSystem(root, input, { isIdTaken: designSystemDirIdTaken });
     await registerUserDesignSystemRow(created, 'created');
     return created;
   },
@@ -3660,6 +3666,13 @@ export async function startServer({
       }
       return owned;
     },
+    // 冷盘自愈:list 发现存活行的目录不在盘上时,按需从 OSS 回灌(并发拉取)。
+    ensureDirsPresent: async (dirIds: string[]) => {
+      if (!manifestSyncEnabled() || dirIds.length === 0) return;
+      await Promise.all(dirIds.map((dirId) =>
+        hydrateProjectFromManifest(`${DESIGN_SYSTEM_SYNC_PREFIX}${dirId}`, { ifMissing: true })
+          .catch((err) => console.error(`[design-systems] hydrate ${dirId} failed:`, err?.message || err))));
+    },
   };
 
   const designSystemServices = createDesignSystemServerServices({
@@ -3784,6 +3797,13 @@ export async function startServer({
           ? summary.projectId
           : `ds-${dirId}`.slice(0, 128);
       const owner = await getProjectOwnerUnscoped(db, workspaceProjectId);
+      if (!owner) {
+        // 未开过工作区(无 ds-<id> 项目行)的存量体系回溯不到归属,暂归
+        // __legacy__——对真实租户不可见。打点便于运维人工 UPDATE tenant_id。
+        console.warn(
+          `[design-systems] backfill: '${dirId}' 无法回溯归属,暂归 __legacy__(对真实租户不可见,需人工重指派 tenant_id)`,
+        );
+      }
       const createdAt = summary.createdAt ? Date.parse(summary.createdAt) : NaN;
       const updatedAt = summary.updatedAt ? Date.parse(summary.updatedAt) : NaN;
       await backfillDesignSystemRow(db, {
@@ -3807,6 +3827,11 @@ export async function startServer({
       const meta = readBrandMeta(BRANDS_DIR, brandId);
       const backingProjectId = meta?.projectId || `brand-${brandId}`;
       const owner = await getProjectOwnerUnscoped(db, backingProjectId);
+      if (!owner) {
+        console.warn(
+          `[brands] backfill: '${brandId}' 无法回溯归属,暂归 __legacy__(对真实租户不可见,需人工重指派 tenant_id)`,
+        );
+      }
       const brandName = readBrandJson(BRANDS_DIR, brandId)?.name;
       await backfillBrandRow(db, {
         id: brandId,
@@ -4127,23 +4152,30 @@ export async function startServer({
     // scanAndPush 只是一次廉价 stat 走盘,不产生上传。
     setInterval(() => {
       void (async () => {
+        // 只推「存活行 ∩ 在盘目录」:
+        //  - 软删行不在存活集里 → 不再永久重推,OSS blob 可被后端 GC 回收;
+        //  - 盘上缺失的存活 id 也跳过 → 对缺失目录 markDirty 会 scanAndPush 出
+        //    空 manifest 把 OSS 内容清空(数据丢失)。缺失存活 id 的回灌走
+        //    hydrate 通道(启动 sweep / isAllowed 按需),不在兜底推送里处理。
         try {
+          const aliveIds = await listAllDesignSystemIds(db, { aliveOnly: true });
           const dirents = await fsp.readdir(USER_DESIGN_SYSTEMS_DIR, { withFileTypes: true });
           for (const entry of dirents) {
-            if (!entry.isDirectory()) continue;
+            if (!entry.isDirectory() || !aliveIds.has(entry.name)) continue;
             markUserDesignSystemDirty(entry.name);
           }
         } catch {
-          // 目录还没建时静默。
+          // 目录还没建 / 库还没起时静默。
         }
         try {
+          const aliveBrandIds = await listAllBrandRowIds(db, { aliveOnly: true });
           const brandDirents = await fsp.readdir(BRANDS_DIR, { withFileTypes: true });
           for (const entry of brandDirents) {
-            if (!entry.isDirectory()) continue;
+            if (!entry.isDirectory() || !aliveBrandIds.has(entry.name)) continue;
             markBrandDirty(entry.name);
           }
         } catch {
-          // 目录还没建时静默。
+          // 目录还没建 / 库还没起时静默。
         }
       })();
     }, 5 * 60 * 1000).unref?.();
@@ -4648,9 +4680,10 @@ export async function startServer({
     projectFiles: projectFileDeps,
     designSystems: {
       buildUserDesignSystemArchive,
-      // 创建即登记归属行,列表/读取从此按租户过滤。
+      // 创建即登记归属行,列表/读取从此按租户过滤。isIdTaken 查全局登记表,
+      // 空盘时也不会与别的租户撞 dir id。
       createUserDesignSystem: async (root, input) => {
-        const created = await createUserDesignSystem(root, input);
+        const created = await createUserDesignSystem(root, input, { isIdTaken: designSystemDirIdTaken });
         await registerUserDesignSystemRow(created, 'created');
         return created;
       },
@@ -4737,6 +4770,13 @@ export async function startServer({
       touch: (id, name) => touchBrandRow(db, id, name !== undefined ? { name } : undefined),
       softDelete: (id) => softDeleteBrandRow(db, id),
       markDirty: (id) => markBrandDirty(id),
+      // 冷盘自愈:list 发现存活行的品牌目录不在盘上时,按需从 OSS 并发回灌。
+      ensureIdsPresent: async (ids: string[]) => {
+        if (!manifestSyncEnabled() || ids.length === 0) return;
+        await Promise.all(ids.map((id) =>
+          hydrateProjectFromManifest(`${BRAND_SYNC_PREFIX}${id}`, { ifMissing: true })
+            .catch((err) => console.error(`[brands] hydrate ${id} failed:`, err?.message || err))));
+      },
     },
     resolveTranscriptAgent: async () => {
       const config = await readAppConfig(RUNTIME_DATA_DIR);

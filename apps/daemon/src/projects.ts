@@ -34,6 +34,7 @@ import {
 } from './sandbox-mode.js';
 import { isOrchestratorScratchWorkspace } from './workspace-contract.js';
 import { markDirty } from './sync/engine.js';
+import { isReservedSyncId } from './sync/core.js';
 
 const FORBIDDEN_SEGMENT = /^$|^\.\.?$/;
 const RESERVED_PROJECT_FILE_SEGMENTS = new Set(['.live-artifacts']);
@@ -1452,6 +1453,10 @@ export function isSafeId(id) {
   if (typeof id !== 'string') return false;
   if (id.length === 0 || id.length > 128) return false;
   if (/^\.+$/.test(id)) return false; // reject `.`, `..`, `...`, etc.
+  // Reserved sync-namespace prefixes (dsys--/brnd--) route to the design-system
+  // and brand OSS keyspace; a project must never claim one or it could sync
+  // over another tenant's blobs through the shared manifest channel.
+  if (isReservedSyncId(id)) return false;
   return /^[A-Za-z0-9._-]+$/.test(id);
 }
 

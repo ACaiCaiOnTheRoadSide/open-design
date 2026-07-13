@@ -55,6 +55,28 @@ export interface LocalFileStat {
   mtimeMs: number;
 }
 
+// Sync ids share one keyspace with project ids on the backend (manifest key =
+// projectId verbatim, no tenant column). Design systems and brands ride that
+// same channel under a reserved prefix so their OSS blobs live beside project
+// blobs. Because a project id is client-chosen, these prefixes MUST be refused
+// by project-id validation (see isSafeId) — otherwise a tenant could create a
+// project literally named `dsys--<victim>` and drive the project-sync APIs to
+// read/overwrite another tenant's design-system blobs. Single source of truth:
+// the daemon derives its namespace prefixes from here, and isSafeId rejects them.
+export const DESIGN_SYSTEM_SYNC_PREFIX = 'dsys--';
+export const BRAND_SYNC_PREFIX = 'brnd--';
+export const RESERVED_SYNC_ID_PREFIXES: readonly string[] = [
+  DESIGN_SYSTEM_SYNC_PREFIX,
+  BRAND_SYNC_PREFIX,
+];
+
+/** True when `id` begins with a reserved sync-namespace prefix. Project-id
+ *  validation rejects these so project ids can never collide with the
+ *  design-system / brand sync keyspace. */
+export function isReservedSyncId(id: string): boolean {
+  return RESERVED_SYNC_ID_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
+
 /**
  * Manifest paths are clean forward-slash relatives. The backend enforces the
  * same rule; validating here keeps bad paths from ever reaching the wire.
