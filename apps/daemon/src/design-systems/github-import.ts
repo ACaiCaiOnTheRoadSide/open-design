@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 
 export type GitHubDesignSystemImportOptions = Pick<
   LocalDesignSystemImportOptions,
-  'craftApplies' | 'importMode' | 'name' | 'now' | 'reservedIds'
+  'craftApplies' | 'importMode' | 'isIdTaken' | 'name' | 'now' | 'reservedIds'
 > & {
   branch?: string;
   gitBin?: string;
@@ -63,6 +63,7 @@ export async function importGitHubDesignSystemProject(
       fallbackName: parsed.repo,
       ...(options.name ? { name: options.name } : {}),
       ...(options.reservedIds ? { reservedIds: options.reservedIds } : {}),
+      ...(options.isIdTaken ? { isIdTaken: options.isIdTaken } : {}),
       ...(options.importMode ? { importMode: options.importMode } : {}),
       ...(options.craftApplies ? { craftApplies: options.craftApplies } : {}),
       source: {

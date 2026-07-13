@@ -260,6 +260,16 @@ describe('importLocalDesignSystemProject', () => {
     expect(second.id).toBe('kami-app-3');
   });
 
+  it('skips slugs the global registry reports as taken (cross-tenant / cold disk)', async () => {
+    // 盘上没有、reservedIds 也没有,但全局登记表说 'kami-app' 已被别的租户占用
+    // (OSS 上还在,只是本地是冷缓存)。分配必须跳过它,不能撞进同一 OSS 键。
+    const taken = new Set(['kami-app', 'kami-app-2']);
+    const result = await importLocalDesignSystemProject(sourceRoot, userDesignSystemsRoot, {
+      isIdTaken: async (id) => taken.has(id),
+    });
+    expect(result.id).toBe('kami-app-3');
+  });
+
   it('writes selected importMode and applied craft semantics into manifest', async () => {
     const result = await importLocalDesignSystemProject(sourceRoot, userDesignSystemsRoot, {
       now: new Date('2026-05-18T09:00:00.000Z'),

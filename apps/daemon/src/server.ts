@@ -4656,6 +4656,8 @@ export async function startServer({
     designSystemRegistration: {
       register: (summary, source) => registerUserDesignSystemRow(summary, source),
       softDelete: (dirId) => softDeleteDesignSystem(db, dirId),
+      // 导入分配 dir id 时查全局登记表,空盘也不与别的租户撞名(同创建路径)。
+      isDirIdTaken: (dirId) => designSystemDirIdTaken(dirId),
     },
     tokenContractRebuild: {
       maybeStartForImportedDesignSystem: async (designSystemId) => {

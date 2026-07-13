@@ -72,7 +72,7 @@ export type ShadcnFetch = (
 
 export type ShadcnDesignSystemImportOptions = Pick<
   LocalDesignSystemImportOptions,
-  'craftApplies' | 'importMode' | 'name' | 'now' | 'reservedIds'
+  'craftApplies' | 'importMode' | 'isIdTaken' | 'name' | 'now' | 'reservedIds'
 > & {
   /** Injectable fetch for tests / self-hosted registries. Defaults to global fetch. */
   fetchImpl?: ShadcnFetch;
@@ -172,6 +172,7 @@ export async function importShadcnDesignSystemProject(
       fallbackName,
       ...(options.name ? { name: options.name } : {}),
       ...(options.reservedIds ? { reservedIds: options.reservedIds } : {}),
+      ...(options.isIdTaken ? { isIdTaken: options.isIdTaken } : {}),
       ...(options.importMode ? { importMode: options.importMode } : {}),
       ...(options.craftApplies ? { craftApplies: options.craftApplies } : {}),
       source: {

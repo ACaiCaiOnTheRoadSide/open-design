@@ -23,6 +23,9 @@ export type LocalDesignSystemImportOptions = {
   name?: string;
   fallbackName?: string;
   reservedIds?: Iterable<string>;
+  /** 全局(跨租户、含软删)判 dir id 是否已被占用。空盘/pod 重建时,只看本地盘
+   *  和 reservedIds 会与别的租户撞同一 id 撞进同一 OSS 键;传入则一并回避。 */
+  isIdTaken?: (id: string) => Promise<boolean>;
   source?: DesignSystemProjectSource;
   importMode?: 'normalized' | 'hybrid' | 'verbatim';
   craftApplies?: string[];
@@ -129,7 +132,12 @@ export async function importLocalDesignSystemProject(
 
   const scan = await scanProject(sourceRoot);
   const displayName = cleanDisplayName(options.name ?? scan.packageName ?? options.fallbackName ?? path.basename(sourceRoot));
-  const id = await nextAvailableSlug(userDesignSystemsRoot, slugify(displayName), options.reservedIds);
+  const id = await nextAvailableSlug(
+    userDesignSystemsRoot,
+    slugify(displayName),
+    options.reservedIds,
+    options.isIdTaken,
+  );
   const outDir = path.join(userDesignSystemsRoot, id);
   await mkdir(outDir, { recursive: true });
   const importMode = normalizeImportMode(options.importMode);
@@ -403,6 +411,7 @@ async function nextAvailableSlug(
   root: string,
   preferred: string,
   reservedIds: Iterable<string> = [],
+  isIdTaken?: (id: string) => Promise<boolean>,
 ): Promise<string> {
   await mkdir(root, { recursive: true });
   const base = preferred || 'imported-design-system';
@@ -412,7 +421,10 @@ async function nextAvailableSlug(
     if (reserved.has(id)) continue;
     try {
       await stat(path.join(root, id));
+      continue; // 本地盘已存在
     } catch {
+      // 不在盘上。OSS 才是真相,空盘=冷缓存,还得问全局登记表才不会撞别租户。
+      if (isIdTaken && (await isIdTaken(id))) continue;
       return id;
     }
   }

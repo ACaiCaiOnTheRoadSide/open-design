@@ -46,6 +46,8 @@ export interface RegisterStaticResourceRoutesDeps extends RouteDeps<'http' | 'pa
     register: (summary: { id: string; title?: string }, source: string) => Promise<void>;
     /** 软删归属行;false = 当前租户名下无此行(路由回 404)。 */
     softDelete: (dirId: string) => Promise<boolean>;
+    /** 全局(跨租户、含软删)判 dir id 是否已占用,导入分配 slug 时防跨租户撞名。 */
+    isDirIdTaken: (dirId: string) => Promise<boolean>;
   };
 }
 
@@ -721,6 +723,9 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
         ...(importMode ? { importMode } : {}),
         ...(craftApplies ? { craftApplies } : {}),
         reservedIds: designSystemDirIdsFromCatalog(before),
+        ...(ctx.designSystemRegistration
+          ? { isIdTaken: ctx.designSystemRegistration.isDirIdTaken }
+          : {}),
       });
       await ctx.designSystemRegistration?.register({ id: result.id }, 'import');
       const systems = await listAllDesignSystems();
@@ -765,6 +770,9 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           ...(importMode ? { importMode } : {}),
           ...(craftApplies ? { craftApplies } : {}),
           reservedIds: designSystemDirIdsFromCatalog(before),
+        ...(ctx.designSystemRegistration
+          ? { isIdTaken: ctx.designSystemRegistration.isDirIdTaken }
+          : {}),
         },
       );
       await ctx.designSystemRegistration?.register({ id: result.id }, 'import');
@@ -812,6 +820,9 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           ...(importMode ? { importMode } : {}),
           ...(craftApplies ? { craftApplies } : {}),
           reservedIds: designSystemDirIdsFromCatalog(before),
+        ...(ctx.designSystemRegistration
+          ? { isIdTaken: ctx.designSystemRegistration.isDirIdTaken }
+          : {}),
         },
       );
       await ctx.designSystemRegistration?.register({ id: result.id }, 'import');
