@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromeDumpDom, chromeScreenshot, findChrome } from "./chrome.js";
 import { harvestFonts, type FontFile } from "./fonts.js";
+import { brandFetch } from "./net.js";
 
 /**
  * Deterministic brand-material prefetch. Given a site URL, fetch the HTML +
@@ -96,7 +97,7 @@ async function fetchText(
   },
 ): Promise<{ text: string; finalUrl: string; contentType: string; ok: boolean } | null> {
   try {
-    const res = await fetch(url, {
+    const res = await brandFetch(url, {
       headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,text/css,*/*" },
       redirect: "follow",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -126,7 +127,7 @@ async function fetchBinary(
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   const attempt = async (): Promise<{ buf: Buffer; contentType: string } | null> => {
     try {
-      const res = await fetch(url, {
+      const res = await brandFetch(url, {
         headers: {
           "User-Agent": UA,
           Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",

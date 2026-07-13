@@ -23,6 +23,7 @@ import path from 'node:path';
 import type { BrandImagerySample } from '@open-design/contracts';
 
 import { chromeDumpDom, findChrome } from './chrome.js';
+import { brandFetch } from './net.js';
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -299,7 +300,7 @@ function isRepresentative(buf: Buffer): { ok: boolean; area: number } {
 
 async function fetchText(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url, {
+    const res = await brandFetch(url, {
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,*/*;q=0.8' },
       redirect: 'follow',
       signal: AbortSignal.timeout(HTML_TIMEOUT_MS),
@@ -316,7 +317,7 @@ async function fetchBinary(
   referer: string,
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
-    const res = await fetch(url, {
+    const res = await brandFetch(url, {
       headers: {
         'User-Agent': UA,
         // Browser-shaped headers defeat most hotlink / referer protection.

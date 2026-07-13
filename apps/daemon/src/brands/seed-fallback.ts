@@ -18,6 +18,7 @@
 
 import type { BrandColor, BrandColorRole, BrandFontSpec } from '@open-design/contracts';
 
+import { brandFetch } from './net.js';
 import { extractColors, extractFonts, normalizeColor, type ColorCandidate } from './prefetch.js';
 
 const UA =
@@ -62,7 +63,7 @@ function metaContent(html: string, nameOrProp: string): string {
 
 async function fetchText(url: string, cap: number, timeoutMs: number): Promise<string | null> {
   try {
-    const res = await fetch(url, {
+    const res = await brandFetch(url, {
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,text/css,*/*;q=0.8' },
       redirect: 'follow',
       signal: AbortSignal.timeout(timeoutMs),

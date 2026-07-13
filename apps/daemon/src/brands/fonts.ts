@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { Brand } from "./schema.js";
+import { brandFetch } from "./net.js";
 
 /**
  * Webfont self-hosting for a brand workspace.
@@ -138,7 +139,7 @@ async function fetchFont(url: string, referer?: string): Promise<Buffer | null> 
     }
   }
   try {
-    const res = await fetch(url, {
+    const res = await brandFetch(url, {
       headers: {
         "User-Agent": UA,
         Accept: "*/*",
@@ -306,7 +307,7 @@ export async function selfHostGoogleFonts(brand: Brand, brandDir: string): Promi
   const chunks: string[] = [];
   for (const url of urls) {
     try {
-      const res = await fetch(url, {
+      const res = await brandFetch(url, {
         headers: { "User-Agent": UA, Accept: "text/css,*/*;q=0.1" },
         redirect: "follow",
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
