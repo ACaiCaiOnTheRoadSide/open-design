@@ -983,6 +983,15 @@ interface Props {
     title?: string;
     editable: boolean;
   }) => Promise<boolean | void> | boolean | void;
+  // Preferred image-export path when the host wires it: hand the full-page
+  // capture to the project agent (html-to-image skill). The browser
+  // foreignObject snapshot remains the fallback. Return false to decline
+  // (e.g. chat busy) — the caller then falls back to the local snapshot.
+  onExportImageViaAgent?: (opts: {
+    fileName: string;
+    title?: string;
+    format: ImageExportFormat;
+  }) => Promise<boolean | void> | boolean | void;
 }
 
 export function FileViewer({
@@ -1007,6 +1016,7 @@ export function FileViewer({
   downloadRequest,
   slideNavRequest,
   onExportPptxViaAgent,
+  onExportImageViaAgent,
 }: Props) {
   const rendererMatch = artifactRendererRegistry.resolve({
     file,
@@ -1051,6 +1061,7 @@ export function FileViewer({
         downloadRequest={downloadRequest}
         slideNavRequest={slideNavRequest}
         onExportPptxViaAgent={onExportPptxViaAgent}
+        onExportImageViaAgent={onExportImageViaAgent}
       />
     );
   }
@@ -4449,6 +4460,7 @@ function HtmlViewer({
   downloadRequest,
   slideNavRequest,
   onExportPptxViaAgent,
+  onExportImageViaAgent,
 }: {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -4473,6 +4485,11 @@ function HtmlViewer({
     fileName: string;
     title?: string;
     editable: boolean;
+  }) => Promise<boolean | void> | boolean | void;
+  onExportImageViaAgent?: (opts: {
+    fileName: string;
+    title?: string;
+    format: ImageExportFormat;
   }) => Promise<boolean | void> | boolean | void;
 }) {
   const { locale, t } = useI18n();
@@ -8090,10 +8107,14 @@ function HtmlViewer({
   const fireImageExportResult = (
     result: 'success' | 'failed' | 'cancelled',
     errorCode?: string,
+    opts?: { countDownload?: boolean },
   ) => {
     if (imageExportResolvedRef.current) return;
     imageExportResolvedRef.current = true;
-    if (result === 'success') reportDownloadEvent();
+    // Delegated exports (agent produces the file asynchronously) succeed
+    // without the user receiving bytes here — they must not count as a
+    // download (mirrors the pptx delegated path).
+    if (result === 'success' && opts?.countDownload !== false) reportDownloadEvent();
     const requestId = imageExportRequestIdRef.current ?? analytics.newRequestId();
     const started = imageExportStartedRef.current || performance.now();
     trackArtifactExportResult(
@@ -8126,13 +8147,39 @@ function HtmlViewer({
     // spinner + a separate (non-portaled, off-center) saved toast.
     setImageExportError(null);
     setImageExportModalOpen(false);
+    // The loading toast goes up BEFORE the delegate attempt: the delegate
+    // awaits a network round-trip (handleSend), and a closed modal with no
+    // feedback reads as a dead button.
     setExportToast({ message: t('fileViewer.exportStarted'), tone: 'loading' });
-    // Let the modal unmount before capturing so the web-only host-compositor
-    // snapshot can't catch the overlay (the desktop off-screen renderer ignores
-    // it either way).
-    await waitForAnimationFrame();
-    await waitForAnimationFrame();
     try {
+      // Preferred path on renderer-less runtimes (pure web/SaaS): hand the
+      // capture to the project agent (html-to-image skill — real
+      // headless-Chromium full-page/whole-deck rendering), which writes the
+      // image into the project file list. A desktop host keeps its immediate
+      // off-screen render below — same local-first ordering as the pptx
+      // export. The in-browser snapshot also stays as the fallback when the
+      // delegate declines (e.g. chat busy) / throws.
+      if (onExportImageViaAgent && !isOpenDesignHostAvailable()) {
+        try {
+          const queued = await onExportImageViaAgent({
+            fileName: file.name,
+            title: exportTitle,
+            format: imageExportFormat,
+          });
+          if (queued !== false) {
+            fireImageExportResult('success', undefined, { countDownload: false });
+            setExportToast({ message: t('fileViewer.exportImageAgentQueued'), tone: 'success' });
+            return;
+          }
+        } catch (err) {
+          console.warn('[exportAsImage] agent delegation failed, falling back to snapshot:', err);
+        }
+      }
+      // Let the modal unmount before capturing so the web-only host-compositor
+      // snapshot can't catch the overlay (the desktop off-screen renderer ignores
+      // it either way).
+      await waitForAnimationFrame();
+      await waitForAnimationFrame();
       let dataUrl = imageExportSnapshotDataUrlRef.current;
       if (!dataUrl) {
         // Export as image of a deck = the whole deck stitched into one long

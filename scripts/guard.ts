@@ -103,6 +103,10 @@ const residualAllowedExactPaths = new Set([
   // pptxgenjs installed at run time) — there is no TS build step in that
   // environment, so it must ship as directly runnable .mjs.
   "skills/html-to-pptx/scripts/render-pptx.mjs",
+  // html-to-image skill runtime script: same execution model as render-pptx.mjs
+  // above (fetched via the skill asset route, run by plain Node in the sandbox
+  // with run-time-installed playwright — no TS build step there).
+  "skills/html-to-image/scripts/render-image.mjs",
   // Manifest diff guard + its node:test coverage. Run directly by Node from the
   // bake workflows (no TS build step there) to decide whether a `previews` entry
   // actually changed, ignoring the per-run `generatedAt` timestamp.
@@ -1294,8 +1298,32 @@ async function checkCiTopology(): Promise<boolean> {
   return true;
 }
 
+// The html-to-pptx and html-to-image skills each stage a self-contained copy
+// of setup-env.sh, but both copies drive the SAME shared sandbox workspace
+// (/tmp/od-pptx-export) with shared idempotency markers and a pinned Chromium
+// bundle URL+sha256. A one-sided edit (e.g. a bundle bump) makes the shared
+// workspace behave differently depending on which skill runs first, so the
+// copies must stay byte-identical.
+async function checkSharedSkillSetupEnvSync(): Promise<boolean> {
+  const copies = [
+    "skills/html-to-pptx/scripts/setup-env.sh",
+    "skills/html-to-image/scripts/setup-env.sh",
+  ];
+  const contents = await Promise.all(
+    copies.map((relative) => readFile(path.join(repoRoot, relative), "utf8")),
+  );
+  if (contents.some((content) => content !== contents[0])) {
+    console.error("Shared skill setup-env sync check failed:");
+    console.error(`- ${copies.join(" and ")} must be byte-identical (shared /tmp/od-pptx-export workspace); copy the edited version over the other.`);
+    return false;
+  }
+  console.log(`Shared skill setup-env sync passed: ${copies.length} copies are byte-identical.`);
+  return true;
+}
+
 const checks: GuardCheck[] = [
   { name: "residual JavaScript", run: checkResidualJavaScript },
+  { name: "shared skill setup-env sync", run: checkSharedSkillSetupEnvSync },
   { name: "package dependency specs", run: checkPackageDependencySpecs },
   { name: "product neutrality", run: checkProductNeutrality },
   { name: "cross-app imports", run: checkCrossAppImports },

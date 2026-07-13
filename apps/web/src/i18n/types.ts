@@ -3061,6 +3061,7 @@ export interface Dict {
   'fileViewer.exportPptxHint': string;
   'fileViewer.exportPptxNa': string;
   'fileViewer.exportPptxAgentQueued': string;
+  'fileViewer.exportImageAgentQueued': string;
   'fileViewer.exportZip': string;
   'fileViewer.exportHtml': string;
   'fileViewer.exportMd': string;

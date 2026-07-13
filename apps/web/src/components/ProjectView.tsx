@@ -107,6 +107,7 @@ import { playSound, showCompletionNotification } from '../utils/notifications';
 import { randomUUID } from '../utils/uuid';
 import { DEFAULT_NOTIFICATIONS } from '../state/config';
 import type { TodoItem } from '../runtime/todos';
+import type { ImageExportFormat } from '../runtime/exports';
 import { appendErrorStatusEvent } from '../runtime/chat-events';
 import { RESUME_CONTINUE_PROMPT } from '../runtime/resume';
 import { cancelBrandExtraction, extractBrandFromHtml, finalizeBrandProject } from '../runtime/brands';
@@ -5184,6 +5185,46 @@ export function ProjectView({
     [currentConversationActionDisabled, handleSend],
   );
 
+  // Image export for runtimes without an off-screen renderer: hand the capture
+  // to the project agent, which runs the html-to-image skill (headless
+  // Chromium, full-page / whole-deck) and writes the image into the project
+  // directory, where it shows up in the file list. Preferred over the browser
+  // foreignObject snapshot (fragile on real-world artifacts); the caller falls
+  // back to that snapshot when this returns false.
+  const handleExportImageViaAgent = useCallback(
+    async ({ fileName, title, format }: { fileName: string; title?: string; format: ImageExportFormat }) => {
+      if (currentConversationActionDisabled) return false;
+      const pageLabel = title && title.trim().length > 0 ? title.trim() : fileName;
+      const ext = format === 'jpeg' ? 'jpg' : format;
+      // Format-distinct output names (mirrors the pptx mode markers): a png
+      // and a webp of the same page are different artifacts — a shared name
+      // would make the agent find the earlier file on disk, skip the render,
+      // and report a format the user did not ask for. Chinese marker matches
+      // the SaaS audience and the skill's own Step 3 naming rule.
+      const baseLabel = pageLabel.replace(/\.(png|jpe?g|webp)$/i, '').replace(/\.html?$/i, '');
+      const outputName = `${baseLabel}-整页图.${ext}`;
+      const prompt =
+        `Export the HTML page "${fileName}" in this project to a full-page image using the html-to-image skill. ` +
+        'Follow the skill exactly — prepare the environment ONLY by running the skill\'s bundled ' +
+        'scripts/setup-env.sh (do NOT hand-roll npm/apk/playwright browser installs; the script encodes ' +
+        'the musl-vs-glibc branch that improvised setups get wrong), ' +
+        `render with the bundled render-image.mjs script passing --format ${format}, and write the resulting ` +
+        `image INTO the project directory named exactly "${outputName}" so it appears in my file list. ` +
+        'The export must cover the WHOLE page (full scrollable document; every slide stitched for a deck), ' +
+        'never just the visible viewport. ' +
+        'An image exported earlier (or in another format) may already exist in the project — it does NOT ' +
+        'satisfy this request; run the render for the requested format regardless of any existing images. ' +
+        'When finished, report the output file name and its pixel dimensions. If any step fails, report the ' +
+        'actual error instead of producing a substitute artifact.';
+      // skillIds is what actually injects the skill (body into the system
+      // prompt, side files staged into `.od-skills/` and synced into sandbox
+      // workspaces) — naming the skill in the prompt text alone does nothing.
+      const started = await handleSend(prompt, [], [], { skillIds: ['html-to-image'] });
+      return started !== false;
+    },
+    [currentConversationActionDisabled, handleSend],
+  );
+
   const selectedPluginActionAgent =
     config.mode === 'daemon' && config.agentId
       ? agentsById.get(config.agentId)
@@ -6942,6 +6983,7 @@ export function ProjectView({
           onSendBoardCommentAttachments={handleSendBoardCommentAttachments}
           onRequestBrowserUsePrompt={handleBrowserUsePrompt}
           onExportPptxViaAgent={handleExportPptxViaAgent}
+          onExportImageViaAgent={handleExportImageViaAgent}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
           preferredPreviewFile={currentProject.metadata?.entryFile ?? null}

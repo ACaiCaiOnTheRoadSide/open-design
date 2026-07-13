@@ -2296,6 +2296,7 @@ export const fa: Dict = {
   'fileViewer.exportPptxHint': 'یک درخواست به عامل برای تبدیل این طرح به PPTX ارسال کنید.',
   'fileViewer.exportPptxNa': 'صادرکردن PPTX اینجا در دسترس نیست.',
   'fileViewer.exportPptxAgentQueued': 'به عامل هوش مصنوعی سپرده شد — فایل .pptx پس از آماده شدن در فهرست فایل‌ها نمایان می‌شود.',
+  'fileViewer.exportImageAgentQueued': 'به عامل هوش مصنوعی سپرده شد — تصویر پس از آماده شدن در فهرست فایل‌ها نمایان می‌شود.',
   'fileViewer.exportZip': 'دانلود به صورت .zip',
   'fileViewer.exportHtml': 'صادرکردن به HTML مستقل',
   'fileViewer.exportMd': 'صادرکردن به صورت Markdown',

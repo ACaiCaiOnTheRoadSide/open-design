@@ -2296,6 +2296,7 @@ export const zhCN: Dict = {
   'fileViewer.exportPptxHint': '请求代理将此设计转换为 PPTX。',
   'fileViewer.exportPptxNa': '此处暂不支持导出 PPTX。',
   'fileViewer.exportPptxAgentQueued': '已交给 AI 生成，完成后 .pptx 会出现在文件列表中。',
+  'fileViewer.exportImageAgentQueued': '已交给 AI 生成，完成后图片会出现在文件列表中。',
   'fileViewer.exportZip': '下载为 .zip',
   'fileViewer.exportHtml': '导出为独立 HTML',
   'fileViewer.exportMd': '导出为 Markdown',

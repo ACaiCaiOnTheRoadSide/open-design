@@ -2296,6 +2296,7 @@ export const en: Dict = {
   'fileViewer.exportPptxHint': 'Send a request to the agent to convert this design to PPTX.',
   'fileViewer.exportPptxNa': 'PPTX export is not available here.',
   'fileViewer.exportPptxAgentQueued': 'Handed to the AI agent — the .pptx will appear in your file list when ready.',
+  'fileViewer.exportImageAgentQueued': 'Handed to the AI agent — the image will appear in your file list when ready.',
   'fileViewer.exportZip': 'Download as .zip',
   'fileViewer.exportHtml': 'Export as standalone HTML',
   'fileViewer.exportMd': 'Export as Markdown',

@@ -39,7 +39,7 @@ import {
 } from '../providers/registry';
 import { useRawToken } from '../providers/raw-token';
 import type { Dict } from '../i18n/types';
-import { downloadDesignSystemArchive, downloadProjectArchive } from '../runtime/exports';
+import { downloadDesignSystemArchive, downloadProjectArchive, type ImageExportFormat } from '../runtime/exports';
 import { finalizeBrandProject } from '../runtime/brands';
 import { deriveFileOps, type FileOpEntry } from '../runtime/file-ops';
 import { parseDesignMd } from '../runtime/design-md-parse';
@@ -166,6 +166,11 @@ interface Props {
     fileName: string;
     title?: string;
     editable: boolean;
+  }) => Promise<boolean | void> | boolean | void;
+  onExportImageViaAgent?: (opts: {
+    fileName: string;
+    title?: string;
+    format: ImageExportFormat;
   }) => Promise<boolean | void> | boolean | void;
   onPluginFolderAgentAction?: (
     relativePath: string,
@@ -430,6 +435,7 @@ export function FileWorkspace({
   onSendBoardCommentAttachments,
   onRequestBrowserUsePrompt,
   onExportPptxViaAgent,
+  onExportImageViaAgent,
   onPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
@@ -2340,6 +2346,7 @@ export function FileWorkspace({
             onRemovePreviewComment={onRemovePreviewComment}
             onSendBoardCommentAttachments={onSendBoardCommentAttachments}
             onExportPptxViaAgent={onExportPptxViaAgent}
+            onExportImageViaAgent={onExportImageViaAgent}
             onFileSaved={onRefreshFiles}
             onOpenFileReplacing={openFileReplacing}
             commentPortalId={commentPortalId}

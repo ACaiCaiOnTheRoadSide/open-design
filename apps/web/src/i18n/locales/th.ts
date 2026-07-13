@@ -2296,6 +2296,7 @@ export const th: Dict = {
   'fileViewer.exportPptxHint': 'ส่งข้อมูลเพื่อให้ทำการแปลเอกสารเป็น PPTX',
   'fileViewer.exportPptxNa': 'งาน PPTX ไม่สามารถดึงออกในจุดนี้ได้',
   'fileViewer.exportPptxAgentQueued': 'ส่งให้เอเจนต์ AI แล้ว ไฟล์ .pptx จะปรากฏในรายการไฟล์เมื่อเสร็จ',
+  'fileViewer.exportImageAgentQueued': 'ส่งให้เอเจนต์ AI แล้ว รูปภาพจะปรากฏในรายการไฟล์เมื่อเสร็จ',
   'fileViewer.exportZip': 'สูบทั้งหมดมาในรูป .zip',
   'fileViewer.exportHtml': 'เอาไปแค่รูปไฟล์ HTML',
   'fileViewer.exportMd': 'แปลงข้อความแบบฉบับเป็น Markdown',
