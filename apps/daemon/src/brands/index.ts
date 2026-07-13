@@ -401,10 +401,11 @@ export async function startBrandExtraction(
     opts.onBackgroundExtraction?.(settled);
     void settled
       .then(async (result) => {
-        if (!result && !programmaticOptions.abortSignal?.aborted) {
+        const aborted = programmaticOptions.abortSignal?.aborted ?? false;
+        if (!result && !aborted) {
           await updateProject(db, projectId, { pendingPrompt: fallbackPrompt });
         }
-        return seedReadyProgrammaticExtractionTranscript({
+        await seedReadyProgrammaticExtractionTranscript({
           db,
           conversationId,
           randomId,
@@ -422,6 +423,20 @@ export async function startBrandExtraction(
             entryFile: BRAND_KIT_FILE,
           },
         });
+        if (programmaticTranscript) {
+          await finalizeUnresolvedProgrammaticExtractionTranscript({
+            db,
+            conversationId,
+            brandsRoot,
+            brandId: id,
+            sourceUrl: url,
+            locale,
+            startedAt: programmaticStartedAt,
+            transcript: programmaticTranscript,
+            transcriptAgent: opts.transcriptAgent,
+            aborted,
+          });
+        }
       })
       .catch((err) => {
         if (isClosedDatabaseError(err)) return;
@@ -523,6 +538,50 @@ async function seedReadyProgrammaticExtractionTranscript(input: {
       ...input.metadata,
       brandDesignSystemId: latest.meta.designSystemId,
     },
+  });
+}
+
+/** Close out the "extraction started…" placeholder when the programmatic pass
+ *  ends WITHOUT a ready design system (blocked/unreachable origin, thin
+ *  harvest, timeout, abort). The ready path rewrites the same message via
+ *  `seedProgrammaticExtractionTranscript`; without this counterpart the
+ *  placeholder stays `runStatus: 'running'` forever and the web footer keeps
+ *  counting wall-clock time long after the pass died. Handoff is not failure —
+ *  the agent fallback continues the extraction in a follow-up run — so the
+ *  placeholder finalizes as succeeded-with-handoff-note (or canceled when the
+ *  extraction was aborted). */
+async function finalizeUnresolvedProgrammaticExtractionTranscript(input: {
+  db: Parameters<typeof insertProject>[0];
+  conversationId: string;
+  brandsRoot: string;
+  brandId: string;
+  sourceUrl: string;
+  locale: string;
+  startedAt: number;
+  transcript: ProgrammaticExtractionTranscript;
+  transcriptAgent?: StartBrandExtractionOptions['transcriptAgent'];
+  aborted: boolean;
+}): Promise<void> {
+  const latest = readBrandDetail(input.brandsRoot, input.brandId);
+  if (latest?.meta.status === 'ready' && latest.meta.designSystemId) return;
+  const copy = brandExtractionTranscriptCopy(input.locale);
+  const sourceLine = input.sourceUrl.startsWith('designmd://')
+    ? copy.sourceDesignMd
+    : input.sourceUrl;
+  const content = input.aborted
+    ? copy.started(sourceLine)
+    : `${copy.started(sourceLine)}\n\n${copy.fallback}`;
+  await upsertMessage(input.db, input.conversationId, {
+    id: input.transcript.assistantMessageId,
+    role: 'assistant',
+    content,
+    ...(input.transcriptAgent?.agentId ? { agentId: input.transcriptAgent.agentId } : {}),
+    ...(input.transcriptAgent?.agentName ? { agentName: input.transcriptAgent.agentName } : {}),
+    events: [{ kind: 'text', text: content }],
+    runStatus: input.aborted ? 'canceled' : 'succeeded',
+    createdAt: input.startedAt,
+    startedAt: input.startedAt,
+    endedAt: Date.now(),
   });
 }
 
@@ -632,6 +691,9 @@ interface BrandExtractionTranscriptCopy {
   started: (source: string) => string;
   doneTitle: (name: string) => string;
   doneBody: (designSystemId: string, source: string) => string;
+  /** Appended to the start placeholder when the programmatic pass ends without
+   *  a ready design system and the agent fallback takes over. */
+  fallback: string;
 }
 
 function brandExtractionTranscriptCopy(locale?: string | null): BrandExtractionTranscriptCopy {
@@ -645,6 +707,7 @@ function brandExtractionTranscriptCopy(locale?: string | null): BrandExtractionT
         doneBody: (designSystemId, source) =>
           `我已经从 ${source} 创建并注册了 ${designSystemId} 设计系统。现在可以预览，也可以直接用于新设计。`,
         next: '接下来，你可以运行 AI 优化做更深一轮抽取，或者用这个系统新建设计。',
+        fallback: '程序化抽取没有拿到足够的素材（站点无法直接访问，或页面内容太薄）。已转交 AI agent 接手继续抽取，请关注下一条消息。',
       };
     case 'zh-TW':
       return {
@@ -655,6 +718,7 @@ function brandExtractionTranscriptCopy(locale?: string | null): BrandExtractionT
         doneBody: (designSystemId, source) =>
           `我已經從 ${source} 建立並註冊了 ${designSystemId} 設計系統。現在可以預覽，也可以直接用於新設計。`,
         next: '接下來，你可以執行 AI 優化做更深一輪抽取，或者用這個系統建立新設計。',
+        fallback: '程式化抽取沒有取得足夠的素材（站點無法直接存取，或頁面內容太薄）。已轉交 AI agent 接手繼續抽取，請關注下一則訊息。',
       };
     default:
       return {
@@ -665,6 +729,7 @@ function brandExtractionTranscriptCopy(locale?: string | null): BrandExtractionT
         doneBody: (designSystemId, source) =>
           `I created and registered the ${designSystemId} design system from ${source}. It is ready to preview and can be used in new designs now.`,
         next: 'Next, you can run AI Optimize for a deeper extraction pass, or create a new design with this system.',
+        fallback: 'The programmatic pass could not gather enough material (the origin was unreachable or the page too thin). Handing off to the AI agent to continue the extraction — see the next message.',
       };
   }
 }
