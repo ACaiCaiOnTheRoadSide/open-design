@@ -118,14 +118,16 @@ export type DaemonAgentPayload =
       durationMs?: number;
     }
   | { type: 'fabricated_role_marker'; marker: string; messageId?: string }
-  // The agent is stuck repeating failing tool calls (see tool-loop-guard.ts).
+  // The agent is stuck repeating tool calls (see tool-loop-guard.ts).
   // `action: 'warn'` is an early heads-up the run may be looping; `'halt'` means
   // the daemon terminated the run at the hard ceiling. `signature` is a
   // truncated, human-readable form of the repeated action; `count` is how many
-  // times it failed (consecutive run, or repeats of this exact action).
+  // times it repeated (consecutive errors, repeats of this exact failing
+  // action, or — `identical-noprogress` — strictly-consecutive repeats of the
+  // same successful read-only call returning a byte-identical result).
   | {
       type: 'tool_loop';
-      reason: 'consecutive-errors' | 'repeated-failure';
+      reason: 'consecutive-errors' | 'repeated-failure' | 'identical-noprogress';
       action: 'warn' | 'halt';
       toolName: string;
       signature: string;

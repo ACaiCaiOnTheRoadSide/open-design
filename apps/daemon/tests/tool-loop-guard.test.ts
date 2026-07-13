@@ -353,6 +353,162 @@ describe('createToolLoopGuard — latching and modes', () => {
   });
 });
 
+describe('createToolLoopGuard — identical-noprogress trigger', () => {
+  // A successful read-only call, with explicit result content.
+  function okWith(
+    guard: ReturnType<typeof createToolLoopGuard>,
+    id: string,
+    input: unknown,
+    content: string,
+  ) {
+    guard.observeToolUse(id, 'bash', input);
+    return guard.observeToolResult(id, false, content);
+  }
+
+  // The motivating incident: grep exits 1 on no-matches, the CLI reports the
+  // call as a completed SUCCESS with empty output, the model reads "command
+  // failed" and re-runs it verbatim — forever. No error ever reaches the
+  // failure triggers.
+  const grepCmd = {
+    command:
+      "cd /workspace/projects/p1 && grep -n 'font-weight' index.html | grep -v 'font-weight: 400' | grep -v 'font-weight: 500'",
+  };
+
+  it('halts a byte-identical successful read-only repeat at the hard ceiling', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    const actions: string[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      const v = okWith(guard, `g-${i}`, grepCmd, '');
+      if (v) actions.push(v.action);
+    }
+    expect(actions).toContain('warn');
+    expect(actions).toContain('halt');
+    expect(guard.halted).toBe(true);
+  });
+
+  it('reports the identical-noprogress reason with the repeat count', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    let verdict = null;
+    for (let i = 0; i < 4 && !verdict; i += 1) {
+      verdict = okWith(guard, `g-${i}`, grepCmd, '');
+    }
+    expect(verdict).toMatchObject({
+      type: 'tool_loop',
+      reason: 'identical-noprogress',
+      action: 'warn',
+      toolName: 'bash',
+      count: 4,
+    });
+  });
+
+  it('warn mode warns but never halts', () => {
+    const guard = createToolLoopGuard({ mode: 'warn' });
+    const verdicts: Array<ReturnType<typeof okWith>> = [];
+    for (let i = 0; i < 20; i += 1) verdicts.push(okWith(guard, `g-${i}`, grepCmd, ''));
+    const seen = verdicts.filter(Boolean);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ action: 'warn', reason: 'identical-noprogress' });
+    expect(guard.halted).toBe(false);
+  });
+
+  it('a changing result resets the streak (legitimate polling makes progress)', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    for (let i = 0; i < 20; i += 1) {
+      expect(okWith(guard, `poll-${i}`, { command: 'cat status.txt' }, `state-${i}`)).toBeNull();
+    }
+    expect(guard.warned).toBe(false);
+  });
+
+  it('a different call in between resets the streak', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    for (let i = 0; i < 20; i += 1) {
+      expect(okWith(guard, `a-${i}`, grepCmd, '')).toBeNull();
+      expect(okWith(guard, `b-${i}`, { command: 'cat index.html' }, '<html>')).toBeNull();
+    }
+    expect(guard.warned).toBe(false);
+  });
+
+  it('a successful mutating call clears the streak', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    for (let i = 0; i < 3; i += 1) expect(okWith(guard, `g-${i}`, grepCmd, '')).toBeNull();
+    expect(ok(guard, 'fix', 'Edit', { file_path: '/index.html', old_string: 'x' })).toBeNull();
+    for (let i = 0; i < 3; i += 1) expect(okWith(guard, `h-${i}`, grepCmd, '')).toBeNull();
+    expect(guard.warned).toBe(false);
+  });
+
+  it('errored repeats reset the streak: a recovery success is never counted as a loop', () => {
+    // Silent checks (grep -q, test -f) produce identical (empty) output whether
+    // failing or finally passing. 7 identical errors followed by the recovery
+    // success must NOT trip identical-noprogress — the errors belong to the
+    // repeated-failure trigger and reset this streak.
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    const silent = { command: 'grep -q needle haystack.txt' };
+    for (let i = 0; i < 7; i += 1) {
+      guard.observeToolUse(`e-${i}`, 'bash', silent);
+      guard.observeToolResult(`e-${i}`, true, '');
+    }
+    const recovery = okWith(guard, 'recovered', silent, '');
+    expect(recovery).toBeNull();
+    expect(guard.halted).toBe(false);
+  });
+
+  it('a sleep-prefixed wait poll is progress and never enters the streak', () => {
+    const poll = 'sleep 30 && tail -20 build.log';
+    expect(isReadOnlyShellCommand(poll)).toBe(false);
+    expect(isProgressSuccess('bash', computeToolSignature('bash', { command: poll }))).toBe(true);
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    for (let i = 0; i < 20; i += 1) {
+      expect(okWith(guard, `p-${i}`, { command: poll }, 'compiling...')).toBeNull();
+    }
+    expect(guard.warned).toBe(false);
+  });
+
+  it('successes with no matching tool_use never enter the streak', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    for (let i = 0; i < 20; i += 1) {
+      expect(guard.observeToolResult(`orphan-${i}`, false, '')).toBeNull();
+    }
+    expect(guard.warned).toBe(false);
+  });
+
+  it('warn latches are per-trigger: an identical warn does not consume the failure warn', () => {
+    const guard = createToolLoopGuard({ mode: 'warn' });
+    const verdicts: Array<ReturnType<typeof okWith>> = [];
+    for (let i = 0; i < 4; i += 1) verdicts.push(okWith(guard, `g-${i}`, grepCmd, ''));
+    const failInput = { command: 'python3 verify.py' };
+    for (let i = 0; i < 4; i += 1) verdicts.push(fail(guard, `f-${i}`, 'Bash', failInput));
+    const seen = verdicts.filter(Boolean);
+    expect(seen.map((v) => v && v.reason)).toEqual(['identical-noprogress', 'repeated-failure']);
+  });
+
+  it('identical successful MUTATING repeats never trip (each one is progress)', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    for (let i = 0; i < 20; i += 1) {
+      expect(okWith(guard, `m-${i}`, { command: 'pnpm install' }, 'done')).toBeNull();
+    }
+    expect(guard.warned).toBe(false);
+  });
+
+  it('classifies a cd-prefixed grep pipeline as read-only (cd must not count as progress)', () => {
+    expect(isReadOnlyShellCommand(grepCmd.command)).toBe(true);
+    expect(isProgressSuccess('bash', computeToolSignature('bash', grepCmd))).toBe(false);
+  });
+
+  it('unwraps wrapper prefixes instead of classifying the wrapper binary', () => {
+    // Inspection stays inspection under a wrapper…
+    expect(isReadOnlyShellCommand('timeout 5 grep x file.txt')).toBe(true);
+    expect(isReadOnlyShellCommand('timeout -k 5 10 grep x file.txt')).toBe(true);
+    expect(isReadOnlyShellCommand('nice -n 10 grep x file.txt')).toBe(true);
+    expect(isReadOnlyShellCommand('time cat file.txt')).toBe(true);
+    expect(isReadOnlyShellCommand('timeout 5 env CI=1 grep x file.txt')).toBe(true);
+    // …and mutation stays mutation — blanket-whitelisting the wrapper would
+    // wrongly make these non-progress.
+    expect(isReadOnlyShellCommand('timeout 30 pnpm install')).toBe(false);
+    expect(isReadOnlyShellCommand('nice -n 10 sed -i s/a/b/ file.txt')).toBe(false);
+    expect(isReadOnlyShellCommand('nohup node build.js')).toBe(false);
+  });
+});
+
 describe('resolveToolLoopMode', () => {
   it('defaults to warn', () => {
     expect(resolveToolLoopMode({})).toBe('warn');

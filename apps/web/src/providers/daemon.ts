@@ -1558,10 +1558,15 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   if (t === 'tool_loop' && typeof data.toolName === 'string') {
     const toolName = data.toolName;
     const count = typeof data.count === 'number' ? data.count : 0;
+    const identical = data.reason === 'identical-noprogress';
     const detail =
       data.action === 'halt'
-        ? `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
-        : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
+        ? identical
+          ? `Run stopped: the agent repeated the same ${toolName} call ${count}× with an identical result. Re-running it cannot change the outcome.`
+          : `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
+        : identical
+          ? `Heads up — the agent has repeated the same ${toolName} call ${count}× with an identical result and may be stuck.`
+          : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
     return { kind: 'status', label: 'warning', detail };
   }
   if (t === 'raw' && typeof data.line === 'string') {

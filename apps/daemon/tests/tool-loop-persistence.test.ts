@@ -54,6 +54,35 @@ describe('daemonAgentPayloadToPersistedAgentEvent — tool_loop', () => {
     expect(persisted!.detail).toContain('10');
   });
 
+  it('persists an identical-noprogress tool_loop with success-accurate wording', () => {
+    // The identical-noprogress trigger fires on SUCCESSFUL repeats — the
+    // persisted copy must not call them "failing" (that contradicts the very
+    // lesson the event teaches: an empty grep result is a success, not an
+    // error), and must match the live mapping's wording.
+    const warn = persist({
+      type: 'tool_loop',
+      reason: 'identical-noprogress',
+      action: 'warn',
+      toolName: 'bash',
+      signature: "bash grep -n 'font-weight' index.html",
+      count: 4,
+    });
+    expect(warn!.detail).toContain('identical result');
+    expect(warn!.detail).not.toContain('failing');
+
+    const halt = persist({
+      type: 'tool_loop',
+      reason: 'identical-noprogress',
+      action: 'halt',
+      toolName: 'bash',
+      signature: "bash grep -n 'font-weight' index.html",
+      count: 8,
+    });
+    expect(halt!.detail).toContain('Run stopped');
+    expect(halt!.detail).toContain('identical result');
+    expect(halt!.detail).not.toContain('failing');
+  });
+
   it('drops a malformed tool_loop without a toolName', () => {
     expect(persist({ type: 'tool_loop', action: 'warn', count: 4 })).toBeNull();
   });

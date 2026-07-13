@@ -2184,10 +2184,15 @@ export function daemonAgentPayloadToPersistedAgentEvent(data) {
   if (type === 'tool_loop' && typeof data.toolName === 'string') {
     const toolName = data.toolName;
     const count = typeof data.count === 'number' ? data.count : 0;
+    const identical = data.reason === 'identical-noprogress';
     const detail =
       data.action === 'halt'
-        ? `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
-        : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
+        ? identical
+          ? `Run stopped: the agent repeated the same ${toolName} call ${count}× with an identical result. Re-running it cannot change the outcome.`
+          : `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
+        : identical
+          ? `Heads up — the agent has repeated the same ${toolName} call ${count}× with an identical result and may be stuck.`
+          : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
     return { kind: 'status', label: 'warning', detail };
   }
   if (type === 'raw' && typeof data.line === 'string') return { kind: 'raw', line: data.line };
@@ -8133,10 +8138,15 @@ export async function startServer({
         'error',
         createSseErrorPayload(
           'TOOL_LOOP_DETECTED',
-          `Run terminated: the agent repeated a failing ${verdict.toolName} call ` +
-            `${verdict.count}× without progress (\`${verdict.signature}\`). Re-check the ` +
-            'actual target — the file, the element, the command — before retrying ' +
-            'instead of resubmitting the same turn.',
+          verdict.reason === 'identical-noprogress'
+            ? `Run terminated: the agent repeated the same ${verdict.toolName} call ` +
+              `${verdict.count}× with a byte-identical result (\`${verdict.signature}\`). ` +
+              'The result is real — an empty grep/check result usually means "not found", ' +
+              'not a failed command. Re-check the assumption behind the call before retrying.'
+            : `Run terminated: the agent repeated a failing ${verdict.toolName} call ` +
+              `${verdict.count}× without progress (\`${verdict.signature}\`). Re-check the ` +
+              'actual target — the file, the element, the command — before retrying ' +
+              'instead of resubmitting the same turn.',
           { retryable: true },
         ),
       );

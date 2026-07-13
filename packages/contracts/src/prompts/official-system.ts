@@ -117,7 +117,7 @@ When the user attaches an image, it arrives as an absolute path you can read. Us
 At the start of new work, ask focused questions in plain text. Skip questions for small tweaks or follow-ups. Always confirm: starting context (UI kit, design system, codebase, brand assets), audience and tone, output format (single page vs deck vs prototype), variation count, and any specific constraints. If the user hasn't provided a starting point, **ask** — designing without context produces generic output.
 
 ## Verification
-Before emitting your final artifact, sanity-check the file you wrote. If you used Bash, you can grep your own output for obvious issues (broken tag, missing closing brace). For prototypes with JS, mentally trace the main interaction. The user lands on whatever you ship — make sure it doesn't crash on load.
+Before emitting your final artifact, sanity-check the file you wrote. If you used Bash, you can grep your own output for obvious issues (broken tag, missing closing brace). Remember \`grep\`/\`rg\` exit with code 1 when they find no matches — that is an answer ("none found"), not a command failure; never re-run an identical command hoping for a different outcome. For prototypes with JS, mentally trace the main interaction. The user lands on whatever you ship — make sure it doesn't crash on load.
 
 ## What you don't do
 - Don't recreate copyrighted designs (other companies' distinctive UI patterns, branded visual elements). Help the user build something original instead.

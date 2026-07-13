@@ -37,6 +37,25 @@
  *      finally succeeding. K is set high enough that a couple of legitimate
  *      retries of the same command (fix, re-run, fix, re-run) never trip it.
  *
+ *   3. IDENTICAL no-progress repetition — the SAME (tool, action) signature
+ *      returns the byte-identical result K times IN A ROW, even when every
+ *      result is flagged a success. Catches the blind spot of triggers 1–2:
+ *      a verification command whose "failure" the CLI reports as a completed
+ *      call. Motivating incident: an agent ran the same
+ *      `grep 'font-weight' … | grep -v …` a dozen+ times — grep exits 1 on
+ *      no-matches, the model read that as "command failed, retry", but the
+ *      tool_result reached the daemon flagged as a SUCCESS, so the failure
+ *      triggers never counted a thing. An identical read-only call returning
+ *      an identical result is deterministic: re-running it cannot change the
+ *      outcome, so K strictly-consecutive repeats are a loop, not work. ONLY
+ *      attributed non-progress successes are counted; errors (triggers 1–2's
+ *      job), progress-classified successes (mutating shell, Edit/Write, …),
+ *      unattributed results, and any different call/result all reset the
+ *      streak — so legitimate polling (`od media wait`, `sleep … && tail …`,
+ *      both progress-classified) can never trip it. Known blind spot: a
+ *      volatile byte in the repeated output (timestamp, timing) keeps the
+ *      streak at 1; byte-stability is required by design.
+ *
  * Two escalation tiers per trigger:
  *   - WARN  — emit a one-shot heads-up event so the UI/CLI surfaces "this run
  *             may be stuck" while it is still cheap to stop. Never destructive.
@@ -52,7 +71,7 @@
  */
 
 /** Why the guard tripped. */
-export type ToolLoopReason = 'consecutive-errors' | 'repeated-failure';
+export type ToolLoopReason = 'consecutive-errors' | 'repeated-failure' | 'identical-noprogress';
 
 /** What the run loop should do about it. */
 export type ToolLoopAction = 'warn' | 'halt';
@@ -138,6 +157,17 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/gu, ' ').trim();
 }
 
+/** Cheap stable digest of a tool_result's content for the identical-repeat
+ *  streak (trigger 3). Length + djb2-xor keeps comparisons O(1) per result
+ *  without retaining potentially-huge result bodies. */
+function hashResultContent(content: string): string {
+  let h = 5381;
+  for (let i = 0; i < content.length; i += 1) {
+    h = ((h * 33) ^ content.charCodeAt(i)) >>> 0;
+  }
+  return `${content.length}:${h}`;
+}
+
 // Deciding which SUCCESSFUL calls count as real progress (clearing the
 // repeated-failure tally) vs. read-only inspections (which do not, so a
 // re-read-between-failures fixation loop still trips). The default leans toward
@@ -165,6 +195,15 @@ const READ_ONLY_SHELL_BINARIES = new Set([
   'cat', 'ls', 'grep', 'rg', 'egrep', 'fgrep', 'head', 'tail', 'pwd', 'echo', 'printf',
   'which', 'type', 'wc', 'stat', 'file', 'tree', 'diff', 'jq', 'awk', 'date', 'test',
   'true', 'false', 'basename', 'dirname', 'realpath', 'readlink', 'cut', 'sort', 'uniq', 'column', 'cmp',
+  // `cd` only moves the shell's own cwd — agents habitually prefix inspections
+  // with `cd <workspace> && grep …`, and classifying that as a mutation made
+  // every such check "progress" that reset the tallies (the font-weight grep
+  // loop from the trigger-3 incident was exactly this shape). `sleep` is
+  // deliberately NOT here: in a wait-then-inspect poll (`sleep 30 && tail
+  // build.log`) time passing is exactly what the call buys, so treating it as
+  // progress keeps trigger 3 from halting a healthy wait whose observed output
+  // is legitimately unchanged for many polls.
+  'cd',
 ]);
 
 // `find` actions that delete, run a command, or write a file — these mutate, so
@@ -209,6 +248,64 @@ function unwrapEnvPrefix(segment: string): string {
   return rest;
 }
 
+// Prefix wrappers that just run another command: head binary -> how to strip
+// it so the WRAPPED command is what gets classified. `valueFlags` are flags
+// that consume the following token; `positionals` are leading non-flag
+// arguments the wrapper itself takes (timeout's duration). Unwrapping — not
+// whitelisting — is required to get both directions right: `timeout 5 grep …`
+// only inspects, while `timeout 30 pnpm install` mutates via pnpm. `xargs` is
+// deliberately absent (it rewrites the wrapped command's arguments).
+const SHELL_WRAPPER_PREFIXES: Record<string, { positionals: number; valueFlags: readonly string[] }> = {
+  nohup: { positionals: 0, valueFlags: [] },
+  time: { positionals: 0, valueFlags: [] },
+  command: { positionals: 0, valueFlags: [] },
+  nice: { positionals: 0, valueFlags: ['-n', '--adjustment'] },
+  timeout: { positionals: 1, valueFlags: ['-k', '--kill-after', '-s', '--signal'] },
+  stdbuf: { positionals: 0, valueFlags: ['-i', '-o', '-e'] },
+};
+
+/** Strip one recognised wrapper head (with its flags/own arguments) from the
+ *  segment; returns the input unchanged when the head is not a wrapper. */
+function stripOneWrapperPrefix(segment: string): string {
+  const rest = segment.trim();
+  const spec = SHELL_WRAPPER_PREFIXES[shellHead(rest)];
+  if (!spec) return rest;
+  const after = rest.replace(/^\s*[A-Za-z0-9_./-]+\b/u, '').trim();
+  const tokens = after.length ? after.split(/\s+/u) : [];
+  let index = 0;
+  let positionals = spec.positionals;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token === undefined) break;
+    if (token.startsWith('-')) {
+      // `--kill-after=5s` style carries its value inline; bare `-k` consumes
+      // the next token. Negative numbers (`nice -10`) parse as flags — fine,
+      // they carry no value.
+      if (spec.valueFlags.includes(token)) { index += 2; continue; }
+      index += 1;
+      continue;
+    }
+    if (positionals > 0) { positionals -= 1; index += 1; continue; }
+    break;
+  }
+  return tokens.slice(index).join(' ');
+}
+
+/**
+ * Iteratively strip `env`-style and wrapper-style prefixes (`timeout 5 env
+ * CI=1 grep …` → `grep …`) so classification always sees the real command.
+ * Same altitude as unwrapEnvPrefix — per-binary whitelisting of wrappers was
+ * how the `cd`/`env` misclassification incidents kept recurring.
+ */
+function unwrapCommandPrefixes(segment: string): string {
+  let rest = segment;
+  for (;;) {
+    const next = stripOneWrapperPrefix(unwrapEnvPrefix(rest));
+    if (next === rest) return rest;
+    rest = next;
+  }
+}
+
 /**
  * Heuristic: does this shell command ONLY inspect state? A successful read-only
  * shell call must not clear the repeated-failure tally, while a state-changing
@@ -224,7 +321,7 @@ export function isReadOnlyShellCommand(command: string): boolean {
   const redirs = cmd.replace(/\d*>\s*\/dev\/null/gu, '').replace(/\d*>&\d+/gu, '');
   if (/>/u.test(redirs)) return false;
   for (const rawSeg of cmd.split(/\|\||&&|[;|]/u)) {
-    const seg = unwrapEnvPrefix(rawSeg);
+    const seg = unwrapCommandPrefixes(rawSeg);
     if (!seg) continue; // empty segment from a trailing/standalone separator
     const head = shellHead(seg);
     // A non-empty segment we cannot parse a head from (a subshell like
@@ -385,7 +482,16 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
   const failCounts = new Map<string, number>();
 
   let consecutiveErrors = 0;
-  let _warned = false;
+  // Trigger-3 streak: key of the last observed (signature, result-content)
+  // pair and how many times in a row it has repeated byte-identically.
+  let identicalKey: string | null = null;
+  let identicalCount = 0;
+  // One-shot warn latches, one per trigger family. Kept separate so an early
+  // benign identical-noprogress warn cannot consume the run's only warning and
+  // silence a later genuine failure loop (or vice versa) in warn mode. The
+  // public `warned` getter reports either.
+  let _warnedFailure = false;
+  let _warnedIdentical = false;
   let _halted = false;
 
   function evict<K, V>(map: Map<K, V>, cap: number): void {
@@ -398,7 +504,7 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
 
   return {
     get warned() {
-      return _warned;
+      return _warnedFailure || _warnedIdentical;
     },
     get halted() {
       return _halted;
@@ -413,6 +519,11 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
 
     observeToolResult(toolUseId, isError, content) {
       if (mode === 'off' || _halted) return null;
+      // In warn mode, once both one-shot warnings have latched nothing this
+      // function does is externally observable anymore (every halt path is
+      // gated on mode === 'halt') — skip the remaining bookkeeping, notably
+      // the full-content hash on the per-event hot path.
+      if (mode === 'warn' && _warnedFailure && _warnedIdentical) return null;
 
       const use = toolUseId ? uses.get(toolUseId) : undefined;
       if (toolUseId) uses.delete(toolUseId);
@@ -428,6 +539,15 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
       if (!isError && use && maskedOdCliFailure(use.name, content)) {
         isError = true;
       }
+
+      const toolName = use?.name ?? 'tool';
+      // Prefer the use's action signature. If the use was evicted/never seen
+      // (e.g. a result with no matching use), fall back to a signature derived
+      // from the tool name + the (whitespace-collapsed, full) result content so
+      // identical repeated errors still cluster.
+      const signature =
+        use?.signature ??
+        computeToolSignature(toolName, typeof content === 'string' ? content : undefined);
 
       // A success always breaks the strictly-consecutive error streak. Whether
       // it also clears the per-signature failure tally depends on whether it was
@@ -446,23 +566,58 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
       //     shape from the motivating report. (PR #3375 review.)
       if (!isError) {
         consecutiveErrors = 0;
-        if (use && isProgressSuccess(use.name, use.signature)) {
+        if (!use) {
+          // A success that cannot be attributed to an observed call cannot be
+          // classified as progress OR repetition — treat it as an unknown
+          // observation: it breaks the identical streak and touches no tallies.
+          identicalKey = null;
+          identicalCount = 0;
+          return null;
+        }
+        if (isProgressSuccess(use.name, use.signature)) {
+          // Real progress: stale failure tallies AND the identical streak are
+          // both meaningless now — the workspace changed under them.
           failCounts.clear();
-        } else if (use && failCounts.has(use.signature)) {
+          identicalKey = null;
+          identicalCount = 0;
+          return null;
+        }
+        if (failCounts.has(use.signature)) {
           failCounts.delete(use.signature);
+        }
+        // Trigger 3 — identical no-progress repetition: the same attributed
+        // call returning the byte-identical result, strictly consecutively.
+        // ONLY non-progress successes are counted — errors (trigger 1/2's
+        // job), progress successes, and unattributed results all reset the
+        // streak above/below, so a legitimate "poll until state changes"
+        // wrapper classified as progress can never trip this. Known blind
+        // spot: any volatile byte in the repeated output (timestamps, timing
+        // fields) keeps the streak at 1 — byte-stability is required by
+        // design, trading recall for zero false positives on changing output.
+        const resultKey = `${signature} ${hashResultContent(typeof content === 'string' ? content : '')}`;
+        if (resultKey === identicalKey) {
+          identicalCount += 1;
+        } else {
+          identicalKey = resultKey;
+          identicalCount = 1;
+        }
+        if (mode === 'halt' && identicalCount >= haltRepeat) {
+          _halted = true;
+          _warnedIdentical = true; // a halt is also, implicitly, the strongest warning
+          _warnedFailure = true;
+          return { type: 'tool_loop', reason: 'identical-noprogress', action: 'halt', toolName, signature: displayToolSignature(signature), count: identicalCount };
+        }
+        if (!_warnedIdentical && identicalCount >= warnRepeat) {
+          _warnedIdentical = true;
+          return { type: 'tool_loop', reason: 'identical-noprogress', action: 'warn', toolName, signature: displayToolSignature(signature), count: identicalCount };
         }
         return null;
       }
 
-      const toolName = use?.name ?? 'tool';
-      // Prefer the use's action signature. If the use was evicted/never seen
-      // (e.g. a result with no matching use), fall back to a signature derived
-      // from the tool name + a slice of the error content so identical repeated
-      // errors still cluster.
-      const signature =
-        use?.signature ??
-        computeToolSignature(toolName, typeof content === 'string' ? content : undefined);
-
+      // Errors are trigger 1/2 territory; they also break the identical-success
+      // streak — a failing observation is not "the same result again".
+      identicalKey = null;
+      identicalCount = 0;
       consecutiveErrors += 1;
       const repeatCount = (failCounts.get(signature) ?? 0) + 1;
       failCounts.set(signature, repeatCount);
@@ -479,18 +634,19 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
         const consecutiveHalt = consecutiveErrors >= haltConsecutive;
         if (repeatHalt || consecutiveHalt) {
           _halted = true;
-          _warned = true; // a halt is also, implicitly, the strongest warning
+          _warnedFailure = true; // a halt is also, implicitly, the strongest warning
+          _warnedIdentical = true;
           return repeatHalt
             ? { type: 'tool_loop', reason: 'repeated-failure', action: 'halt', toolName, signature: displaySignature, count: repeatCount }
             : { type: 'tool_loop', reason: 'consecutive-errors', action: 'halt', toolName, signature: displaySignature, count: consecutiveErrors };
         }
       }
 
-      if (!_warned) {
+      if (!_warnedFailure) {
         const repeatWarn = repeatCount >= warnRepeat;
         const consecutiveWarn = consecutiveErrors >= warnConsecutive;
         if (repeatWarn || consecutiveWarn) {
-          _warned = true;
+          _warnedFailure = true;
           return repeatWarn
             ? { type: 'tool_loop', reason: 'repeated-failure', action: 'warn', toolName, signature: displaySignature, count: repeatCount }
             : { type: 'tool_loop', reason: 'consecutive-errors', action: 'warn', toolName, signature: displaySignature, count: consecutiveErrors };
