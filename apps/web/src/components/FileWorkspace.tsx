@@ -106,6 +106,7 @@ import { LiveArtifactBadges } from './LiveArtifactBadges';
 import { MissingBrandFontsBanner } from './MissingBrandFontsBanner';
 import { PasteTextDialog } from './PasteTextDialog';
 import { LibraryPicker } from './LibraryPicker';
+import { confirm } from './confirm-dialog-host';
 import { QuestionsPanel } from './QuestionsPanel';
 import { QuickSwitcher } from './QuickSwitcher';
 import { SketchEditor } from './SketchEditor';
@@ -1017,7 +1018,7 @@ export function FileWorkspace({
     const sketchEntry = sketches[name];
     const isPending = sketchEntry && !sketchEntry.persisted;
     const hasUnsavedStrokes = sketchEntry && (sketchEntry.dirty || !sketchEntry.persisted);
-    if (hasUnsavedStrokes && !confirm(t('sketch.closeConfirm'))) return;
+    if (hasUnsavedStrokes && !window.confirm(t('sketch.closeConfirm'))) return;
     if (isPending) {
       setSketches((curr) => {
         const next = { ...curr };
@@ -1277,7 +1278,13 @@ export function FileWorkspace({
   }, [quickSwitcherOpen]);
 
   async function handleDelete(name: string) {
-    if (!confirm(t('workspace.deleteFileConfirm', { name }))) return;
+    const confirmed = await confirm({
+      message: t('workspace.deleteFileConfirm', { name }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
+    if (!confirmed) return;
     const ok = await deleteProjectFile(projectId, name);
     if (ok) {
       await onRefreshFiles();
@@ -1308,7 +1315,13 @@ export function FileWorkspace({
 
   async function handleDeleteMany(names: string[]) {
     if (names.length === 0) return;
-    if (!confirm(t('workspace.deleteSelectedFilesConfirm', { n: names.length }))) return;
+    const ok = await confirm({
+      message: t('workspace.deleteSelectedFilesConfirm', { n: names.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
+    if (!ok) return;
     const deleted: string[] = [];
     const failed: string[] = [];
     for (const name of names) {
@@ -2695,9 +2708,12 @@ function DesignSystemProjectPanel({
   // to do in the happy path.
   async function deleteDesignSystemProject() {
     if (kitActionBusy || !onDeleteDesignSystemProject) return;
-    const ok = window.confirm(
-      t('ds.deleteProjectConfirm', { title: system.title }),
-    );
+    const ok = await confirm({
+      message: t('ds.deleteProjectConfirm', { title: system.title }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
     if (!ok) return;
     setKitActionBusy('delete');
     notifyKitLoading(t('ds.deleteProjectAction', { title: system.title }));

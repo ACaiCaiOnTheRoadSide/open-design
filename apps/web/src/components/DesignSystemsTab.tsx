@@ -34,6 +34,7 @@ import { DesignKitView, HeaderActionsMenu, type DesignKitActionFeedbackTone, typ
 import { hostnameOf } from './BrandPreviewCard';
 import { Icon } from './Icon';
 import { Toast } from './Toast';
+import { confirm } from './confirm-dialog-host';
 import type { DesignSystemDetail, DesignSystemSummary, ProjectTemplate, Surface } from '../types';
 import styles from './DesignSystemsTab.module.css';
 
@@ -466,7 +467,12 @@ export function DesignSystemsTab({
 
   async function deleteSystem(system: DesignSystemSummary) {
     if (busyAction) return;
-    const ok = window.confirm(t('dsManager.deleteConfirm', { title: system.title }));
+    const ok = await confirm({
+      message: t('dsManager.deleteConfirm', { title: system.title }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
     if (!ok) {
       trackDesignSystemStatusResult(analytics.track, {
         page_name: 'design_systems',

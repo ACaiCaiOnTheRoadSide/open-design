@@ -15,6 +15,7 @@ import {
   fidelityToTracking,
 } from '@open-design/contracts/analytics';
 import type { AmrModelsResponse, ChatSessionMode } from '@open-design/contracts';
+import { ConfirmDialogHost } from './components/confirm-dialog-host';
 import { EntryView } from './components/EntryView';
 import type { IntegrationTab } from './components/IntegrationsView';
 import { MarketplaceView } from './components/MarketplaceView';
@@ -2411,6 +2412,7 @@ function AppInner() {
       </motion.div>
       ) : null}
       </AnimatePresence>
+      <ConfirmDialogHost />
     </>
   );
 }

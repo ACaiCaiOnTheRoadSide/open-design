@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@open-design/components';
 import type { BrandSummary } from '@open-design/contracts';
 import { useT } from '../i18n';
+import { confirm } from './confirm-dialog-host';
 import { navigate } from '../router';
 import { useAnalytics } from '../analytics/provider';
 import { trackDesignSystemEditClick } from '../analytics/events';
@@ -117,7 +118,12 @@ export function BrandPreviewCard({
 
   const deleteBrand = useCallback(async () => {
     if (busy) return;
-    const ok = window.confirm(t('brandDetail.deleteConfirm').replace('{name}', name));
+    const ok = await confirm({
+      message: t('brandDetail.deleteConfirm').replace('{name}', name),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
     if (!ok) return;
     const designSystemId = meta.designSystemId;
     if (designSystemId) {
