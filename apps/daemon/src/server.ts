@@ -8,7 +8,7 @@ import type {
   DesktopRenderSlidesResult,
 } from '@open-design/sidecar-proto';
 import express from 'express';
-import { tenantMiddleware, enterTenant, currentProviderConfig } from './multitenant.js';
+import { tenantMiddleware, enterTenant, currentProviderConfig, LEGACY_TENANT } from './multitenant.js';
 import multer from 'multer';
 import JSZip from 'jszip';
 import { execFile, spawn } from 'node:child_process';
@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import net from 'node:net';
 import { Readable } from 'node:stream';
@@ -218,6 +219,7 @@ import {
 import {
   buildUserDesignSystemArchive,
   createUserDesignSystem,
+  createUserDesignSystemRevision,
   deleteUserDesignSystem,
   digestDesignSystemContext,
   LEGACY_DESIGN_SYSTEM_ARTIFACTS,
@@ -345,6 +347,8 @@ import {
   flush as syncEngineFlush,
   hydrate as hydrateProjectFromManifest,
   initSyncEngine,
+  markDirty as markSyncDirty,
+  registerSyncNamespace,
   syncEnabled as manifestSyncEnabled,
 } from './sync/engine.js';
 import { buildPromptStackTelemetry } from './prompt-telemetry.js';
@@ -473,6 +477,7 @@ import { ArtifactPublicationBlockedError } from './artifacts/publication-guard.j
 import {
   appendMessageAgentEvent,
   appendMessageStatusEvent,
+  backfillDesignSystemRow,
   deleteConversation,
   deletePreviewComment,
   deleteProject as dbDeleteProject,
@@ -481,9 +486,12 @@ import {
   getDeployment,
   getDeploymentById,
   getMessageTelemetryFinalizationState,
+  getDesignSystemRow,
   getProject,
+  getProjectOwnerUnscoped,
   getTemplate,
   insertConversation,
+  insertDesignSystem,
   insertMessageTokenUsage,
   insertProject,
   insertRoutine,
@@ -492,6 +500,8 @@ import {
   insertTemplate,
   findTemplateByNameAndProject,
   updateTemplate,
+  listAllDesignSystemIds,
+  listDesignSystemRows,
   listProjectsAwaitingInput,
   listConversations,
   listDeployments,
@@ -509,6 +519,8 @@ import {
   deleteRoutine as dbDeleteRoutine,
   openDatabase,
   setTabs,
+  softDeleteDesignSystem,
+  touchDesignSystem,
   updateConversation,
   updatePreviewCommentStatus,
   incrementProjectDownloadCount,
@@ -887,8 +899,59 @@ for (const dir of [USER_SKILLS_DIR, USER_DESIGN_SYSTEMS_DIR, BRANDS_DIR, USER_DE
 }
 fs.mkdirSync(CRITIQUE_ARTIFACTS_DIR, { recursive: true });
 const orbitService = new OrbitService(RUNTIME_DATA_DIR);
+// 用户设计体系在 manifest+blob 同步通道里的 sync id 前缀:
+// `dsys--<dirId>` → USER_DESIGN_SYSTEMS_DIR/<dirId>(见 registerSyncNamespace)。
+// 与项目 id 共用后端 manifest 键空间,前缀足够怪以避免撞真实项目 id。
+const DESIGN_SYSTEM_SYNC_PREFIX = 'dsys--';
+
+/** 设计体系目录有写动作后标脏,debounce 推送到 OSS。sync 未启用时是 no-op。 */
+function markUserDesignSystemDirty(dirId: string): void {
+  if (!dirId) return;
+  markSyncDirty(`${DESIGN_SYSTEM_SYNC_PREFIX}${dirId}`);
+}
+
+/** 用户设计体系目录落盘后登记归属行(租户/创建者取调用点的 ALS 上下文,
+ *  见 design_systems 迁移头注释)。id 允许带 'user:' 前缀。openDatabase 幂等
+ *  返回已打开的单例,所以模块顶层的调用方(生成任务 store)也能拿到句柄。 */
+async function registerUserDesignSystemRow(
+  summary: { id?: unknown; title?: unknown } | null | undefined,
+  source: string,
+): Promise<void> {
+  const rawId = typeof summary?.id === 'string' ? summary.id : '';
+  const dirId = rawId.startsWith('user:') ? rawId.slice('user:'.length) : rawId;
+  if (!dirId) return;
+  let name = typeof summary?.title === 'string' && summary.title ? summary.title : '';
+  if (!name) {
+    // 导入路径只有目录 id,标题从目录元数据补齐(导入低频,扫一遍可接受)。
+    try {
+      const listed = await listDesignSystems(USER_DESIGN_SYSTEMS_DIR, { idPrefix: 'user:' });
+      const found = listed.find((s) => s.id === `user:${dirId}`);
+      if (found && typeof found.title === 'string') name = found.title;
+    } catch {
+      // 目录尚不可读时退回目录 id。
+    }
+  }
+  const dbHandle = await openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
+  await insertDesignSystem(dbHandle, { id: dirId, name: name || dirId, source });
+  markUserDesignSystemDirty(dirId);
+}
+
 const designSystemGenerationJobs = createDesignSystemGenerationJobStore({
   root: USER_DESIGN_SYSTEMS_DIR,
+  // 生成任务在发起请求的 ALS 延续里执行,归属行记到发起租户名下。
+  createDesignSystem: async (root, input) => {
+    const created = await createUserDesignSystem(root, input);
+    await registerUserDesignSystemRow(created, 'created');
+    return created;
+  },
+  // 修订提案写进设计体系目录,标脏推 OSS。
+  createRevision: async (root, id, input) => {
+    const revision = await createUserDesignSystemRevision(root, id, input);
+    if (revision) {
+      markUserDesignSystemDirty(id.startsWith('user:') ? id.slice('user:'.length) : id);
+    }
+    return revision;
+  },
 });
 let routineService = null;
 
@@ -3566,9 +3629,26 @@ export async function startServer({
     });
   }
 
+  // 用户设计体系归属注册表(多租户隔离)。方法都在请求期才被调,届时
+  // 下方的 db 已初始化;ALS 租户上下文由 tenantMiddleware 提供。
+  // isAllowed 顺手做 OSS 回灌(ifMissing:目录在场时只是一次 readdir):
+  // 它是所有按 id 读用户体系的必经闸口,pod 重建/目录丢失在这里自愈。
+  const designSystemRegistry = {
+    allowedDirIds: async () => new Set((await listDesignSystemRows(db)).map((r) => r.id)),
+    isAllowed: async (dirId: string) => {
+      const owned = (await getDesignSystemRow(db, dirId)) !== null;
+      if (owned && manifestSyncEnabled()) {
+        await hydrateProjectFromManifest(`${DESIGN_SYSTEM_SYNC_PREFIX}${dirId}`, { ifMissing: true })
+          .catch((err) => console.error(`[design-systems] hydrate ${dirId} failed:`, err?.message || err));
+      }
+      return owned;
+    },
+  };
+
   const designSystemServices = createDesignSystemServerServices({
     roots: { SKILL_ROOTS, DESIGN_TEMPLATE_ROOTS, ALL_SKILL_LIKE_ROOTS },
     paths: { PROJECTS_DIR, DESIGN_SYSTEMS_DIR, USER_DESIGN_SYSTEMS_DIR },
+    registry: designSystemRegistry,
     skills: { listSkills, findSkillById },
     designSystems: {
       listDesignSystems,
@@ -3671,6 +3751,36 @@ export async function startServer({
     next();
   });
   const db = await openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
+  // 存量用户设计体系 backfill:登记表(design_systems)上线前创建的目录没有
+  // 归属行,列表按注册表过滤后会整体消失。归属尽量从其 workspace 项目回溯
+  // (打开过工作区的体系有 ds-<dirId> 项目,项目行带 tenant/creator);回溯
+  // 不到的归 __legacy__。幂等,每次启动补缺即可。
+  try {
+    const registeredIds = await listAllDesignSystemIds(db);
+    const legacyDirs = await listDesignSystems(USER_DESIGN_SYSTEMS_DIR, { idPrefix: 'user:' });
+    for (const summary of legacyDirs) {
+      const rawId = String(summary.id ?? '');
+      const dirId = rawId.startsWith('user:') ? rawId.slice('user:'.length) : rawId;
+      if (!dirId || registeredIds.has(dirId)) continue;
+      const workspaceProjectId =
+        typeof summary.projectId === 'string' && summary.projectId
+          ? summary.projectId
+          : `ds-${dirId}`.slice(0, 128);
+      const owner = await getProjectOwnerUnscoped(db, workspaceProjectId);
+      const createdAt = summary.createdAt ? Date.parse(summary.createdAt) : NaN;
+      const updatedAt = summary.updatedAt ? Date.parse(summary.updatedAt) : NaN;
+      await backfillDesignSystemRow(db, {
+        id: dirId,
+        name: typeof summary.title === 'string' && summary.title ? summary.title : dirId,
+        tenantId: owner?.tenantId ?? LEGACY_TENANT,
+        creatorId: owner?.creatorId ?? null,
+        createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+        updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+      });
+    }
+  } catch (err) {
+    console.warn('[design-systems] legacy backfill failed:', err);
+  }
   // Restore paired browser-extension origins into the in-memory allowlist the
   // /api origin middleware above consults, so a paired clipper survives daemon
   // restarts without re-pairing.
@@ -3945,11 +4055,43 @@ export async function startServer({
     hasActiveRun: (projectId) =>
       design.runs.list({ projectId, status: 'active' }).length > 0,
   });
+  // 用户设计体系目录同样以 OSS 为准、本地盘为缓存,复用同一套 manifest+blob
+  // 通道(sync id `dsys--<dirId>`)。不参与冷淘汰——列表直接读盘,淘汰会缺项。
+  registerSyncNamespace(DESIGN_SYSTEM_SYNC_PREFIX, USER_DESIGN_SYSTEMS_DIR);
   if (manifestSyncEnabled()) {
     const cacheTtlHours = Number(process.env.OD_PROJECT_CACHE_TTL_HOURS || '72') || 72;
     setInterval(() => {
       void evictColdProjects(cacheTtlHours);
     }, 60 * 60 * 1000).unref?.();
+    // 启动回灌:pod 重建后盘是空的,把登记表里存活体系的目录从 OSS 拉回,
+    // 否则列表(交集 = PG 行 ∩ 磁盘目录)在首次访问前一直缺项。后台跑,不阻塞启动。
+    void (async () => {
+      try {
+        const aliveIds = await listAllDesignSystemIds(db, { aliveOnly: true });
+        for (const dirId of aliveIds) {
+          await hydrateProjectFromManifest(`${DESIGN_SYSTEM_SYNC_PREFIX}${dirId}`, { ifMissing: true })
+            .catch((err) => console.error(`[design-systems] hydrate ${dirId} failed:`, err?.message || err));
+        }
+      } catch (err) {
+        console.error('[design-systems] startup hydrate sweep failed:', err);
+      }
+    })();
+    // 兜底推送:设计体系的写点分散(生成任务/修订/品牌同步都直接写盘),
+    // 已知写点即时 markDirty,漏网的靠周期全量 markDirty 收敛——目录未变时
+    // scanAndPush 只是一次廉价 stat 走盘,不产生上传。
+    setInterval(() => {
+      void (async () => {
+        try {
+          const dirents = await fsp.readdir(USER_DESIGN_SYSTEMS_DIR, { withFileTypes: true });
+          for (const entry of dirents) {
+            if (!entry.isDirectory()) continue;
+            markUserDesignSystemDirty(entry.name);
+          }
+        } catch {
+          // 目录还没建时静默。
+        }
+      })();
+    }, 5 * 60 * 1000).unref?.();
   }
 
   // Interactive Terminal sessions (node-pty). In-memory, process-local, and
@@ -4424,6 +4566,10 @@ export async function startServer({
       listAllDesignSystems,
       mimeFor,
     },
+    designSystemRegistration: {
+      register: (summary, source) => registerUserDesignSystemRow(summary, source),
+      softDelete: (dirId) => softDeleteDesignSystem(db, dirId),
+    },
     tokenContractRebuild: {
       maybeStartForImportedDesignSystem: async (designSystemId) => {
         const preparation = await prepareDesignTokenContractRebuild(
@@ -4447,8 +4593,21 @@ export async function startServer({
     projectFiles: projectFileDeps,
     designSystems: {
       buildUserDesignSystemArchive,
-      createUserDesignSystem,
-      deleteUserDesignSystem,
+      // 创建即登记归属行,列表/读取从此按租户过滤。
+      createUserDesignSystem: async (root, input) => {
+        const created = await createUserDesignSystem(root, input);
+        await registerUserDesignSystemRow(created, 'created');
+        return created;
+      },
+      // 软删:只置 deleted_at,目录文件保留(误删可恢复、审计可追溯)。
+      // 行删到了才算成功;跨租户/不存在返回 false → 路由回 404。
+      deleteUserDesignSystem: async (_root, id) => {
+        const dirId = id.startsWith('user:') ? id.slice('user:'.length) : id;
+        return softDeleteDesignSystem(db, dirId);
+      },
+      isUserDesignSystemOwned: (id) => designSystemRegistry.isAllowed(
+        id.startsWith('user:') ? id.slice('user:'.length) : id,
+      ),
       ensureUserDesignSystemWorkspaceProject,
       listAllDesignSystems,
       listUserDesignSystemFiles,
@@ -4461,8 +4620,29 @@ export async function startServer({
       readUserDesignSystemFile,
       renderDesignSystemPreview,
       renderDesignSystemShowcase,
-      updateUserDesignSystem,
-      updateUserDesignSystemRevisionStatus,
+      // 更新同步登记行的 name/updated_at,列表排序与后台展示才跟得上改名。
+      updateUserDesignSystem: async (root, id, input) => {
+        const updated = await updateUserDesignSystem(root, id, input);
+        if (updated) {
+          const dirId = id.startsWith('user:') ? id.slice('user:'.length) : id;
+          const title = typeof (updated as { title?: unknown }).title === 'string'
+            ? (updated as { title: string }).title
+            : undefined;
+          await touchDesignSystem(db, dirId, title !== undefined ? { name: title } : undefined);
+          markUserDesignSystemDirty(dirId);
+        }
+        return updated;
+      },
+      // 修订接受会把变更写回 DESIGN.md 等文件——touch 行 + 标脏推 OSS。
+      updateUserDesignSystemRevisionStatus: async (root, id, revisionId, status) => {
+        const revision = await updateUserDesignSystemRevisionStatus(root, id, revisionId, status);
+        if (revision) {
+          const dirId = id.startsWith('user:') ? id.slice('user:'.length) : id;
+          await touchDesignSystem(db, dirId);
+          markUserDesignSystemDirty(dirId);
+        }
+        return revision;
+      },
     },
     generationJobs: designSystemGenerationJobs,
   });
@@ -4475,6 +4655,14 @@ export async function startServer({
     db,
     runs: design.runs,
     randomId,
+    // 品牌注册的 user 设计体系同样落归属行/软删,与手建体系同一套隔离。
+    onDesignSystemRegistered: (summary) => registerUserDesignSystemRow(summary, 'brand'),
+    removeDesignSystem: async (designSystemId) => {
+      const dirId = designSystemId.startsWith('user:')
+        ? designSystemId.slice('user:'.length)
+        : designSystemId;
+      await softDeleteDesignSystem(db, dirId);
+    },
     resolveTranscriptAgent: async () => {
       const config = await readAppConfig(RUNTIME_DATA_DIR);
       let agentId = typeof config.agentId === 'string' && config.agentId

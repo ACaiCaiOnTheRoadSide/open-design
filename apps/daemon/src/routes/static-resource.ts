@@ -40,6 +40,13 @@ export interface RegisterStaticResourceRoutesDeps extends RouteDeps<'http' | 'pa
       designSystemId: string,
     ) => Promise<DesignSystemTokenContractRebuildJobResponse | undefined>;
   };
+  /** SaaS 多租户:设计体系目录落盘后登记归属行 / 删除改软删。
+   *  不传(上游/单租户形态)时行为不变。 */
+  designSystemRegistration?: {
+    register: (summary: { id: string; title?: string }, source: string) => Promise<void>;
+    /** 软删归属行;false = 当前租户名下无此行(路由回 404)。 */
+    softDelete: (dirId: string) => Promise<boolean>;
+  };
 }
 
 export function registerAtomRoutes(app: Express, ctx: RegisterAtomRoutesDeps) {
@@ -653,8 +660,10 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       if (typeof result.dir !== 'string' || !result.dir) {
         return res.status(500).json({ error: 'design system install did not return an installation directory' });
       }
-      const systems = await listAllDesignSystems();
       const designSystemId = path.basename(fs.realpathSync.native(result.dir));
+      // 先登记归属行再查目录:catalog 已按租户过滤,行不存在就查不到刚装的体系。
+      await ctx.designSystemRegistration?.register({ id: designSystemId }, 'import');
+      const systems = await listAllDesignSystems();
       const designSystem = findUserDesignSystemInCatalog(systems, designSystemId);
       if (!designSystem) {
         return res.status(500).json({ error: `installed design system was not found in catalog: ${result.dir}` });
@@ -713,6 +722,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
         ...(craftApplies ? { craftApplies } : {}),
         reservedIds: designSystemDirIdsFromCatalog(before),
       });
+      await ctx.designSystemRegistration?.register({ id: result.id }, 'import');
       const systems = await listAllDesignSystems();
       const designSystem = findUserDesignSystemInCatalog(systems, result.id);
       if (!designSystem) {
@@ -757,6 +767,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           reservedIds: designSystemDirIdsFromCatalog(before),
         },
       );
+      await ctx.designSystemRegistration?.register({ id: result.id }, 'import');
       const systems = await listAllDesignSystems();
       const designSystem = findUserDesignSystemInCatalog(systems, result.id);
       if (!designSystem) {
@@ -803,6 +814,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           reservedIds: designSystemDirIdsFromCatalog(before),
         },
       );
+      await ctx.designSystemRegistration?.register({ id: result.id }, 'import');
       const systems = await listAllDesignSystems();
       const designSystem = findUserDesignSystemInCatalog(systems, result.id);
       if (!designSystem) {
@@ -828,6 +840,13 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       return next();
     }
     try {
+      // 多租户形态:所有删除都是软删,只置 deleted_at、保留目录文件;
+      // 归属校验由软删的 tenant WHERE 承担(删不到行 = 不是你的 → 404)。
+      if (ctx.designSystemRegistration) {
+        const ok = await ctx.designSystemRegistration.softDelete(req.params.id);
+        if (!ok) return res.status(404).json({ error: 'design system not found' });
+        return res.json({ ok: true });
+      }
       const result = await uninstallById(
         req.params.id,
         USER_DESIGN_SYSTEMS_DIR,

@@ -52,12 +52,24 @@ type DesignSystemListOptions = {
   defaultStatus?: string;
 };
 
+// SaaS 多租户:用户自建设计体系的归属注册表(daemon PG design_systems 表)。
+// 文件目录是全租户共享的,可见性由这张表决定 —— list 只留当前租户(ALS)
+// 登记过且未软删的目录;按 id 直读 user 体系时同样先问注册表。
+// 不传(上游/单租户形态)则不过滤,行为与原先一致。
+export interface DesignSystemRegistry {
+  /** 当前租户可见的用户设计体系目录 id(不含 'user:' 前缀)。 */
+  allowedDirIds: () => Promise<Set<string>>;
+  /** 单个目录 id 是否属于当前租户(未软删)。 */
+  isAllowed: (dirId: string) => Promise<boolean>;
+}
+
 export function createDesignSystemServerServices({
   roots,
   paths,
   skills,
   designSystems,
   projects,
+  registry,
 }: {
   roots: {
     SKILL_ROOTS: string[];
@@ -97,7 +109,17 @@ export function createDesignSystemServerServices({
     resolveProjectDir: (projectsDir: string, projectId: string, metadata?: JsonRecord) => string;
     isSafeId: (id: string) => boolean;
   };
+  registry?: DesignSystemRegistry;
 }) {
+  function userDirIdOf(id: string): string {
+    return id.startsWith('user:') ? id.slice('user:'.length) : id;
+  }
+
+  async function isRegistryAllowed(id: string): Promise<boolean> {
+    if (!registry) return true;
+    return registry.isAllowed(userDirIdOf(id));
+  }
+
   async function listAllSkills() {
     return skills.listSkills(roots.SKILL_ROOTS);
   }
@@ -128,6 +150,10 @@ export function createDesignSystemServerServices({
     } catch {
       // User directory may not exist yet or be unreadable.
     }
+    if (registry) {
+      const allowed = await registry.allowedDirIds();
+      installed = installed.filter((s) => allowed.has(userDirIdOf(String(s.id))));
+    }
     const seen = new Set(builtIn.map((s) => s.id));
     return [
       ...installed
@@ -140,32 +166,35 @@ export function createDesignSystemServerServices({
 
   async function readAvailableDesignSystem(id: string) {
     if (typeof id === 'string' && id.startsWith('user:')) {
+      if (!(await isRegistryAllowed(id))) return null;
       return designSystems.readDesignSystem(paths.USER_DESIGN_SYSTEMS_DIR, id, { idPrefix: 'user:' });
     }
-    return (
-      (await designSystems.readDesignSystem(paths.DESIGN_SYSTEMS_DIR, id))
-      ?? (await designSystems.readDesignSystem(paths.USER_DESIGN_SYSTEMS_DIR, id))
-    );
+    const builtIn = await designSystems.readDesignSystem(paths.DESIGN_SYSTEMS_DIR, id);
+    if (builtIn !== null && builtIn !== undefined) return builtIn;
+    if (!(await isRegistryAllowed(id))) return null;
+    return designSystems.readDesignSystem(paths.USER_DESIGN_SYSTEMS_DIR, id);
   }
 
   async function readAvailableDesignSystemPackageInfo(id: string) {
     if (typeof id === 'string' && id.startsWith('user:')) {
+      if (!(await isRegistryAllowed(id))) return null;
       return designSystems.readDesignSystemPackageInfo(paths.USER_DESIGN_SYSTEMS_DIR, id, { idPrefix: 'user:' });
     }
-    return (
-      (await designSystems.readDesignSystemPackageInfo(paths.DESIGN_SYSTEMS_DIR, id))
-      ?? (await designSystems.readDesignSystemPackageInfo(paths.USER_DESIGN_SYSTEMS_DIR, id))
-    );
+    const builtIn = await designSystems.readDesignSystemPackageInfo(paths.DESIGN_SYSTEMS_DIR, id);
+    if (builtIn !== null && builtIn !== undefined) return builtIn;
+    if (!(await isRegistryAllowed(id))) return null;
+    return designSystems.readDesignSystemPackageInfo(paths.USER_DESIGN_SYSTEMS_DIR, id);
   }
 
   async function readAvailableDesignSystemStaticFile(id: string, filePath: string) {
     if (typeof id === 'string' && id.startsWith('user:')) {
+      if (!(await isRegistryAllowed(id))) return null;
       return designSystems.readDesignSystemStaticFile(paths.USER_DESIGN_SYSTEMS_DIR, id, filePath, { idPrefix: 'user:' });
     }
-    return (
-      (await designSystems.readDesignSystemStaticFile(paths.DESIGN_SYSTEMS_DIR, id, filePath))
-      ?? (await designSystems.readDesignSystemStaticFile(paths.USER_DESIGN_SYSTEMS_DIR, id, filePath))
-    );
+    const builtIn = await designSystems.readDesignSystemStaticFile(paths.DESIGN_SYSTEMS_DIR, id, filePath);
+    if (builtIn !== null && builtIn !== undefined) return builtIn;
+    if (!(await isRegistryAllowed(id))) return null;
+    return designSystems.readDesignSystemStaticFile(paths.USER_DESIGN_SYSTEMS_DIR, id, filePath);
   }
 
   function isProjectUsableDesignSystem(summary: DesignSystemSummary | null | undefined) {

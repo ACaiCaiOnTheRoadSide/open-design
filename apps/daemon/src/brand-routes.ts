@@ -72,6 +72,12 @@ export interface BrandRoutesDeps {
   randomId?: () => string;
   /** Selected agent identity for programmatic transcript rows. */
   resolveTranscriptAgent?: () => Promise<{ agentId?: string | null; agentName?: string | null } | null>;
+  /** SaaS 多租户:品牌注册/复用 `user:<id>` 设计体系后,宿主把归属行落
+   *  design_systems 表(见 server.ts registerUserDesignSystemRow)。 */
+  onDesignSystemRegistered?: (summary: { id: string; title?: string }) => Promise<void> | void;
+  /** SaaS 软删覆写:删品牌时对其设计体系只软删归属行、保留文件,
+   *  替代默认的硬删目录。 */
+  removeDesignSystem?: (designSystemId: string) => Promise<unknown>;
 }
 
 const LOGO_EXT_PRIORITY = ['.svg', '.png', '.webp', '.jpg', '.jpeg', '.gif', '.ico'];
@@ -126,6 +132,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
           backgroundExtractionRef.current = settled;
         },
       };
+      if (deps.onDesignSystemRegistered) startOptions.onDesignSystemRegistered = deps.onDesignSystemRegistered;
       if (url.trim()) startOptions.url = url;
       if (description.trim()) startOptions.description = description;
       if (designMd.trim()) startOptions.designMd = designMd;
@@ -247,6 +254,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       if (projectId) finalizeOptions.projectId = projectId;
       if (locale) finalizeOptions.locale = locale;
       if (randomId) finalizeOptions.randomId = randomId;
+      if (deps.onDesignSystemRegistered) finalizeOptions.onDesignSystemRegistered = deps.onDesignSystemRegistered;
       const result = await finalizeBrand(finalizeOptions);
       res.json(result);
     } catch (err) {
@@ -288,6 +296,9 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
         html,
         ...(css.trim() ? { css } : {}),
         ...(baseUrl.trim() ? { baseUrl } : {}),
+        ...(deps.onDesignSystemRegistered
+          ? { onDesignSystemRegistered: deps.onDesignSystemRegistered }
+          : {}),
       });
       if (!result) {
         res
@@ -319,7 +330,12 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   // DELETE /api/brands/:id — remove the brand and its registered design system.
   app.delete('/api/brands/:id', async (req: Request, res: Response) => {
     try {
-      await removeBrand(brandsRoot, userDesignSystemsRoot, String(req.params.id));
+      await removeBrand(
+        brandsRoot,
+        userDesignSystemsRoot,
+        String(req.params.id),
+        deps.removeDesignSystem ? { removeDesignSystem: deps.removeDesignSystem } : undefined,
+      );
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: String(err) });

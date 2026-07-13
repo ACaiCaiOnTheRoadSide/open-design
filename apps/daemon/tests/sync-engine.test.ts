@@ -163,4 +163,51 @@ describe('sync engine', () => {
     expect(result.manifest?.version).toBe(0);
     expect(backend.manifests.get('proj-imported')).toBeUndefined();
   });
+
+  // 命名空间路由:`dsys--<dirId>` 这类前缀 id 落在注册的额外根(用户设计
+  // 体系目录),不落 projectsDir;push/hydrate 走同一套 manifest+blob 通道;
+  // 冷淘汰不碰额外命名空间(即使 projectsDir 里出现同名目录也不误删)。
+  describe('extra sync namespace (design systems)', () => {
+    const PREFIX = 'dsys--';
+    let designSystemsDir: string;
+
+    beforeAll(async () => {
+      designSystemsDir = join(dataDir, 'design-systems');
+      await fsp.mkdir(designSystemsDir, { recursive: true });
+      engine.registerSyncNamespace(PREFIX, designSystemsDir);
+    });
+
+    it('flush pushes files from the namespace root, not projectsDir', async () => {
+      await fsp.mkdir(join(designSystemsDir, 'acme'), { recursive: true });
+      await fsp.writeFile(join(designSystemsDir, 'acme', 'DESIGN.md'), '# Acme');
+
+      const result = await engine.flush(`${PREFIX}acme`);
+      expect(result.manifest?.version).toBe(1);
+      const remote = backend.manifests.get(`${PREFIX}acme`)!;
+      expect(Object.keys(remote.files)).toEqual(['DESIGN.md']);
+      expect(backend.blobs.has(sha('# Acme'))).toBe(true);
+      // projectsDir 里不应长出同名目录。
+      await expect(fsp.access(join(projectsDir, `${PREFIX}acme`))).rejects.toThrow();
+    });
+
+    it('hydrate ifMissing rebuilds a wiped design system dir from the manifest', async () => {
+      await fsp.rm(join(designSystemsDir, 'acme'), { recursive: true, force: true });
+      const result = await engine.hydrate(`${PREFIX}acme`, { ifMissing: true });
+      expect(result.updated).toBe(true);
+      await expect(fsp.readFile(join(designSystemsDir, 'acme', 'DESIGN.md'), 'utf8')).resolves.toBe(
+        '# Acme',
+      );
+    });
+
+    it('cold eviction never touches namespace-prefixed dirs in projectsDir', async () => {
+      // projectsDir 里手工放一个撞前缀的目录:eviction 必须跳过它,
+      // 否则 projectDirOf 的命名空间路由会让 rm 删到设计体系根。
+      await fsp.mkdir(join(projectsDir, `${PREFIX}acme`), { recursive: true });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const evicted = await engine.evictColdProjects(0.000001);
+      expect(evicted).not.toContain(`${PREFIX}acme`);
+      await expect(fsp.access(join(designSystemsDir, 'acme', 'DESIGN.md'))).resolves.toBeUndefined();
+      await fsp.rm(join(projectsDir, `${PREFIX}acme`), { recursive: true, force: true });
+    });
+  });
 });

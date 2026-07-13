@@ -82,6 +82,12 @@ let projectsDir = '';
 let stateDir = '';
 let hasActiveRun: (projectId: string) => boolean = () => false;
 const runtimes = new Map<string, ProjectRuntime>();
+// 按 sync id 前缀路由到 PROJECTS_DIR 之外的目录根(如用户设计体系
+// `dsys--<dirId>` → USER_DESIGN_SYSTEMS_DIR/<dirId>)。manifest/blob 通道对
+// "这是不是项目"无感知,复用即得同一套 OSS 持久化;前缀命名空间只需与真实
+// 项目 id 不冲突。evictColdProjects 只扫 projectsDir,额外命名空间不参与
+// 冷淘汰(设计体系目录小、被 list 直接读盘,淘汰会让列表短暂缺项)。
+const extraSyncRoots: Array<{ prefix: string; root: string }> = [];
 
 /** Wire the engine to the daemon's resolved data roots. Call once at startup. */
 export function initSyncEngine(opts: {
@@ -92,6 +98,18 @@ export function initSyncEngine(opts: {
   stateDir = path.join(opts.runtimeDataDir, 'sync');
   projectsDir = opts.projectsDir;
   if (opts.hasActiveRun) hasActiveRun = opts.hasActiveRun;
+}
+
+/** Route sync ids beginning with `prefix` to `root` instead of projectsDir.
+ *  Call after initSyncEngine, before any markDirty/hydrate for that prefix. */
+export function registerSyncNamespace(prefix: string, root: string): void {
+  if (!prefix || !root) return;
+  const existing = extraSyncRoots.find((ns) => ns.prefix === prefix);
+  if (existing) {
+    existing.root = root;
+    return;
+  }
+  extraSyncRoots.push({ prefix, root });
 }
 
 export function syncEnabled(): boolean {
@@ -105,6 +123,11 @@ function requireTarget(): SyncTarget {
 }
 
 function projectDirOf(projectId: string): string {
+  for (const ns of extraSyncRoots) {
+    if (projectId.startsWith(ns.prefix)) {
+      return path.join(ns.root, projectId.slice(ns.prefix.length));
+    }
+  }
   return path.join(projectsDir, projectId);
 }
 
@@ -303,6 +326,14 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
         await persistState(projectId);
         return { updated: false, version: state.baseVersion, reason: 'already present' };
       }
+      // 目录空了但基线非空 = 本地缓存丢了(目录被单独删掉、状态文件幸存)。
+      // 不重置基线的话,下面 remote.version === baseVersion 会误判 up to date,
+      // 目录永远拉不回来。
+      if (state.baseVersion > 0 || Object.keys(state.baseFiles).length > 0) {
+        state.baseVersion = 0;
+        state.baseFiles = {};
+        state.hashCache = {};
+      }
     } else {
       // Push local changes first so the pull below cannot stomp them.
       await scanAndPush(projectId);
@@ -368,6 +399,9 @@ export async function evictColdProjects(ttlHours: number): Promise<string[]> {
     if (!entry.isDirectory()) continue;
     const projectId = entry.name;
     if (!isValidManifestPath(projectId)) continue;
+    // 撞上额外命名空间前缀的目录名会让 projectDirOf 路由到别的根,
+    // rm 就删错树了 —— 一律不淘汰。
+    if (extraSyncRoots.some((ns) => projectId.startsWith(ns.prefix))) continue;
     const rt = runtimeOf(projectId);
     if (rt.dirty || rt.debounce || hasActiveRun(projectId)) continue;
     const done = await enqueue(projectId, async () => {

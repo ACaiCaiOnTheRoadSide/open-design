@@ -461,6 +461,7 @@ describe('bootstrap route regressions', () => {
         buildUserDesignSystemArchive: async () => null,
         createUserDesignSystem: async () => designSystemSummary as never,
         deleteUserDesignSystem: async () => false,
+        isUserDesignSystemOwned: async () => true,
         ensureUserDesignSystemWorkspaceProject: async () => null,
         listAllDesignSystems: async () => [designSystemSummary],
         listUserDesignSystemFiles: async () => null,

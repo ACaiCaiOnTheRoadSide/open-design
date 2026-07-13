@@ -592,6 +592,152 @@ function normalizeProjectRunStatus(status: unknown) {
   return 'not_started';
 }
 
+// ---------- design systems ----------
+// 用户自建设计体系的归属登记(文件本体在 USER_DESIGN_SYSTEMS_DIR,见
+// 20260713000001 迁移头注释)。隔离口径与 projects 一致:全部按 ALS 租户
+// 过滤;删除只软删(deleted_at 置位),列表/读取排除已删行。
+
+const DESIGN_SYSTEM_COLS = `id, tenant_id AS tenantId, creator_id AS creatorId,
+  name, source, created_at AS createdAt, updated_at AS updatedAt,
+  deleted_at AS deletedAt`;
+
+export interface DesignSystemRow {
+  id: string;
+  tenantId: string;
+  creatorId: string | null;
+  name: string;
+  source: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+}
+
+function normalizeDesignSystemRow(row: DbRow): DesignSystemRow {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    creatorId: row.creatorId ?? null,
+    name: row.name,
+    source: row.source,
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+    deletedAt: row.deletedAt == null ? null : Number(row.deletedAt),
+  };
+}
+
+export async function insertDesignSystem(
+  db: SqliteDb,
+  entry: { id: string; name: string; source: string; createdAt?: number },
+): Promise<DesignSystemRow | null> {
+  const now = Date.now();
+  const createdAt = entry.createdAt ?? now;
+  await db.prepare(
+    `INSERT INTO design_systems (id, tenant_id, creator_id, name, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO NOTHING`,
+  ).run(entry.id, currentTenantId(), currentUserId() ?? null, entry.name, entry.source, createdAt, now);
+  return getDesignSystemRow(db, entry.id);
+}
+
+export async function listDesignSystemRows(db: SqliteDb): Promise<DesignSystemRow[]> {
+  const tenantId = currentTenantId();
+  const items = (await db
+    .prepare(
+      `SELECT ${DESIGN_SYSTEM_COLS} FROM design_systems
+        WHERE tenant_id = ? AND deleted_at IS NULL
+        ORDER BY updated_at DESC`,
+    )
+    .all(tenantId)) as DbRow[];
+  return items.map(normalizeDesignSystemRow);
+}
+
+export async function getDesignSystemRow(db: SqliteDb, id: string): Promise<DesignSystemRow | null> {
+  const tenantId = currentTenantId();
+  const item = (await db
+    .prepare(
+      `SELECT ${DESIGN_SYSTEM_COLS} FROM design_systems
+        WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+    )
+    .get(id, tenantId)) as DbRow | undefined;
+  return item ? normalizeDesignSystemRow(item) : null;
+}
+
+export async function touchDesignSystem(
+  db: SqliteDb,
+  id: string,
+  patch?: { name?: string },
+): Promise<void> {
+  const tenantId = currentTenantId();
+  if (patch?.name !== undefined) {
+    await db.prepare(
+      `UPDATE design_systems SET name = ?, updated_at = ?
+        WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+    ).run(patch.name, Date.now(), id, tenantId);
+    return;
+  }
+  await db.prepare(
+    `UPDATE design_systems SET updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+  ).run(Date.now(), id, tenantId);
+}
+
+/** 软删:deleted_at 置位,行与磁盘文件保留。返回是否真的删到了行
+ *  (跨租户/已删/不存在都返回 false,路由据此回 404)。 */
+export async function softDeleteDesignSystem(db: SqliteDb, id: string): Promise<boolean> {
+  const tenantId = currentTenantId();
+  const result = await db.prepare(
+    `UPDATE design_systems SET deleted_at = ?
+      WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+  ).run(Date.now(), id, tenantId);
+  return result.changes > 0;
+}
+
+/** 不带租户过滤的全量 id 集。默认含已软删(backfill 场景:已删目录仍在盘上,
+ *  不能再补一行"活的");aliveOnly 供启动 OSS 回灌用——只拉存活体系的目录。 */
+export async function listAllDesignSystemIds(
+  db: SqliteDb,
+  opts?: { aliveOnly?: boolean },
+): Promise<Set<string>> {
+  const sql = opts?.aliveOnly
+    ? `SELECT id FROM design_systems WHERE deleted_at IS NULL`
+    : `SELECT id FROM design_systems`;
+  const items = (await db.prepare(sql).all()) as DbRow[];
+  return new Set(items.map((r) => String(r.id)));
+}
+
+/** 启动 backfill 专用:显式传租户/创建者(从关联 workspace 项目回溯到的
+ *  归属),不走 ALS——启动上下文只有 LEGACY_TENANT。幂等(ON CONFLICT 忽略)。 */
+export async function backfillDesignSystemRow(
+  db: SqliteDb,
+  entry: {
+    id: string;
+    name: string;
+    tenantId: string;
+    creatorId: string | null;
+    createdAt: number;
+    updatedAt: number;
+  },
+): Promise<void> {
+  await db.prepare(
+    `INSERT INTO design_systems (id, tenant_id, creator_id, name, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'legacy', ?, ?)
+     ON CONFLICT (id) DO NOTHING`,
+  ).run(entry.id, entry.tenantId, entry.creatorId, entry.name, entry.createdAt, entry.updatedAt);
+}
+
+/** 启动 backfill 专用:按项目 id 反查归属(无租户过滤——backfill 要跨租户
+ *  回溯存量设计体系挂过的 workspace 项目属于谁)。 */
+export async function getProjectOwnerUnscoped(
+  db: SqliteDb,
+  id: string,
+): Promise<{ tenantId: string; creatorId: string | null } | null> {
+  const item = (await db
+    .prepare(`SELECT tenant_id AS tenantId, creator_id AS creatorId FROM projects WHERE id = ?`)
+    .get(id)) as DbRow | undefined;
+  if (!item) return null;
+  return { tenantId: String(item.tenantId), creatorId: item.creatorId ?? null };
+}
+
 // ---------- templates ----------
 
 export async function listTemplates(db: SqliteDb) {

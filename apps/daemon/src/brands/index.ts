@@ -134,6 +134,9 @@ export interface StartBrandExtractionOptions {
   /** Test/observability hook invoked with the background programmatic-extraction
    *  promise, so callers (tests) can await completion deterministically. */
   onBackgroundExtraction?: (settled: Promise<unknown>) => void;
+  /** 同 FinalizeBrandOptions.onDesignSystemRegistered——后台 programmatic
+   *  提取注册设计体系时同样要落归属行。 */
+  onDesignSystemRegistered?: (summary: { id: string; title?: string }) => Promise<void> | void;
   /** UI locale used to render static brand.html copy. */
   locale?: string;
   /** Agent identity to show on the programmatic transcript. No tokens are spent,
@@ -373,6 +376,7 @@ export async function startBrandExtraction(
       locale,
     };
     if (opts.dataDir) programmaticOptions.dataDir = opts.dataDir;
+    if (opts.onDesignSystemRegistered) programmaticOptions.onDesignSystemRegistered = opts.onDesignSystemRegistered;
     if (opts.prefetch) programmaticOptions.prefetch = opts.prefetch;
     if (opts.description) programmaticOptions.description = opts.description;
     if (designMd) programmaticOptions.designMd = designMd;
@@ -834,6 +838,10 @@ export interface FinalizeBrandOptions {
   imageryFallback?: ImageryFallbackFn;
   /** Optional override; defaults to the locale stored in brand meta. */
   locale?: string;
+  /** SaaS 多租户:`user:<id>` 设计体系注册/复用后回调,宿主(server.ts)把
+   *  归属行落 design_systems 表。所有 finalize 路径(agent finalize 路由、
+   *  后台 programmatic 提取)共用 finalizeBrandCore 的同一个注册点。 */
+  onDesignSystemRegistered?: (summary: { id: string; title?: string }) => Promise<void> | void;
 }
 
 /**
@@ -988,6 +996,12 @@ async function finalizeBrandCore(opts: FinalizeBrandCoreOptions): Promise<BrandF
     },
   });
   const designSystemId = summary.id;
+  if (opts.onDesignSystemRegistered) {
+    await opts.onDesignSystemRegistered({
+      id: summary.id,
+      ...(typeof summary.title === 'string' ? { title: summary.title } : {}),
+    });
+  }
   syncBrandSystemToUserDesignSystem(userDesignSystemsRoot, designSystemId, brandsRoot, id, body);
   throwIfProgrammaticExtractionAborted(opts.abortSignal);
 
@@ -1095,6 +1109,9 @@ export interface RunProgrammaticExtractionOptions {
   imageryFallback?: ImageryFallbackFn;
   locale?: string;
   abortSignal?: AbortSignal;
+  /** 同 FinalizeBrandOptions.onDesignSystemRegistered——经 `...opts` 展开
+   *  流入 finalizeBrandCore 的注册点。 */
+  onDesignSystemRegistered?: (summary: { id: string; title?: string }) => Promise<void> | void;
 }
 
 /**
@@ -1667,11 +1684,20 @@ export async function removeBrand(
   brandsRoot: string,
   userDesignSystemsRoot: string,
   id: string,
+  options?: {
+    /** SaaS 软删覆写:默认硬删设计体系目录;多租户宿主换成仅软删
+     *  design_systems 归属行(文件保留,与所有删除都软删的口径一致)。 */
+    removeDesignSystem?: (designSystemId: string) => Promise<unknown>;
+  },
 ): Promise<boolean> {
   const meta = readMeta(brandsRoot, id);
   if (meta?.designSystemId) {
     try {
-      await deleteUserDesignSystem(userDesignSystemsRoot, meta.designSystemId);
+      if (options?.removeDesignSystem) {
+        await options.removeDesignSystem(meta.designSystemId);
+      } else {
+        await deleteUserDesignSystem(userDesignSystemsRoot, meta.designSystemId);
+      }
     } catch {
       // Best-effort — still remove the brand dir below.
     }

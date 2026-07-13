@@ -37,6 +37,9 @@ export interface RegisterDesignSystemRoutesDeps extends RouteDeps<'db' | 'paths'
     ) => Promise<{ buffer: Buffer; baseName: string; title: string } | null>;
     createUserDesignSystem: (root: string, input: UserDesignSystemInput) => Promise<DesignSystemSummary>;
     deleteUserDesignSystem: (root: string, id: string) => Promise<boolean>;
+    /** 多租户归属守卫:id(可带 'user:' 前缀)是否属于当前租户且未删。
+     *  直接操作 USER_DESIGN_SYSTEMS_DIR 的路由都必须先过这道闸。 */
+    isUserDesignSystemOwned: (id: string) => Promise<boolean>;
     ensureUserDesignSystemWorkspaceProject: (db: DbHandle, id: string) => Promise<DesignSystemWorkspaceProject | null>;
     listAllDesignSystems: () => Promise<AvailableDesignSystemSummary[]>;
     listUserDesignSystemFiles: (root: string, id: string) => Promise<DesignSystemFileSummary[] | null>;
@@ -82,6 +85,7 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
     buildUserDesignSystemArchive,
     createUserDesignSystem,
     deleteUserDesignSystem,
+    isUserDesignSystemOwned,
     ensureUserDesignSystemWorkspaceProject,
     listAllDesignSystems,
     listUserDesignSystemFiles,
@@ -131,6 +135,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
 
   app.post('/api/design-systems/:id/revision-jobs', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'editable design system not found' });
+      }
       const feedback = typeof req.body?.feedback === 'string' ? req.body.feedback : '';
       if (!feedback.trim()) return res.status(400).json({ error: 'feedback is required' });
       const job = designSystemGenerationJobs.revise({
@@ -147,6 +154,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
 
   app.post('/api/design-systems/:id/token-contract/rebuild-jobs', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'editable design system not found' });
+      }
       const preparation = await prepareDesignTokenContractRebuild(
         USER_DESIGN_SYSTEMS_DIR,
         req.params.id,
@@ -171,6 +181,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
 
   app.get('/api/design-systems/:id/revisions', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'editable design system not found' });
+      }
       const revisions = await listUserDesignSystemRevisions(
         USER_DESIGN_SYSTEMS_DIR,
         req.params.id,
@@ -186,6 +199,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
 
   app.patch('/api/design-systems/:id/revisions/:revisionId', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'design system revision not found' });
+      }
       const status = typeof req.body?.status === 'string' ? req.body.status : '';
       if (status !== 'accepted' && status !== 'rejected') {
         return res.status(400).json({ error: 'status must be accepted or rejected' });
@@ -271,6 +287,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
 
   app.get('/api/design-systems/:id/files', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'editable design system not found' });
+      }
       const files = await listUserDesignSystemFiles(USER_DESIGN_SYSTEMS_DIR, req.params.id);
       if (!files) {
         return res.status(404).json({ error: 'editable design system not found' });
@@ -283,6 +302,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
 
   app.get('/api/design-systems/:id/file', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'design system file not found' });
+      }
       const requestedPath = typeof req.query.path === 'string' ? req.query.path : '';
       const file = await readUserDesignSystemFile(
         USER_DESIGN_SYSTEMS_DIR,
@@ -303,6 +325,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
   // null and surface as 404.
   app.get('/api/design-systems/:id/archive', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'downloadable design system not found' });
+      }
       const archive = await buildUserDesignSystemArchive(USER_DESIGN_SYSTEMS_DIR, req.params.id);
       if (!archive) {
         return res.status(404).json({ error: 'downloadable design system not found' });
@@ -326,6 +351,9 @@ export function registerDesignSystemRoutes(app: Express, ctx: RegisterDesignSyst
 
   app.patch('/api/design-systems/:id', async (req, res) => {
     try {
+      if (!(await isUserDesignSystemOwned(req.params.id))) {
+        return res.status(404).json({ error: 'editable design system not found' });
+      }
       const updated = await updateUserDesignSystem(
         USER_DESIGN_SYSTEMS_DIR,
         req.params.id,
