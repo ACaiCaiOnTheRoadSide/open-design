@@ -175,6 +175,12 @@ const browser = await launchOrExplain({
 // (ported from pdf-export.ts waitForPrintableContent).
 async function waitForPrintableContent(page) {
   await page.evaluate(async () => {
+    // A no-scroll capture never brings below-fold lazy images into view, so
+    // they would stay unloaded (and an incomplete <img> stalls the wait
+    // below forever). Force eager so they load and are awaited like the rest.
+    document.querySelectorAll('img[loading="lazy"]').forEach((img) => {
+      img.loading = 'eager';
+    });
     const waitImages = Promise.all(
       Array.from(document.images || []).map((img) =>
         img.complete
@@ -315,6 +321,41 @@ try {
     deviceScaleFactor: scale,
   });
   const page = await context.newPage();
+  // Generated pages gate below-the-fold sections behind IntersectionObserver
+  // reveals (.reveal { opacity:0 } → .is-in on intersect). A full-page capture
+  // never scrolls, so those observers would never fire and everything below
+  // the first viewport would stay at its hidden initial state — the classic
+  // "hero + huge blank body" export. Replace IO before any page script runs:
+  // every observed target reports intersecting immediately and never reports
+  // leaving, so toggle-off reveal patterns cannot re-hide content either.
+  await page.addInitScript(() => {
+    window.IntersectionObserver = class {
+      constructor(callback) {
+        this._callback = callback;
+        this.root = null;
+        this.rootMargin = '0px';
+        this.thresholds = [0];
+      }
+      observe(target) {
+        const rect = target.getBoundingClientRect();
+        const entry = {
+          target,
+          isIntersecting: true,
+          intersectionRatio: 1,
+          boundingClientRect: rect,
+          intersectionRect: rect,
+          rootBounds: null,
+          time: performance.now(),
+        };
+        Promise.resolve().then(() => this._callback([entry], this));
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    };
+  });
   await page.goto(isUrl ? input : pathToFileURL(input).href, { waitUntil: 'load', timeout: 60_000 });
   await waitForPrintableContent(page);
   const tLoad = Date.now();
@@ -346,6 +387,25 @@ try {
   if (!deckInfo.isDeck) {
     // --- Ordinary page: one full-page screenshot (whole document height). ---
     await freezeAnimations(page);
+    // Scroll prewarm (ports deck-capture.ts preparePageForCapture): step
+    // through the document once so scroll-event-driven JS (AOS-style libs)
+    // and any remaining lazy loading trigger and settle, then return to the
+    // top — the full-page capture below renders the document at scroll 0.
+    // IO-gated reveals are already handled by the init-script stub above.
+    await page.evaluate(async () => {
+      const settle = () =>
+        new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const docHeight = () =>
+        Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+      const vh = window.innerHeight || 800;
+      for (let y = 0; y < docHeight(); y += vh) {
+        window.scrollTo(0, y);
+        await settle();
+      }
+      window.scrollTo(0, 0);
+      await settle();
+    });
+    await waitForPrintableContent(page);
     const size = await page.evaluate(() => ({
       w: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
       h: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
