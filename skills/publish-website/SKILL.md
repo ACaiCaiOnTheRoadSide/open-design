@@ -19,7 +19,7 @@ arguments:
 4. 准备产物：
    - static 分支：必要时构建前端，准备静态产物
    - backend 分支（步骤 3b）：生成 Dockerfile、build、run、healthcheck、save 镜像
-5. 基于应用内容自动生成应用名称与描述，再向用户逐项确认；询问应用作者
+5. 基于应用内容自动生成应用名称与描述，用 `<question-form>` 一次向用户确认（含作者）
 6. 打包为 `/tmp/dist.zip`（static 分支）或确认 `/tmp/showcase-image.tar.gz`（backend 分支）
 7. 确定 `ticket`（首次提交需询问用户是否复用既有应用）
 8. 通过 multipart 表单 POST 到 showcase API，缓存返回的 `ticket`，向用户返回 `site_url`
@@ -87,7 +87,7 @@ arguments:
 > 3. **无持久化存储**：服务更新、异常重启或被运维重建容器时，文件系统会被重置，所有运行时写入（SQLite、用户上传、日志、缓存等）都会丢失。
 > 4. **公开可见**：应用发布后会在 用户作品集 (showcase.monkeycode-ai.online) 列表公开可见，所有人都可以访问到你发布的应用。
 
-然后用 `question` 工具，要求用户确认，选项为「继续发布」/「取消」。
+然后用 `<question-form>` 要求用户确认，选项为「继续发布」/「取消」。
 
 - 用户选「继续发布」 → 进入步骤 3b
 - 用户选「取消」 → 终止本次发布
@@ -485,7 +485,7 @@ rm -f /tmp/dist.zip
 
 ## 步骤 5 —— 生成并确认应用元数据
 
-**先自动生成，再逐项询问用户**。每个字段单独发起一次 `question` 工具调用，**不得**把多个字段合并到一个问题里。
+**先自动生成，再用一个 `<question-form>` 让用户一次确认所有字段。** 不得使用 `question` 工具（headless 环境下被禁用），不得在普通对话中逐项询问。
 
 ### 5a. 基于应用内容自动生成 `site_name` 与 `site_description`
 
@@ -496,42 +496,17 @@ rm -f /tmp/dist.zip
 - 自动生成的 `site_name`（一句话短标题，<= 30 字）
 - 自动生成的 `site_description`（一句话简介，<= 80 字）
 
-> 若无可解析内容，则在后续询问中**不要给出"满意"选项的默认值**，让用户必须自行输入。
+### 5b. 用 `<question-form>` 一次确认所有元数据
 
-### 5b. 询问应用名称（`question` 工具，独立一次调用）
+发出**一个** `<question-form>` 产物，包含以下字段（顺序固定）：
 
-```
-question: 自动识别到的应用名称为「<生成的 site_name>」，是否使用？
-header: 应用名称
-options:
-  - 满意，就用这个
-```
+1. **应用名称**（`site_name`）：type `radio`，选项 `满意，就用这个`（value 为自动生成的名称）；用户可走 Other 自行输入
+2. **应用描述**（`site_description`）：type `textarea`，placeholder 为自动生成的描述；用户可直接采用或修改
+3. **应用作者**（`site_author`）：type `radio`，选项 `匿名作者`（value `anonymous`）；用户可走 Other 输入真名
 
-- 用户选 **满意，就用这个** → 采用自动生成的值
-- 用户走 **Other** 自行输入 → 采用其输入
+若无可解析内容，对应字段不提供默认值，让用户必须自行输入。
 
-### 5c. 询问应用描述（`question` 工具，独立一次调用）
-
-```
-question: 自动识别到的应用描述为「<生成的 site_description>」，是否使用？
-header: 应用描述
-options:
-  - 满意，就用这个
-```
-
-- 处理逻辑同 5b。
-
-### 5d. 询问应用作者（`question` 工具，独立一次调用）
-
-```
-question: 请输入应用作者的 ID（可在下方选项中选择或自行输入）
-header: 应用作者
-options:
-  - 匿名作者
-```
-
-- 用户选 **匿名作者** → `site_author = "anonymous"`
-- 用户走 **Other** 自行输入 → 采用其输入
+用户提交表单后，从回答中提取三个字段的值，直接进入步骤 6（static）或步骤 7（backend）。
 
 ---
 
@@ -593,7 +568,7 @@ unzip -l /tmp/dist.zip | head -30
 
 ### 7a. 询问是否复用既有应用（首次提交时执行一次）
 
-使用 `question` 工具，**只提供一个显式备选项**；剩下的 Other 输入框本身就代表"有，输入密钥更新已有应用"——其 placeholder 即为该文案：
+使用 `<question-form>`，**只提供一个显式备选项**；剩下的 Other 输入框本身就代表"有，输入密钥更新已有应用"——其 placeholder 即为该文案：
 
 ```
 question: 之前在其他任务中提交过本应用吗？是需要更新已有应用，还是提交新应用？如果需要更新，请选择【其他】并填入之前任务提供的密钥。
@@ -771,7 +746,7 @@ GET https://ugc-submit.showcase.monkeycode-ai.online/v1/status?client_id=<client
 - **`ticket` 仅在本会话首次提交时询问用户**；首次提交成功拿到的 `ticket` 必须缓存到会话上下文，后续提交自动复用，**不得**反复询问
 - **不得自行编造 `ticket`**：要么来自用户输入，要么来自服务端返回
 - **应用名称/描述的自动生成必须基于真实应用内容**，不得凭空捏造；用户提供的输入优先级最高
-- **应用元数据三项必须分三次 `question` 工具询问**，不得合并
+- **应用元数据三项必须用一个 `<question-form>` 一次询问**，不得逐项对话询问，不得使用 `question` 工具
 - **不得在请求中传 `user_id` / `task_id`**
 - **不得伪装成功**：任一步失败必须如实报告
 - **不得轮询审核状态**：Skill 在上传后即结束
@@ -801,7 +776,7 @@ GET https://ugc-submit.showcase.monkeycode-ai.online/v1/status?client_id=<client
   - 应用代码必须移除所有运行时外网调用（远端模型、远端配置、第三方 API、用量上报 …）
   - 本地 `"$RUNTIME" build` **必须**带 `--network host`，确保 builder stage 拉依赖走宿主网络
   - 本地 healthcheck 阶段 `"$RUNTIME" run` **不指定** `--network`（用容器运行时默认网络）；离线自检由 3b.1 的 Dockerfile 写法约束（runtime stage 禁止联网命令、资源在 builder 落盘）从源头保证，不依赖运行时网络隔离
-  - 进入 backend 分支前**必须**已在步骤 2 通过独立 `question` 向用户说明「无外网」「单容器」「无持久化」「1C1G」四条限制并取得「继续发布」确认
+  - 进入 backend 分支前**必须**已在步骤 2 通过 `<question-form>` 向用户说明「无外网」「单容器」「无持久化」「1C1G」四条限制并取得「继续发布」确认
 - **容器无持久化存储**——服务更新、异常崩溃、运维重启都会重建容器，文件系统所有写入都会丢失：
   - Dockerfile 不得 `VOLUME` 数据目录
   - 容器内打包的 DB / 对象存储重启后会清零，必须由 supervisord 启动脚本幂等地重新灌入初始 schema 与种子数据
@@ -837,7 +812,7 @@ GET https://ugc-submit.showcase.monkeycode-ai.online/v1/status?client_id=<client
 | `build` 失败（前端 / `"$RUNTIME" build`） | 输出 stderr 尾部并终止 |
 | 既无 `docker` 又无 `podman`，且包管理器不可用 | 报告"无可用容器运行时"并终止 |
 | 构建后找不到 `index.html` | 输出目录结构并终止 |
-| 应用内容无任何可用元数据 | 自动生成留空，由用户在 `question` 工具的 Other 中输入 |
+| 应用内容无任何可用元数据 | 自动生成留空，由用户在 `<question-form>` 的 Other 中输入 |
 | zip 自检发现开发文件混入 | 调整排除项重新打包；仍存在则终止 |
 | 镜像 tar.gz > 500MB | 提示精简产物（多阶段编译 + alpine + 仅拷贝必要文件）并终止 |
 | `"$RUNTIME" run` 启动失败 | 打印 `"$RUNTIME" logs` 末段（多进程方案下含 supervisord 子进程日志），清理容器/镜像/`/tmp` 临时文件，终止 |
