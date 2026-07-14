@@ -578,3 +578,81 @@ describe('maskedOdCliFailure', () => {
     expect(guard.observeToolResult('u5', false, envelope)).toBeNull();
   });
 });
+
+// Trigger 4 — tool calls the model wrote as prose instead of invoking. The
+// motivating incident: a Kimi model whose provider config never declared the
+// tool_call capability emitted `[tool_call] bash {...}` as assistant text over
+// and over. Nothing executed, no tool_result ever came back, and triggers 1–3
+// (which count tool events) saw literally nothing while the run hung until the
+// 10-minute inactivity watchdog killed it.
+describe('tool-loop guard — text tool calls (trigger 4)', () => {
+  const KIMI = '[tool_call] bash\n{"command": "find /workspace -name \\"*.so*\\" | head -30"}';
+
+  it('halts once the model has written enough tool calls as text', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    expect(guard.observeAssistantText(KIMI)).toBeNull(); // 1st — below warn
+    const warn = guard.observeAssistantText(KIMI);
+    expect(warn).toMatchObject({ reason: 'text-tool-call', action: 'warn', count: 2, toolName: 'bash' });
+    const halt = guard.observeAssistantText(KIMI);
+    expect(halt).toMatchObject({ reason: 'text-tool-call', action: 'halt', count: 3 });
+    expect(guard.halted).toBe(true);
+  });
+
+  it('never halts in warn mode, and warns only once', () => {
+    const guard = createToolLoopGuard({ mode: 'warn' });
+    expect(guard.observeAssistantText(KIMI)).toBeNull();
+    expect(guard.observeAssistantText(KIMI)).toMatchObject({ action: 'warn' });
+    expect(guard.observeAssistantText(KIMI)).toBeNull();
+    expect(guard.observeAssistantText(KIMI)).toBeNull();
+    expect(guard.halted).toBe(false);
+    expect(guard.warned).toBe(true);
+  });
+
+  it('is disarmed by a real tool call — prose markers are then cosmetic', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    guard.observeToolUse('t1', 'Bash', { command: 'ls' });
+    guard.observeToolResult('t1', false, 'a.txt');
+    // An agent that WRITES about tool calls (docs, a code block) must not be
+    // halted for it once native tool calling has demonstrably worked.
+    for (let i = 0; i < 10; i += 1) {
+      expect(guard.observeAssistantText(KIMI)).toBeNull();
+    }
+    expect(guard.halted).toBe(false);
+  });
+
+  it('counts a marker split across stream chunks exactly once', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    // Split mid-marker: neither half matches alone; the rejoin must match, and
+    // the retained tail must not let the same marker count twice.
+    guard.observeAssistantText('[tool_');
+    expect(guard.observeAssistantText('call] bash\n{"command":"ls"}')).toBeNull(); // 1st
+    guard.observeAssistantText('[tool_');
+    const warn = guard.observeAssistantText('call] bash\n{"command":"ls"}'); // 2nd
+    expect(warn).toMatchObject({ action: 'warn', count: 2 });
+  });
+
+  it('counts every marker in a single chunk', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    const verdict = guard.observeAssistantText(`${KIMI}\n${KIMI}\n${KIMI}`);
+    expect(verdict).toMatchObject({ reason: 'text-tool-call', action: 'halt', count: 3 });
+  });
+
+  it('matches the XML tool-call family too', () => {
+    const guard = createToolLoopGuard({ mode: 'halt', warnTextToolCall: 1 });
+    expect(guard.observeAssistantText('<tool_call>bash</tool_call>')).toMatchObject({
+      reason: 'text-tool-call',
+      action: 'warn',
+    });
+  });
+
+  it('ignores ordinary prose and is inert when off', () => {
+    const guard = createToolLoopGuard({ mode: 'halt' });
+    expect(guard.observeAssistantText('I will now call the bash tool to list files.')).toBeNull();
+    expect(guard.observeAssistantText('Here is a {"command": "ls"} payload.')).toBeNull();
+    expect(guard.halted).toBe(false);
+
+    const off = createToolLoopGuard({ mode: 'off' });
+    for (let i = 0; i < 5; i += 1) expect(off.observeAssistantText(KIMI)).toBeNull();
+    expect(off.halted).toBe(false);
+  });
+});

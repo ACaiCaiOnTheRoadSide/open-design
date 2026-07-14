@@ -56,6 +56,30 @@
  *      volatile byte in the repeated output (timestamp, timing) keeps the
  *      streak at 1; byte-stability is required by design.
  *
+ *   4. TEXT tool calls — the model wrote its tool call as PROSE instead of
+ *      invoking it, and NOTHING in the run ever produced a real tool call.
+ *      This is the structural blind spot of triggers 1–3: they all count
+ *      `tool_use` / `tool_result` events, and here there are none — not one.
+ *      Motivating incident (2026-07-14): a Kimi model reached opencode through
+ *      a provider config that never declared the `tool_call` capability, so
+ *      native function calling was never enabled for it. The model emitted
+ *      `[tool_call] bash\n{"command": "find …"}` as assistant TEXT, over and
+ *      over. Nothing executed it, no tool_result ever came back, the agent sat
+ *      waiting on a result that could not arrive, and the run went silent until
+ *      the daemon's inactivity watchdog tore it down 10 minutes later. What the
+ *      user saw was a stall and a bogus network error; the actual cause — tool
+ *      calling was never wired up — appeared nowhere in the output. This
+ *      trigger names it directly.
+ *
+ *      Gated on ZERO structured tool activity in the run: once any real
+ *      `tool_use` has been seen, native function calling demonstrably works, and
+ *      a stray tool-call-shaped string in prose is then just cosmetic noise (the
+ *      artifact text-suppressor already strips those from the UI) — counting it
+ *      would halt healthy runs that merely WRITE about tool calls. The residual
+ *      false-positive window is a run whose FIRST output is prose carrying
+ *      several tool-call markers before any tool has been invoked; the warn
+ *      threshold sits above 1 so a single incidental mention stays inert.
+ *
  * Two escalation tiers per trigger:
  *   - WARN  — emit a one-shot heads-up event so the UI/CLI surfaces "this run
  *             may be stuck" while it is still cheap to stop. Never destructive.
@@ -71,7 +95,11 @@
  */
 
 /** Why the guard tripped. */
-export type ToolLoopReason = 'consecutive-errors' | 'repeated-failure' | 'identical-noprogress';
+export type ToolLoopReason =
+  | 'consecutive-errors'
+  | 'repeated-failure'
+  | 'identical-noprogress'
+  | 'text-tool-call';
 
 /** What the run loop should do about it. */
 export type ToolLoopAction = 'warn' | 'halt';
@@ -106,6 +134,15 @@ export interface ToolLoopGuardOptions {
   warnRepeat?: number;
   /** Repeats of the same failing signature that trigger a HALT. Default 8. */
   haltRepeat?: number;
+  /** Tool-call-shaped blocks in assistant TEXT (with zero real tool calls in
+   *  the run) that trigger a WARN. Default 2 — above 1, so one incidental
+   *  mention of a tool-call marker in prose is inert. */
+  warnTextToolCall?: number;
+  /** Same, for a HALT. Default 3. Deliberately low: with native function
+   *  calling broken, every further turn is a model round-trip that cannot
+   *  possibly execute anything, and the run's only other exit is the 10-minute
+   *  inactivity watchdog. */
+  haltTextToolCall?: number;
   /** Operating mode. Default `warn`. */
   mode?: ToolLoopMode;
 }
@@ -117,6 +154,12 @@ export interface ToolLoopGuard {
   /** Record a tool result. Returns a verdict the first time WARN is crossed
    *  and again the first time HALT is crossed; otherwise `null`. */
   observeToolResult(toolUseId: string, isError: boolean, content?: string): ToolLoopVerdict | null;
+  /** Feed a chunk of assistant TEXT (a `text_delta`'s delta, a `raw` stdout
+   *  line). Detects tool calls the model wrote as prose instead of invoking
+   *  (trigger 4). Streaming-safe: markers split across chunk boundaries are
+   *  rejoined, and each marker is counted exactly once. Inert once any real
+   *  `tool_use` has been observed. */
+  observeAssistantText(text: string): ToolLoopVerdict | null;
   /** True once a WARN verdict has been returned. */
   readonly warned: boolean;
   /** True once a HALT verdict has been returned. */
@@ -134,7 +177,31 @@ const DEFAULTS = {
   haltConsecutive: 10,
   warnRepeat: 4,
   haltRepeat: 8,
+  warnTextToolCall: 2,
+  haltTextToolCall: 3,
 } as const;
+
+/**
+ * Tool calls a model wrote as prose instead of invoking (trigger 4). Covers the
+ * shapes that leak when native function calling is not wired up: `[tool_call]`
+ * (Kimi/Moonshot's leaked token), the `<tool_call>` / `<|tool_call|>` XML family
+ * (Qwen and friends — the same shapes the artifact text-suppressor strips), and
+ * `<function_call>`. An optional trailing identifier is captured so the emitted
+ * verdict can name the tool the model was reaching for.
+ *
+ * Deliberately anchored on the MARKER, not on marker-plus-JSON: the JSON body
+ * routinely lands in a later stream chunk, and holding a pending match across
+ * chunks to confirm it would trade this trigger's simplicity for a class of
+ * off-by-one bugs. The zero-real-tool-calls gate is what keeps the false
+ * positives out, not the strictness of this pattern.
+ */
+const TEXT_TOOL_CALL_RE =
+  /(?:\[\s*tool_call\s*\]|<\s*\|?\s*(?:tool_call|function_call)\b[^>]*>)\s*([A-Za-z0-9_.-]{1,64})?/giu;
+
+// Longest prefix of a marker that could still be completed by the next chunk.
+// Retaining this many trailing chars is enough to rejoin a marker split across
+// a stream-chunk boundary without ever re-counting one already tallied.
+const MAX_TEXT_MARKER_LEN = 32;
 
 // Cap on the tool_use bookkeeping map. A run can make thousands of tool calls;
 // we only ever need the signature of a call that is about to be answered by a
@@ -474,6 +541,8 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
   const haltConsecutive = options.haltConsecutive ?? DEFAULTS.haltConsecutive;
   const warnRepeat = options.warnRepeat ?? DEFAULTS.warnRepeat;
   const haltRepeat = options.haltRepeat ?? DEFAULTS.haltRepeat;
+  const warnTextToolCall = options.warnTextToolCall ?? DEFAULTS.warnTextToolCall;
+  const haltTextToolCall = options.haltTextToolCall ?? DEFAULTS.haltTextToolCall;
 
   // id -> { name, signature } for in-flight tool calls, capped (insertion-order
   // Map eviction).
@@ -492,7 +561,18 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
   // public `warned` getter reports either.
   let _warnedFailure = false;
   let _warnedIdentical = false;
+  let _warnedTextToolCall = false;
   let _halted = false;
+
+  // Trigger-4 state. `sawStructuredToolUse` latches on the first real tool call
+  // and permanently disarms the text trigger: native function calling works, so
+  // tool-call-shaped prose after that is noise, not the failure this catches.
+  // `textTail` carries the trailing bytes of the last text chunk so a marker
+  // straddling a chunk boundary is still matched — and, because the retained
+  // tail always starts AFTER the last counted match, never matched twice.
+  let sawStructuredToolUse = false;
+  let textToolCallCount = 0;
+  let textTail = '';
 
   function evict<K, V>(map: Map<K, V>, cap: number): void {
     while (map.size > cap) {
@@ -504,7 +584,7 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
 
   return {
     get warned() {
-      return _warnedFailure || _warnedIdentical;
+      return _warnedFailure || _warnedIdentical || _warnedTextToolCall;
     },
     get halted() {
       return _halted;
@@ -512,13 +592,69 @@ export function createToolLoopGuard(options: ToolLoopGuardOptions = {}): ToolLoo
 
     observeToolUse(id, name, input) {
       if (mode === 'off' || _halted) return;
+      // Latch BEFORE the id guard: a real tool call proves native function
+      // calling works even if this particular event carries no usable id, and
+      // that is the only thing trigger 4 needs from it.
+      sawStructuredToolUse = true;
+      textTail = '';
       if (!id) return;
       uses.set(id, { name: name || 'tool', signature: computeToolSignature(name, input) });
       evict(uses, MAX_TRACKED_USES);
     },
 
+    observeAssistantText(text) {
+      if (mode === 'off' || _halted) return null;
+      // Native function calling demonstrably works in this run — anything
+      // tool-call-shaped in the prose from here on is cosmetic.
+      if (sawStructuredToolUse) return null;
+      // In warn mode the latched warning is the only observable outcome, so
+      // there is nothing left to compute once it has fired.
+      if (mode === 'warn' && _warnedTextToolCall) return null;
+      if (typeof text !== 'string' || text.length === 0) return null;
+
+      const buf = textTail + text;
+      let found = 0;
+      let lastEnd = 0;
+      let lastName = '';
+      let lastSnippet = '';
+      TEXT_TOOL_CALL_RE.lastIndex = 0;
+      for (let m = TEXT_TOOL_CALL_RE.exec(buf); m !== null; m = TEXT_TOOL_CALL_RE.exec(buf)) {
+        found += 1;
+        lastEnd = m.index + m[0].length;
+        lastName = m[1] ?? '';
+        lastSnippet = collapseWhitespace(buf.slice(m.index, m.index + SIGNATURE_MAX_LEN));
+        // A zero-length match cannot happen (every alternative consumes the
+        // marker), but guard the loop anyway — a stuck lastIndex would hang.
+        if (m[0].length === 0) TEXT_TOOL_CALL_RE.lastIndex += 1;
+      }
+      // Keep only what could still be the head of a marker split across the
+      // boundary, and only from AFTER the last match — so nothing is recounted.
+      const carry = buf.slice(Math.max(lastEnd, buf.length - (MAX_TEXT_MARKER_LEN - 1)));
+      textTail = carry.slice(-(MAX_TEXT_MARKER_LEN - 1));
+      if (found === 0) return null;
+
+      textToolCallCount += found;
+      const toolName = lastName || 'tool';
+      const signature = displayToolSignature(lastSnippet);
+
+      if (mode === 'halt' && textToolCallCount >= haltTextToolCall) {
+        _halted = true;
+        _warnedTextToolCall = true;
+        return { type: 'tool_loop', reason: 'text-tool-call', action: 'halt', toolName, signature, count: textToolCallCount };
+      }
+      if (!_warnedTextToolCall && textToolCallCount >= warnTextToolCall) {
+        _warnedTextToolCall = true;
+        return { type: 'tool_loop', reason: 'text-tool-call', action: 'warn', toolName, signature, count: textToolCallCount };
+      }
+      return null;
+    },
+
     observeToolResult(toolUseId, isError, content) {
       if (mode === 'off' || _halted) return null;
+      // A result means a tool really ran — same proof as observeToolUse, and it
+      // holds even for runtimes whose result arrives without a matching use.
+      sawStructuredToolUse = true;
+      textTail = '';
       // In warn mode, once both one-shot warnings have latched nothing this
       // function does is externally observable anymore (every halt path is
       // gated on mode === 'halt') — skip the remaining bookkeeping, notably

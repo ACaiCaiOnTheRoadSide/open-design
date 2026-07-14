@@ -125,9 +125,17 @@ export type DaemonAgentPayload =
   // times it repeated (consecutive errors, repeats of this exact failing
   // action, or — `identical-noprogress` — strictly-consecutive repeats of the
   // same successful read-only call returning a byte-identical result).
+  // `text-tool-call` is different in kind: the model wrote its tool call as
+  // PROSE (`[tool_call] bash {…}`) instead of invoking it, so nothing ever
+  // executed and no tool_result came back — native function calling is not
+  // wired up for this model/endpoint. `count` is how many such blocks appeared.
   | {
       type: 'tool_loop';
-      reason: 'consecutive-errors' | 'repeated-failure' | 'identical-noprogress';
+      reason:
+        | 'consecutive-errors'
+        | 'repeated-failure'
+        | 'identical-noprogress'
+        | 'text-tool-call';
       action: 'warn' | 'halt';
       toolName: string;
       signature: string;

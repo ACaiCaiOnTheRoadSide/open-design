@@ -1558,15 +1558,23 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   if (t === 'tool_loop' && typeof data.toolName === 'string') {
     const toolName = data.toolName;
     const count = typeof data.count === 'number' ? data.count : 0;
-    const identical = data.reason === 'identical-noprogress';
+    const halt = data.action === 'halt';
+    // `text-tool-call` is not a repetition loop at all: the model wrote its tool
+    // calls as prose instead of invoking them, so nothing ran. Say that, rather
+    // than describing it as a repeated failing call — the fix is a model/config
+    // one, not "re-check your target".
     const detail =
-      data.action === 'halt'
-        ? identical
-          ? `Run stopped: the agent repeated the same ${toolName} call ${count}× with an identical result. Re-running it cannot change the outcome.`
-          : `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
-        : identical
-          ? `Heads up — the agent has repeated the same ${toolName} call ${count}× with an identical result and may be stuck.`
-          : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
+      data.reason === 'text-tool-call'
+        ? halt
+          ? `Run stopped: the model wrote its tool calls as plain text (${count}×) instead of invoking them, so no tool actually ran. This model's tool calling is not working — check the model configuration, or pick a model that supports tool calls.`
+          : `Heads up — the model is writing tool calls as plain text (${count}×) instead of invoking them, so nothing is running. Its tool calling is likely not configured.`
+        : data.reason === 'identical-noprogress'
+          ? halt
+            ? `Run stopped: the agent repeated the same ${toolName} call ${count}× with an identical result. Re-running it cannot change the outcome.`
+            : `Heads up — the agent has repeated the same ${toolName} call ${count}× with an identical result and may be stuck.`
+          : halt
+            ? `Run stopped: the agent repeated a failing ${toolName} call ${count}× without progress. Re-check the actual target before retrying.`
+            : `Heads up — the agent has repeated a failing ${toolName} call ${count}× and may be stuck.`;
     return { kind: 'status', label: 'warning', detail };
   }
   if (t === 'raw' && typeof data.line === 'string') {

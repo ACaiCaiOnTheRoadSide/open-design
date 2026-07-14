@@ -8455,7 +8455,14 @@ export async function startServer({
         'error',
         createSseErrorPayload(
           'TOOL_LOOP_DETECTED',
-          verdict.reason === 'identical-noprogress'
+          verdict.reason === 'text-tool-call'
+            ? `Run terminated: the model wrote its tool calls as plain text instead of ` +
+              `invoking them (${verdict.count}× — e.g. \`${verdict.signature}\`), so not a ` +
+              'single tool actually ran. This model\'s native tool calling is not working: ' +
+              'the model configuration must declare tool-call support, and the endpoint must ' +
+              'return tool calls in the API\'s tool-call field rather than in the message body. ' +
+              'Check the model configuration, or switch to a model known to call tools.'
+            : verdict.reason === 'identical-noprogress'
             ? `Run terminated: the agent repeated the same ${verdict.toolName} call ` +
               `${verdict.count}× with a byte-identical result (\`${verdict.signature}\`). ` +
               'The result is real — an empty grep/check result usually means "not found", ' +
@@ -8499,6 +8506,27 @@ export async function startServer({
           Boolean(ev.isError),
           typeof ev.content === 'string' ? ev.content : '',
         );
+        if (verdict) {
+          send('agent', verdict);
+          if (verdict.action === 'halt') abortForToolLoop(verdict);
+        }
+        return;
+      }
+      // Assistant TEXT feeds the guard's trigger 4: a model whose native
+      // function calling is not wired up writes its tool call as prose, so the
+      // tool events above never arrive at all and triggers 1–3 stay blind.
+      // `raw` is included because an unparsed agent stdout line is exactly how
+      // that prose reaches us when the adapter cannot classify it (the Kimi
+      // incident's last event was `raw`). `thinking_delta` is deliberately NOT
+      // fed: a model REASONING about emitting a tool call has not emitted one.
+      if (ev.type === 'text_delta' || ev.type === 'raw') {
+        const text =
+          typeof ev.delta === 'string' ? ev.delta
+          : typeof ev.text === 'string' ? ev.text
+          : typeof ev.line === 'string' ? ev.line
+          : '';
+        if (!text) return;
+        const verdict = toolLoopGuard.observeAssistantText(text);
         if (verdict) {
           send('agent', verdict);
           if (verdict.action === 'halt') abortForToolLoop(verdict);
