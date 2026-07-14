@@ -984,6 +984,35 @@ describe('classifyRunFailure — AMR/vela reclassification out of execution_fail
     expect(result?.retryable).toBe(true);
   });
 
+  // The sandbox platform hands out a fixed number of concurrent execution
+  // leases per tenant; exhausting them is a queueing delay, not a spent budget.
+  // Its wording ("... concurrency limit reached (HTTP 429)") collides with the
+  // hard-quota regex's `limit reached` alternative, which used to bucket this as
+  // a non-retryable `hard_quota` telling the user to top up an account with no
+  // billing problem — and hid a capacity ceiling behind a billing label.
+  it('classifies a tenant concurrency limit as a retryable rate_limit_429, not hard_quota', () => {
+    const result = classify(
+      'AGENT_EXIT_127',
+      'od-agent huskbox: giving up after 10 attempts: tenant concurrency limit reached (HTTP 429)',
+    );
+    expect(result?.failure_category).toBe('rate_limit');
+    expect(result?.failure_detail).toBe('rate_limit_429');
+    expect(result?.retryable).toBe(true);
+    expect(result?.user_action).toBe('retry');
+  });
+
+  // Guard the narrowing above: a genuine spent quota must still read as
+  // hard_quota even though it also says "limit".
+  it('still classifies a real usage limit as a non-retryable hard_quota', () => {
+    const result = classify(
+      'AGENT_EXECUTION_FAILED',
+      'You have reached your usage limit for this billing period.',
+    );
+    expect(result?.failure_category).toBe('rate_limit');
+    expect(result?.failure_detail).toBe('hard_quota');
+    expect(result?.retryable).toBe(false);
+  });
+
   it('classifies a vela "model not in allowed list" rejection as model_unavailable', () => {
     const result = classify(
       'AGENT_EXECUTION_FAILED',
