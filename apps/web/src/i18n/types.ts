@@ -924,6 +924,7 @@ export interface Dict {
   'entry.navCollapse': string;
   'entry.navNewProject': string;
   'entry.navHome': string;
+  'entry.backToHome': string;
   'entry.navProjects': string;
   'entry.navTasks': string;
   'entry.navPlugins': string;

@@ -530,6 +530,7 @@ export const hu: Dict = {
   'entry.navCollapse': 'Oldalsáv összecsukása',
   'entry.navNewProject': 'Új projekt',
   'entry.navHome': 'Kezdőlap',
+  'entry.backToHome': 'Vissza a főoldalra',
   'entry.navProjects': 'Projektek',
   'entry.navTasks': 'Automatizálások',
   'entry.navPlugins': 'Pluginok',

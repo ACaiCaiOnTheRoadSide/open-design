@@ -530,6 +530,7 @@ export const ptBR: Dict = {
   'entry.navCollapse': 'Recolher barra lateral',
   'entry.navNewProject': 'Novo projeto',
   'entry.navHome': 'Início',
+  'entry.backToHome': 'Voltar para o início',
   'entry.navProjects': 'Projetos',
   'entry.navTasks': 'Automações',
   'entry.navPlugins': 'Plugins',

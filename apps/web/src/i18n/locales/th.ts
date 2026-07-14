@@ -530,6 +530,7 @@ export const th: Dict = {
   'entry.navCollapse': 'ย่อแถบด้านข้าง',
   'entry.navNewProject': 'โปรเจกต์ใหม่',
   'entry.navHome': 'หน้าแรก',
+  'entry.backToHome': 'กลับไปหน้าแรก',
   'entry.navProjects': 'โปรเจกต์',
   'entry.navTasks': 'การทำงานอัตโนมัติ',
   'entry.navPlugins': 'ปลั๊กอิน',

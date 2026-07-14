@@ -530,6 +530,7 @@ export const id: Dict = {
   'entry.navCollapse': 'Tutup bilah sisi',
   'entry.navNewProject': 'Proyek baru',
   'entry.navHome': 'Beranda',
+  'entry.backToHome': 'Kembali ke beranda',
   'entry.navProjects': 'Proyek',
   'entry.navTasks': 'Otomatisasi',
   'entry.navPlugins': 'Plugin',

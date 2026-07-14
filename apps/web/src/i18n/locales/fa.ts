@@ -530,6 +530,7 @@ export const fa: Dict = {
   'entry.navCollapse': 'جمع کردن نوار کناری',
   'entry.navNewProject': 'پروژه جدید',
   'entry.navHome': 'خانه',
+  'entry.backToHome': 'بازگشت به خانه',
   'entry.navProjects': 'پروژه‌ها',
   'entry.navTasks': 'خودکارسازی‌ها',
   'entry.navPlugins': 'افزونه‌ها',

@@ -530,6 +530,7 @@ export const ko: Dict = {
   'entry.navCollapse': '사이드바 접기',
   'entry.navNewProject': '새 프로젝트',
   'entry.navHome': '홈',
+  'entry.backToHome': '홈으로 돌아가기',
   'entry.navProjects': '프로젝트',
   'entry.navTasks': '자동화',
   'entry.navPlugins': '플러그인',

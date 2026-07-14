@@ -530,6 +530,7 @@ export const ja: Dict = {
   'entry.navCollapse': 'サイドバーを折りたたむ',
   'entry.navNewProject': '新規プロジェクト',
   'entry.navHome': 'ホーム',
+  'entry.backToHome': 'ホームに戻る',
   'entry.navProjects': 'プロジェクト',
   'entry.navTasks': 'オートメーション',
   'entry.navPlugins': 'プラグイン',

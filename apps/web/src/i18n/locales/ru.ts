@@ -530,6 +530,7 @@ export const ru: Dict = {
   'entry.navCollapse': 'Свернуть боковую панель',
   'entry.navNewProject': 'Новый проект',
   'entry.navHome': 'Главная',
+  'entry.backToHome': 'Вернуться на главную',
   'entry.navProjects': 'Проекты',
   'entry.navTasks': 'Автоматизации',
   'entry.navPlugins': 'Плагины',

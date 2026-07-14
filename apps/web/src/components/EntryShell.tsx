@@ -739,6 +739,25 @@ export function EntryShell({
       onOpenSettings={onOpenSettings}
     />
   );
+  // 设计体系页的标题头。白标形态下左侧导航栏是隐藏的,没有这颗返回按钮就
+  // 出不去这一页;样式对齐项目页的 .chat-project-back,两处观感一致。
+  const designSystemsHead = (
+    <header className="entry-section__head">
+      <div className="entry-section__heading">
+        <button
+          type="button"
+          className="entry-section__back"
+          onClick={() => navigate({ kind: 'home', view: 'home' })}
+          title={t('entry.backToHome')}
+          aria-label={t('entry.backToHome')}
+        >
+          <Icon name="arrow-left" size={16} />
+        </button>
+        <h1 className="entry-section__title">{t('entry.navDesignSystems')}</h1>
+      </div>
+    </header>
+  );
+
   const homeExecutionSwitcher = (
     <InlineModelSwitcher
       compact
@@ -900,9 +919,7 @@ export function EntryShell({
             <div data-testid="entry-view-design-systems" data-active={view === 'design-systems' ? 'true' : 'false'} {...inactiveViewProps(view === 'design-systems')}>
               {designSystemsLoading ? (
                 <div className="entry-section">
-                  <header className="entry-section__head">
-                    <h1 className="entry-section__title">{t('entry.navDesignSystems')}</h1>
-                  </header>
+                  {designSystemsHead}
                   <DesignSystemsTab
                     loading
                     systems={[]}
@@ -916,9 +933,7 @@ export function EntryShell({
                 </div>
               ) : (
                 <div className="entry-section">
-                  <header className="entry-section__head">
-                    <h1 className="entry-section__title">{t('entry.navDesignSystems')}</h1>
-                  </header>
+                  {designSystemsHead}
                   <DesignSystemsTab
                     systems={designSystems}
                     templates={templates}

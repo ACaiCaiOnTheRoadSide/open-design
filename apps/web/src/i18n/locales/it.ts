@@ -530,6 +530,7 @@ export const it: Dict = {
   'entry.navCollapse': 'Comprimi la barra laterale',
   'entry.navNewProject': 'Nuovo progetto',
   'entry.navHome': 'Home',
+  'entry.backToHome': 'Torna alla home',
   'entry.navProjects': 'Progetti',
   'entry.navTasks': 'Automazioni',
   'entry.navPlugins': 'Plugin',

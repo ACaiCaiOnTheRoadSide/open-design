@@ -530,6 +530,7 @@ export const zhTW: Dict = {
   'entry.navCollapse': '收合側欄',
   'entry.navNewProject': '新建專案',
   'entry.navHome': '主頁',
+  'entry.backToHome': '返回首頁',
   'entry.navProjects': '專案',
   'entry.navTasks': '自動化',
   'entry.navPlugins': '外掛',

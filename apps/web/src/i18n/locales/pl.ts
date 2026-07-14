@@ -530,6 +530,7 @@ export const pl: Dict = {
   'entry.navCollapse': 'Zwiń pasek boczny',
   'entry.navNewProject': 'Nowy projekt',
   'entry.navHome': 'Strona główna',
+  'entry.backToHome': 'Powrót do strony głównej',
   'entry.navProjects': 'Projekty',
   'entry.navTasks': 'Automatyzacje',
   'entry.navPlugins': 'Wtyczki',

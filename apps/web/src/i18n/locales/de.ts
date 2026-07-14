@@ -530,6 +530,7 @@ export const de: Dict = {
   'entry.navCollapse': 'Seitenleiste ausblenden',
   'entry.navNewProject': 'Neues Projekt',
   'entry.navHome': 'Start',
+  'entry.backToHome': 'Zurück zur Startseite',
   'entry.navProjects': 'Projekte',
   'entry.navTasks': 'Automatisierungen',
   'entry.navPlugins': 'Plugins',

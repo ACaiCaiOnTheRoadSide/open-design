@@ -530,6 +530,7 @@ export const ar: Dict = {
   'entry.navCollapse': 'طي الشريط الجانبي',
   'entry.navNewProject': 'مشروع جديد',
   'entry.navHome': 'الرئيسية',
+  'entry.backToHome': 'العودة إلى الصفحة الرئيسية',
   'entry.navProjects': 'المشاريع',
   'entry.navTasks': 'الأتمتة',
   'entry.navPlugins': 'الإضافات',

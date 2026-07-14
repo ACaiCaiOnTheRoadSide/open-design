@@ -530,6 +530,7 @@ export const uk: Dict = {
   'entry.navCollapse': 'Згорнути бічну панель',
   'entry.navNewProject': 'Новий проєкт',
   'entry.navHome': 'Головна',
+  'entry.backToHome': 'Повернутися на головну',
   'entry.navProjects': 'Проєкти',
   'entry.navTasks': 'Автоматизації',
   'entry.navPlugins': 'Плагіни',

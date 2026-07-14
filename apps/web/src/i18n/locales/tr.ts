@@ -530,6 +530,7 @@ export const tr: Dict = {
   'entry.navCollapse': 'Kenar çubuğunu daralt',
   'entry.navNewProject': 'Yeni proje',
   'entry.navHome': 'Ana sayfa',
+  'entry.backToHome': 'Ana sayfaya dön',
   'entry.navProjects': 'Projeler',
   'entry.navTasks': 'Otomasyonlar',
   'entry.navPlugins': 'Plugin\'ler',

@@ -1831,6 +1831,33 @@
   justify-content: space-between;
   gap: 12px;
 }
+/* 返回按钮和标题同排:__head 是 baseline 对齐(为标题右侧的行内元素服务),
+   图标按钮按 baseline 对会往下坠,所以单独包一层按中线对齐。 */
+.entry-section__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 与项目页的 .chat-project-back 同规格,保证两处返回按钮观感一致。 */
+.entry-section__back {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.entry-section__back:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
 .entry-section__title {
   margin: 0;
   font-family: var(--serif);

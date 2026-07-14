@@ -530,6 +530,7 @@ export const zhCN: Dict = {
   'entry.navCollapse': '收起侧栏',
   'entry.navNewProject': '新建项目',
   'entry.navHome': '主页',
+  'entry.backToHome': '返回首页',
   'entry.navProjects': '项目',
   'entry.navTasks': '自动化',
   'entry.navPlugins': '插件',
