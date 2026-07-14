@@ -1045,12 +1045,15 @@ async function consumeDaemonRun({
   // stderr 按行缓冲:跨 chunk 拼行后才能可靠识别 [od-retry] 契约行(dispatcher 的
   // 沙箱重试进度),识别出的行走 onConnectionStatus,其余照旧进 stderrBuf。
   let stderrPending = '';
-  // 两类连接提示各自的「在展示中」标记,决定何时清除:
+  // 三类瞬态提示各自的「在展示中」标记,决定何时清除:
   //  - reconnectNotice:客户端重连提示,新连接送达任何一帧即清(连上了);
-  //  - retryNotice:dispatcher 的 [od-retry] 提示,重试成功后新 execution 的
-  //    stdout 一到即清(keepalive 帧不算——dispatcher 退避期间 keepalive 照常流)。
+  //  - retryNotice:dispatcher 的 [od-retry] 提示,重试成功后 agent 恢复产出即清;
+  //  - queuedNotice:daemon 并发闸门的排队提示,入场开跑即清。
+  // 后两者都以「agent 真的开始出东西了」为清除信号(见 clearProgressNotice)——
+  // keepalive 帧不算,退避/排队期间 keepalive 照常流。
   let reconnectNoticeActive = false;
   let retryNoticeActive = false;
+  let queuedNoticeActive = false;
   let exitCode: number | null = null;
   let exitSignal: string | null = null;
   let endStatus: ChatRunStatus | null = null;
@@ -1162,12 +1165,35 @@ async function consumeDaemonRun({
 
           const event = parsed as unknown as ChatSseEvent;
 
+          // agent 真的开始出东西了 = 排队结束 / 沙箱重试成功,撤下瞬态提示。
+          //
+          // 必须同时挂在 stdout 与 agent 两个事件上:daemon 只在 plain/BYOK 模式下
+          // 发 stdout(server.ts 的 `else` 分支),而 opencode 走的是 JSON 事件流 →
+          // 一律发 agent 事件、永不发 stdout。原先只清 stdout,于是 opencode 上
+          // 重试成功后那条 [od-retry] 提示会一直卡在屏幕上到本轮结束。
+          const clearProgressNotice = () => {
+            if (!retryNoticeActive && !queuedNoticeActive) return;
+            retryNoticeActive = false;
+            queuedNoticeActive = false;
+            handlers.onConnectionStatus?.(null);
+          };
+
+          // 排队中:daemon 已达并发上限,这一轮还没开跑。对用户而言这与「连接不稳、
+          // 正在重试」是同一类信息——还没开始,但有进展,别关页面——所以复用同一个
+          // 提示插槽,而不是新造一个 UI。
+          if (event.event === 'queued') {
+            queuedNoticeActive = true;
+            const position = Number(event.data.position ?? 0);
+            handlers.onConnectionStatus?.(
+              position > 1
+                ? `queued — ${position - 1} run(s) ahead`
+                : 'queued — starting next',
+            );
+            continue;
+          }
+
           if (event.event === 'stdout') {
-            // agent 恢复产出 = 沙箱侧重试成功,撤下 [od-retry] 提示。
-            if (retryNoticeActive) {
-              retryNoticeActive = false;
-              handlers.onConnectionStatus?.(null);
-            }
+            clearProgressNotice();
             const chunk = String(event.data.chunk ?? '');
             acc += chunk;
             handlers.onDelta(chunk);
@@ -1196,6 +1222,9 @@ async function consumeDaemonRun({
           }
 
           if (event.event === 'agent') {
+            // opencode 的产出全部走这里(它从不发 stdout),所以清除瞬态提示的信号
+            // 必须挂在这一支上,否则排队/重试提示永远撤不下来。
+            clearProgressNotice();
             if (event.data.type === 'tool_input_delta') {
               if (
                 typeof event.data.id === 'string' &&

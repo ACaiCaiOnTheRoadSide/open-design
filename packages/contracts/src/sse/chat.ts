@@ -143,8 +143,25 @@ export type DaemonAgentPayload =
     }
   | { type: 'raw'; line: string };
 
+/**
+ * The run is admitted-pending: the daemon is at its concurrency cap and this run
+ * is holding a place in line rather than running (see the daemon's
+ * run-concurrency-gate). Emitted when the run is first parked and again each
+ * time it moves up, so the UI can count down instead of showing an
+ * indistinguishable "working" spinner for what may be minutes.
+ *
+ * `position` is 1-based: 1 means "next to start". No event is emitted for a run
+ * that was admitted immediately — it never waited, so it has no position.
+ * Admission ends the queue state; the run's first `stdout`/`agent` event is the
+ * signal to clear the notice.
+ */
+export interface ChatSseQueuedPayload {
+  position: number;
+}
+
 export type ChatSseEvent =
   | SseTransportEvent<'start', ChatSseStartPayload>
+  | SseTransportEvent<'queued', ChatSseQueuedPayload>
   | SseTransportEvent<'agent', DaemonAgentPayload>
   | SseTransportEvent<'stdout', ChatSseChunkPayload>
   | SseTransportEvent<'stderr', ChatSseChunkPayload>

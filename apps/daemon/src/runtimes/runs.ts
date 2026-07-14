@@ -81,6 +81,14 @@ export function createChatRunService({
       acpSession: null,
       childPid: null,
       processGroupId: null,
+      // Admission slot held while this run occupies concurrency capacity (see
+      // run-concurrency-gate.ts). Released exactly once, by finish() — the only
+      // function every terminal path funnels through. Releasing anywhere else
+      // would leak capacity on whichever path forgot.
+      gateSlot: null,
+      // Set only while the run is parked waiting for admission; cancel() calls it
+      // to leave the queue. Null once admitted (or if the gate is disabled).
+      abandonGate: null,
       childExitObservedAt: null,
       exitCode: null,
       signal: null,
@@ -226,6 +234,13 @@ export function createChatRunService({
 
   const finish = (run, status, code: number | null = null, signal: string | null = null) => {
     if (TERMINAL_RUN_STATUSES.has(run.status)) return;
+    // Hand the concurrency slot back before anything else: this is the single
+    // point every terminal path reaches, and the early-return above makes it
+    // run exactly once per run. A slot leaked here is never recovered — capacity
+    // would shrink by one for the lifetime of the process, and the gate would
+    // quietly strangle the daemon it exists to protect.
+    run.gateSlot?.release();
+    run.gateSlot = null;
     run.status = status;
     run.exitCode = code;
     run.signal = signal;
@@ -401,6 +416,12 @@ export function createChatRunService({
     run.updatedAt = Date.now();
     clearPendingRetryRestart(run);
     closeRunStdin(run);
+    // Still queued for admission (no child yet): step out of the line. Without
+    // this the run keeps its place in the concurrency gate's queue until some
+    // unrelated run finishes — every user behind it waits on a request that was
+    // already cancelled, and this one's own handler stays parked too.
+    run.abandonGate?.();
+    run.abandonGate = null;
     if (!run.child) {
       finish(run, 'canceled', null, 'SIGTERM');
       return statusBody(run);

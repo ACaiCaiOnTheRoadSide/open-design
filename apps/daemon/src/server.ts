@@ -649,6 +649,7 @@ import {
 import { listLibraryTokenOrigins } from './library-store.js';
 import { apiTokenFromEnv, isApiAuthDisabled, isApiTokenMiddlewareEnabled } from './api-token-auth.js';
 import { createOpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
+import { createRunConcurrencyGate, resolveMaxConcurrentRuns } from './run-concurrency-gate.js';
 
 /** @typedef {import('@open-design/contracts').ApiErrorCode} ApiErrorCode */
 /** @typedef {import('@open-design/contracts').ApiError} ApiError */
@@ -867,6 +868,12 @@ migrateLegacyDataDirSync({
   dataDir: RUNTIME_DATA_DIR,
 });
 const ARTIFACTS_DIR = path.join(RUNTIME_DATA_DIR, 'artifacts');
+// Admission control for agent runs. Process-wide by construction: the daemon is
+// one process, and (in the hosted deployment) one replica shared by every
+// tenant, so an in-process counter is the whole truth. Unlimited unless
+// OD_MAX_CONCURRENT_RUNS is set — a desktop install must never queue its single
+// user behind themselves. See run-concurrency-gate.ts.
+const runConcurrencyGate = createRunConcurrencyGate(resolveMaxConcurrentRuns());
 // Critique Theater artifacts intentionally live outside the static
 // `/artifacts` tree. The per-run artifact endpoint is the sanctioned
 // read path so project-membership, size, and CSP guards cannot be bypassed.
@@ -7938,6 +7945,36 @@ export async function startServer({
         env,
       });
       lifecycle.mark('launch_preflight_end');
+
+      // Admission control. Everything above this line is cheap preparation;
+      // everything below holds a child process, a buffered prompt, and a live
+      // output stream for the length of the turn. Park here — before paying any
+      // of that — when the daemon is already at capacity, and tell the user
+      // where they are in line rather than showing them a spinner that means
+      // nothing. See run-concurrency-gate.ts for why the cap exists.
+      lifecycle.mark('admission_wait_start');
+      // Leave the line if the user cancels while parked, or every run behind
+      // this one would wait on a corpse (runs.ts `cancel`).
+      run.abandonGate = () => runConcurrencyGate.abandon(run.id);
+      const gateSlot = await runConcurrencyGate.acquire({
+        id: run.id,
+        onQueued: (position) => { send('queued', { position }); },
+      });
+      run.abandonGate = null;
+      lifecycle.mark('admission_wait_end');
+      if (!gateSlot || run.cancelRequested) {
+        // Cancelled while queued: the user pressed stop before we ever spawned.
+        // Nothing was started, so there is nothing to kill — just hand the slot
+        // back (if we won the race and got one) and close the run out.
+        gateSlot?.release();
+        cleanupPromptFile();
+        revokeToolToken('child_exit');
+        unregisterChatAgentEventSink();
+        return design.runs.finish(run, 'canceled', null, null);
+      }
+      // finish() is the sole release point and runs exactly once per run.
+      run.gateSlot = gateSlot;
+
       lifecycle.mark('process_spawn_start');
       child = spawn(invocation.command, invocation.args, {
         env,
