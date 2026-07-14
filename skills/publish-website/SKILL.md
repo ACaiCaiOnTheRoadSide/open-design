@@ -504,7 +504,19 @@ rm -f /tmp/dist.zip
 2. **应用描述**（`site_description`）：type `textarea`，`defaultValue` 设为自动生成的描述，用户可直接采用或修改
 3. **应用作者**（`site_author`）：type `text`，`defaultValue` 设为 `anonymous`，placeholder 提示"输入作者名或留空使用匿名"
 
-**不得用 `radio` 只放一个选项**——那样用户既看不到自动生成的值，也无法自行输入。用 `text` / `textarea` + `defaultValue` 预填，用户能看到、能直接用、也能改。
+**不得用 `radio` 只放一个选项**——那样用户既看不到自动生成的值，也无法自行输入。
+
+**必须用 `defaultValue`，不得用 `placeholder` 预填**。`placeholder` 是灰色提示文字，不算真正填入的值——用户如果直接提交，`required` 字段会被当成空的，提交按钮不可点击。`defaultValue` 才是真正写入输入框的值，用户能直接提交也能改。
+
+示例（正确）：
+```json
+{"id": "site_name", "label": "应用名称", "type": "text", "required": true, "defaultValue": "我的应用"}
+```
+
+示例（错误，禁止）：
+```json
+{"id": "site_name", "label": "应用名称", "type": "text", "required": true, "placeholder": "我的应用"}
+```
 
 若无可解析内容，对应字段不设 `defaultValue`，让用户必须自行输入。
 
