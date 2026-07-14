@@ -8367,10 +8367,19 @@ export async function startServer({
 
     // Shared helper for emitting guarded text deltas across all agent
     // stream handlers (sendAgentEvent, copilot, ACP).
+    //
+    // NB this emits with a BARE send('agent', …) and its callers `return`
+    // immediately after, so text on this path never reaches emitAgentEvent —
+    // i.e. never reaches the tool-loop guard through that choke point. That is
+    // most of the fleet: json-event-stream (opencode), qoder, pi-rpc, copilot
+    // and ACP all route their text_delta here; only Claude's text goes out via
+    // emitAgentEvent. So the guard must be fed HERE too, or trigger 4 (tool
+    // calls written as prose) is blind exactly where it was built to look.
     function emitGuardedTextDelta(delta: string) {
       const safe = guardTextDelta(delta);
       if (safe.length > 0) {
         send('agent', { type: 'text_delta', delta: safe });
+        observeAssistantTextForLoop(safe);
       }
       if (runGuard.contaminated && !runWarned) {
         runWarned = true;
@@ -8519,18 +8528,30 @@ export async function startServer({
       // that prose reaches us when the adapter cannot classify it (the Kimi
       // incident's last event was `raw`). `thinking_delta` is deliberately NOT
       // fed: a model REASONING about emitting a tool call has not emitted one.
+      //
+      // Text that goes out through emitGuardedTextDelta never reaches here (it
+      // sends bare); that path feeds the guard itself. The two are disjoint, so
+      // no delta is counted twice.
       if (ev.type === 'text_delta' || ev.type === 'raw') {
-        const text =
+        observeAssistantTextForLoop(
           typeof ev.delta === 'string' ? ev.delta
           : typeof ev.text === 'string' ? ev.text
           : typeof ev.line === 'string' ? ev.line
-          : '';
-        if (!text) return;
-        const verdict = toolLoopGuard.observeAssistantText(text);
-        if (verdict) {
-          send('agent', verdict);
-          if (verdict.action === 'halt') abortForToolLoop(verdict);
-        }
+          : '',
+        );
+      }
+    }
+
+    // The one place assistant TEXT is handed to the tool-loop guard. Both emit
+    // paths (emitAgentEvent above, emitGuardedTextDelta) call this, so adding a
+    // third text path can't silently drop out of the guard's coverage the way
+    // emitGuardedTextDelta already had.
+    function observeAssistantTextForLoop(text: string) {
+      if (!text) return;
+      const verdict = toolLoopGuard.observeAssistantText(text);
+      if (verdict) {
+        send('agent', verdict);
+        if (verdict.action === 'halt') abortForToolLoop(verdict);
       }
     }
 
