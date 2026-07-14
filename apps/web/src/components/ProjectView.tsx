@@ -5257,14 +5257,10 @@ export function ProjectView({
       const clientId = `od-${project.id}`;
       const prompt =
         'Publish this project to the showcase wall using the publish-website skill. ' +
-        `Use --client-id "${clientId}" — that exact value, do not invent one. ` +
-        'Follow the skill exactly: first ask me for the site metadata with the single <question-form> the ' +
-        'skill specifies (one form, all fields at once — do NOT ask me one field at a time, and do NOT ask ' +
-        'in prose), then publish with my answers by running the skill\'s bundled scripts/publish.mjs. ' +
-        'Do NOT hand-roll the zip, the upload, or a replacement script. The whole project directory is the ' +
-        'site root. ' +
-        'When the script prints "ok: <url>", give me that URL on its own line as a plain clickable link and ' +
-        'tell me it needs moderator review before it goes live. If it prints "error: ...", report that error ' +
+        `The client_id for this project is "${clientId}" — use that exact value, do not run hostname. ` +
+        'Follow the skill\'s pipeline exactly. The whole project directory is the site root. ' +
+        'When publish succeeds, give me the site_url on its own line as a plain clickable link and ' +
+        'tell me it needs moderator review before it goes live. If it fails, report the error ' +
         'verbatim — never fabricate a URL or claim a publish that did not happen.';
       // skillIds is what actually injects the skill (body into the system
       // prompt, side files staged into `.od-skills/` and synced into sandbox
