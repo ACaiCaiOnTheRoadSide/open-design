@@ -21,7 +21,7 @@ arguments:
    - backend 分支（步骤 3b）：生成 Dockerfile、build、run、healthcheck、save 镜像
 5. 基于应用内容自动生成应用名称与描述，用 `<question-form>` 一次向用户确认（含作者）
 6. 打包为 `/tmp/dist.zip`（static 分支）或确认 `/tmp/showcase-image.tar.gz`（backend 分支）
-7. 确定 `ticket`（首次提交需询问用户是否复用既有应用）
+7. 确定 `ticket`（从步骤 5 表单中读取，或使用会话缓存）
 8. 通过 multipart 表单 POST 到 showcase API，缓存返回的 `ticket`，向用户返回 `site_url`
 
 服务端注册与管理员审核发生在 Skill 执行结束**之后**，不属于本 Skill 的职责范围。
@@ -30,7 +30,7 @@ arguments:
 
 - `ticket` 是 showcase 服务用来识别"同一个应用"的凭证：首次创建会下发一个 `ticket`，后续若想**更新**该应用而不是新建，需在请求体中带上同一个 `ticket`
 - **会话级缓存**：当前会话中**首次**成功创建应用后拿到的 `ticket`，必须缓存于会话上下文（例如记在内存/笔记中），同一会话内后续每次提交都自动使用该 `ticket`，**不得**再向用户询问
-- 仅当**本会话从未提交过应用**时，才需要询问用户是不是要复用其他任务中创建的应用（步骤 7a）
+- 仅当**本会话从未提交过应用**时，步骤 5 表单中的"发布方式 / ticket"字段才有意义；已有缓存 ticket 时自动复用
 - **跨 kind 切换**：同一 `ticket` 可以从 `static` 切换为 `backend`（或反之），服务端会将原应用整体替换为新 kind 并重新进入待审核状态；在用户确认时必须明确告知「将把原应用从 X 切换为 Y，并重新进入待审核状态」
 
 ---
@@ -503,6 +503,8 @@ rm -f /tmp/dist.zip
 1. **应用名称**（`site_name`）：type `text`，`defaultValue` 设为自动生成的名称，用户可直接采用或清空后输入自己的
 2. **应用描述**（`site_description`）：type `textarea`，`defaultValue` 设为自动生成的描述，用户可直接采用或修改
 3. **应用作者**（`site_author`）：type `text`，`defaultValue` 设为 `anonymous`，placeholder 提示"输入作者名或留空使用匿名"
+4. **发布方式**（`publish_mode`）：type `radio`，两个选项：`新建作品`（value `new`）和 `更新已有作品`（value `update`），`defaultValue` 设为 `new`
+5. **已有作品的 ticket**（`ticket`）：type `text`，`required` 设为 `false`，placeholder 提示"仅更新时填写，新建留空"
 
 **不得用 `radio` 只放一个选项**——那样用户既看不到自动生成的值，也无法自行输入。
 
@@ -520,7 +522,7 @@ rm -f /tmp/dist.zip
 
 若无可解析内容，对应字段不设 `defaultValue`，让用户必须自行输入。
 
-用户提交表单后，从回答中提取三个字段的值，直接进入步骤 6（static）或步骤 7（backend）。
+用户提交表单后，从回答中提取五个字段的值（名称、描述、作者、发布方式、ticket），直接进入步骤 6（static）或步骤 7（backend）。
 
 ---
 
@@ -575,26 +577,11 @@ unzip -l /tmp/dist.zip | head -30
 
 ## 步骤 7 —— 确定 `ticket` (即 **密钥**)
 
-判断当前会话是否已有缓存的密钥 (ticket)：
+ticket 已在步骤 5b 的 `<question-form>` 中一并询问，按以下优先级确定：
 
-- **已有缓存的密钥**（即本会话此前已成功提交过应用） → 直接复用，**跳过 7a**，进入步骤 8
-- **没有缓存的密钥**（本会话首次提交） → 进入 7a 询问用户
-
-### 7a. 询问是否复用既有应用（首次提交时执行一次）
-
-使用 `<question-form>`，**只提供一个显式备选项**；剩下的 Other 输入框本身就代表"有，输入密钥更新已有应用"——其 placeholder 即为该文案：
-
-```
-question: 之前在其他任务中提交过本应用吗？是需要更新已有应用，还是提交新应用？如果需要更新，请选择【其他】并填入之前任务提供的密钥。
-header: 是否更新现有应用？
-options:
-  - 没有，提交新应用
-  # Other: 输入框的 placeholder/语义为"有，输入密钥即可更新现有应用"，用户在此处直接填密钥
-```
-
-- 用户选择 **没有，提交新应用** → 密钥留空（不携带 `ticket` 字段）
-- 用户在 **Other** 输入框中填入密钥 → 取用户输入的字符串作为 `ticket`
-- 若用户输入的内容为空字符串或纯空格 → 视为未提供，按"提交新应用"处理
+1. **会话内已缓存的密钥**（本会话此前已成功提交过应用） → 直接复用
+2. **用户在表单中选择了 `更新已有作品` 并填写了 ticket** → 取用户输入的字符串
+3. **用户选择了 `新建作品` 或 ticket 字段为空** → 不携带 `ticket` 字段
 
 > **跨 kind 提示**：若用户提供了 ticket 且本次 kind 与他记忆中的原应用 kind 不一致（无法在 client 侧自动判定，按用户口述），必须在提交前提示「将把原应用从 X 切换为 Y，并重新进入待审核状态」并取得确认；服务端会在切换时整体替换原应用。
 
@@ -649,7 +636,7 @@ curl -f -X POST \
 | `site_image` | 不得出现 | 必填 | 步骤 3b.4 |
 | `service_port` | 不得出现 | 必填 | 步骤 3b |
 | `healthcheck_path` | 不得出现 | 选填（默认 `/`） | 步骤 3b.3 |
-| `ticket` | 选填 | 选填 | 步骤 7 |
+| `ticket` | 选填 | 选填 | 步骤 5 表单或步骤 7 会话缓存 |
 
 要点：
 
@@ -757,7 +744,7 @@ GET https://ugc-submit.showcase.monkeycode-ai.online/v1/status?client_id=<client
 
 - **使用系统包管理器（apt/yum/dnf/apk/pacman）安装任何软件前，默认先把系统源切到清华 TUNA**（`mirrors.tuna.tsinghua.edu.cn`），不要等超时了再换
 - **不得自行编造 `client_id`**：必须来自 `OD_PROJECT_ID` 环境变量（优先）或 `hostname` 命令的真实输出
-- **`ticket` 仅在本会话首次提交时询问用户**；首次提交成功拿到的 `ticket` 必须缓存到会话上下文，后续提交自动复用，**不得**反复询问
+- **`ticket` 在步骤 5 表单中一次性询问**（与元数据合并）；首次提交成功拿到的 `ticket` 必须缓存到会话上下文，后续提交自动复用，**不得**反复询问
 - **不得自行编造 `ticket`**：要么来自用户输入，要么来自服务端返回
 - **应用名称/描述的自动生成必须基于真实应用内容**，不得凭空捏造；用户提供的输入优先级最高
 - **应用元数据三项必须用一个 `<question-form>` 一次询问**，不得逐项对话询问，不得使用 `question` 工具
