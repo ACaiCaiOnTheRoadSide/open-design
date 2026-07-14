@@ -87,27 +87,48 @@ Emit the complete block in assistant text and end your turn — the host renders
 it and the answers come back as the next user message (`[form answers — publish]`).
 An empty `site_author` means `anonymous`.
 
-## Step 2 — publish
+## Step 2 — prepare the workspace (ONE bundled script — run it, don't re-derive it)
 
-One bundled script does the whole pipeline — staging, dev-file exclusion, zip
-layout check, upload, response parsing, ticket bookkeeping. It is plain Node
-stdlib: **no `npm install`, no browser, no environment setup of any kind.**
+The publish script packs the site with `jszip`, so it needs a workspace with
+that dependency installed. That is one bundled script — **no browser, nothing
+like the export skills' Chromium dance**:
+
+```bash
+sh <skill-root>/scripts/setup-env.sh
+```
+
+It creates `/tmp/od-publish` **outside** the project directory (anything inside
+the project syncs back into the user's file list — node_modules must never land
+there), installs `jszip` from npmmirror, and is idempotent. It finishes with an
+`ok:` line.
+
+Do NOT substitute your own setup — no `apk add zip`, no hand-rolled archive, no
+`npm i` somewhere else.
+
+## Step 3 — publish
+
+One bundled script does the rest — staging, dev-file exclusion, zip layout
+check, upload, response parsing, ticket bookkeeping.
 
 First put the user's three answers in a JSON file, **using your file-writing
 tool — not a shell command**:
 
 ```json
-// /tmp/od-publish-meta.json
+// /tmp/od-publish/meta.json
 { "name": "<site_name>", "description": "<site_description>", "author": "<site_author>" }
 ```
 
-Then run:
+Then copy the script into the workspace and run it **from there** — that is
+where `node_modules` lives, so that is the only place its `jszip` import
+resolves:
 
 ```bash
-node <skill-root>/scripts/publish.mjs \
+WORKDIR=/tmp/od-publish
+cp <skill-root>/scripts/publish.mjs "$WORKDIR/"
+node "$WORKDIR/publish.mjs" \
   --project-dir "<project-dir>" \
   --client-id "<client_id>" \
-  --meta-file /tmp/od-publish-meta.json
+  --meta-file "$WORKDIR/meta.json"
 ```
 
 > **Why the file, and why not `echo`/heredoc:** the user's text is arbitrary —
@@ -125,9 +146,9 @@ script over the network (sandbox runtimes have no daemon credentials — those
 requests fail with `API_TOKEN_REQUIRED` no matter how they are retried) and do
 not write a replacement script from memory.
 
-What the script does, so you don't have to:
+What the publish script does, so you don't have to:
 
-- builds the archive in memory, renaming a lone non-`index.html` entry page to
+- builds the archive with jszip, renaming a lone non-`index.html` entry page to
   `index.html` **inside the zip only** — the user's own files are never renamed;
 - excludes source and junk that must never reach a public site: `.git`,
   `.od`, `.od-skills`, `node_modules`, `.env*`, lockfiles, `src/`, TS/config
@@ -144,7 +165,7 @@ The script prints its result as the last line:
 - `ok: <site_url>` — published; the exit code is 0.
 - `error: <reason>` — nothing was published; the exit code is non-zero.
 
-## Step 3 — report
+## Step 4 — report
 
 On `ok:`, tell the user, with the URL **on its own line as a plain clickable
 link** (never inside a code block):
@@ -169,7 +190,7 @@ it were the published site.
 Never poll this — call it only when the user asks about review/上线 status:
 
 ```bash
-node <skill-root>/scripts/publish.mjs --status --project-dir "<project-dir>"
+node /tmp/od-publish/publish.mjs --status --project-dir "<project-dir>"
 ```
 
 It reads the stored ticket and prints one of `pending_review`, `online`,

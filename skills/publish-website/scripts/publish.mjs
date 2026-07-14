@@ -2,10 +2,12 @@
 // Publish a project directory to the showcase wall as a hosted static site.
 //
 // Deterministic end-to-end: stage → zip → upload → persist ticket → report.
-// Pure Node stdlib on purpose — no npm install, no browser, no `zip` binary
-// (Alpine sandboxes ship none of them). The whole pipeline is here rather than
-// in the SKILL.md prose so the agent cannot improvise a different zip layout,
-// a different field set, or a fabricated URL.
+// The whole pipeline is here rather than in the SKILL.md prose so the agent
+// cannot improvise a different zip layout, a different field set, or a
+// fabricated URL. No browser needed (unlike the export skills) — just Node.
+//
+// One dependency, jszip: run scripts/setup-env.sh first, then run THIS script
+// from the workspace it prepares (/tmp/od-publish) so the import resolves.
 //
 // Usage:
 //   node publish.mjs --project-dir <dir> --client-id <id> \
@@ -15,9 +17,9 @@
 //
 // Exit codes: 0 ok · 1 usage/local error · 2 upload rejected · 3 no entry page.
 
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
 
 const API_BASE = process.env.OD_SHOWCASE_API || 'https://ugc-submit.showcase.monkeycode-ai.online';
 // The ticket is what makes a re-publish UPDATE the existing site instead of
@@ -74,87 +76,42 @@ function parseArgs(argv) {
   return out;
 }
 
-// --- zip writer (store + deflate), enough of PKZIP to be a valid archive ---
+// --- zip ---
 
-const CRC_TABLE = (() => {
-  const t = new Int32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c;
+// jszip, not a hand-rolled PKZIP writer: it is the same library the daemon packs
+// with (apps/daemon/package.json) and the one pptxgenjs builds .pptx archives
+// with, so the archive the showcase server has to unpack comes from an
+// implementation used by millions rather than ours. It also emits the directory
+// entries a strict unpacker may expect — the exact corner a hand-rolled writer
+// gets wrong.
+//
+// createRequire, not a bare import: jszip is CommonJS, and the sandbox runs
+// Node 20, whose ESM/CJS interop trips over package entry points that a newer
+// local Node resolves fine (the same trap pptxgenjs sprang on html-to-pptx).
+function loadJsZip() {
+  const require = createRequire(import.meta.url);
+  try {
+    return require('jszip');
+  } catch {
+    fail(
+      'jszip is not installed — run the skill\'s scripts/setup-env.sh first, and run this script from ' +
+      'the workspace it prepares (that is where node_modules lives)',
+    );
   }
-  return t;
-})();
-
-function crc32(buf) {
-  let c = -1;
-  for (let i = 0; i < buf.length; i += 1) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ -1) >>> 0;
+  return null;
 }
 
-function zipFrom(entries) {
-  const chunks = [];
-  const central = [];
-  let offset = 0;
-
+async function zipFrom(entries) {
+  const JSZip = loadJsZip();
+  const zip = new JSZip();
   for (const { name, data } of entries) {
-    const nameBuf = Buffer.from(name, 'utf8');
-    const crc = crc32(data);
-    const deflated = zlib.deflateRawSync(data, { level: 9 });
-    // Only pay for compression when it actually wins.
-    const useDeflate = deflated.length < data.length;
-    const body = useDeflate ? deflated : data;
-    const method = useDeflate ? 8 : 0;
-
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4); // version needed
-    local.writeUInt16LE(0x0800, 6); // UTF-8 names
-    local.writeUInt16LE(method, 8);
-    local.writeUInt16LE(0, 10); // time
-    local.writeUInt16LE(0, 12); // date
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(body.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    local.writeUInt16LE(0, 28);
-    chunks.push(local, nameBuf, body);
-
-    const cd = Buffer.alloc(46);
-    cd.writeUInt32LE(0x02014b50, 0);
-    cd.writeUInt16LE(20, 4); // version made by
-    cd.writeUInt16LE(20, 6); // version needed
-    cd.writeUInt16LE(0x0800, 8);
-    cd.writeUInt16LE(method, 10);
-    cd.writeUInt16LE(0, 12);
-    cd.writeUInt16LE(0, 14);
-    cd.writeUInt32LE(crc, 16);
-    cd.writeUInt32LE(body.length, 20);
-    cd.writeUInt32LE(data.length, 24);
-    cd.writeUInt16LE(nameBuf.length, 28);
-    cd.writeUInt16LE(0, 30); // extra
-    cd.writeUInt16LE(0, 32); // comment
-    cd.writeUInt16LE(0, 34); // disk
-    cd.writeUInt16LE(0, 36); // internal attrs
-    cd.writeUInt32LE(0, 38); // external attrs
-    cd.writeUInt32LE(offset, 42);
-    central.push(cd, nameBuf);
-
-    offset += local.length + nameBuf.length + body.length;
+    zip.file(name, data);
   }
-
-  const centralBuf = Buffer.concat(central);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(0, 4);
-  eocd.writeUInt16LE(0, 6);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(centralBuf.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  eocd.writeUInt16LE(0, 20);
-
-  return Buffer.concat([...chunks, centralBuf, eocd]);
+  return zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
 }
 
 // --- staging ---
@@ -359,7 +316,7 @@ async function runPublish(args) {
     name: entry && f.name === entry ? 'index.html' : f.name,
     data: fs.readFileSync(f.abs),
   }));
-  const zipBuf = zipFrom(entries);
+  const zipBuf = await zipFrom(entries);
   if (zipBuf.length > MAX_ZIP_BYTES) {
     fail(`site is too large (${(zipBuf.length / 1048576).toFixed(1)} MB zipped) — trim heavy assets and retry`);
   }
