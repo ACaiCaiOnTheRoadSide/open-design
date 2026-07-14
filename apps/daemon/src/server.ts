@@ -413,6 +413,7 @@ import {
   buildOpenCodeMcpConfigContent,
   mergeOpenCodeProviderConfig,
   openCodeProviderConfigModel,
+  openCodeProviderConfigOutputLimit,
   isManagedProjectCwd,
   readMcpConfig,
   writeMcpConfig,
@@ -7144,6 +7145,10 @@ export async function startServer({
     // mcp section for this single invocation, which is exactly the kind
     // of surprise the previous silent-failure UX taught us to avoid.
     let opencodeConfigContent: string | null = null;
+    // 管理员在后台「模型配置」里填的输出上限,逐次(逐租户)传给 OpenCode。
+    // OpenCode 只从 OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX 这个 env 读它,
+    // 写进配置 JSON 无效 —— 详见 openCodeProviderConfigOutputLimit 的注释。
+    let opencodeOutputTokenMax: number | null = null;
     const isOpenCodeContent = def.externalMcpInjection === 'opencode-env-content';
     const isMiMoContent = def.externalMcpInjection === 'mimo-env-content';
     if (isOpenCodeContent || isMiMoContent) {
@@ -7178,6 +7183,10 @@ export async function startServer({
       // BYOK 配置顶层的 model 就是 opencode 实际选用的,记到 run 上垫底。
       const byokModel = openCodeProviderConfigModel(injectedProviderConfig);
       if (byokModel) run.byokModel = byokModel;
+      if (isOpenCodeContent) {
+        opencodeOutputTokenMax =
+          openCodeProviderConfigOutputLimit(injectedProviderConfig);
+      }
     }
 
     // Pre-flight the composed prompt against any argv-byte budget the
@@ -7914,6 +7923,12 @@ export async function startServer({
         // to apply as-is.
         ...(opencodeConfigContent
           ? { [isMiMoContent ? 'MIMOCODE_CONFIG_CONTENT' : 'OPENCODE_CONFIG_CONTENT']: opencodeConfigContent }
+          : {}),
+        // 后台配的模型输出上限。不设时 OpenCode 用它自己的 32000 默认值,
+        // 大于 32000 的配置值会被它的 min() 夹回去 —— 所以这里必须显式喂
+        // 一份,后台「模型配置」里的 output_tokens 才真正生效。
+        ...(opencodeOutputTokenMax
+          ? { OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: String(opencodeOutputTokenMax) }
           : {}),
       }, agentLaunch);
       spawnedAgentEnv = env;

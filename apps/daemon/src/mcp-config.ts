@@ -583,6 +583,58 @@ export function openCodeProviderConfigModel(
   }
 }
 
+// openCodeProviderConfigOutputLimit 从注入的 BYOK provider 配置里取所选模型的
+// `limit.output`(后台「模型配置」里管理员填的输出上限,Go 侧 byok_service.go
+// buildOpencodeProviderConfig 写入)。
+//
+// 为什么单独取一次、还要回传成 env:OpenCode 算实际输出上限用的是
+//   maxOutputTokens = Math.min(model.limit.output, outputTokenMax) || outputTokenMax
+// 而 `outputTokenMax` 只认环境变量 OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX,
+// 缺省 32000。也就是说光把 limit.output 写进配置 JSON 是**不生效**的——比
+// 32000 大的值会被 min() 夹回 32000。上限被夹小 → 大文件的 write 调用在参数
+// 中途被截断 → OpenCode 认不出这是截断(上游 issue #18108),当成"参数非法"
+// 报回模型 → 模型放弃 write、改用 `cat >> file` 一段段追加。把管理员配的值同
+// 时喂给这个 env,min() 两边取同一个数,后台配置才真正说了算。
+//
+// 返回 null(管理员没填 / 填了 0)时调用方不设 env,OpenCode 保持 32000 默认,
+// 与改动前行为一致。
+export function openCodeProviderConfigOutputLimit(
+  injectedJson: string | null | undefined,
+): number | null {
+  const raw = typeof injectedJson === 'string' ? injectedJson.trim() : '';
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return null;
+    // 顶层 `model` 是 "<providerId>/<modelName>";modelName 自身可能含 `/`
+    // (例如 "org/model-v1"),所以只在第一个斜杠上切。
+    const selected = typeof parsed.model === 'string' ? parsed.model : '';
+    const slash = selected.indexOf('/');
+    if (slash <= 0) return null;
+    const providerId = selected.slice(0, slash);
+    const modelName = selected.slice(slash + 1);
+    if (!providerId || !modelName) return null;
+
+    const providers = parsed.provider;
+    if (!providers || typeof providers !== 'object') return null;
+    const provider = (providers as Record<string, unknown>)[providerId];
+    if (!provider || typeof provider !== 'object') return null;
+    const models = (provider as Record<string, unknown>).models;
+    if (!models || typeof models !== 'object') return null;
+    const model = (models as Record<string, unknown>)[modelName];
+    if (!model || typeof model !== 'object') return null;
+    const limit = (model as Record<string, unknown>).limit;
+    if (!limit || typeof limit !== 'object') return null;
+    const output = (limit as Record<string, unknown>).output;
+
+    return typeof output === 'number' && Number.isFinite(output) && output > 0
+      ? Math.floor(output)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildOpenCodeExternalDirectoryAllowlist(
   directories: string[] | undefined,
 ): Record<string, 'allow'> | null {

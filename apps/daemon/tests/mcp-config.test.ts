@@ -11,6 +11,7 @@ import {
   isManagedProjectCwd,
   mergeOpenCodeProviderConfig,
   openCodeProviderConfigModel,
+  openCodeProviderConfigOutputLimit,
   readMcpConfig,
   sanitizeMcpServer,
   writeMcpConfig,
@@ -1166,6 +1167,62 @@ describe('openCodeProviderConfigModel', () => {
     expect(openCodeProviderConfigModel('{not valid')).toBeNull();
     expect(openCodeProviderConfigModel(JSON.stringify({ provider: {} }))).toBeNull();
     expect(openCodeProviderConfigModel(JSON.stringify({ model: 42 }))).toBeNull();
+  });
+});
+
+describe('openCodeProviderConfigOutputLimit', () => {
+  const withLimit = (limit: unknown, model = 'minimax/minimax-m3') =>
+    JSON.stringify({
+      provider: {
+        minimax: {
+          options: { apiKey: 'sk-x' },
+          models: { 'minimax-m3': { name: 'minimax-m3', ...(limit === undefined ? {} : { limit }) } },
+        },
+      },
+      model,
+    });
+
+  it("reads the selected model's limit.output from injected BYOK config", () => {
+    expect(
+      openCodeProviderConfigOutputLimit(withLimit({ context: 1_000_000, output: 131_072 })),
+    ).toBe(131_072);
+  });
+
+  it('splits the model slug on the FIRST slash so model names may contain slashes', () => {
+    const injected = JSON.stringify({
+      provider: {
+        custom: { models: { 'org/model-v1': { limit: { output: 64_000 } } } },
+      },
+      model: 'custom/org/model-v1',
+    });
+    expect(openCodeProviderConfigOutputLimit(injected)).toBe(64_000);
+  });
+
+  // Null means "caller leaves OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX unset", so
+  // OpenCode keeps its own 32000 default — the pre-change behavior. Every shape
+  // an unconfigured/garbled admin row can take must land here rather than
+  // producing a bogus cap.
+  it('returns null when the admin configured no output limit', () => {
+    expect(openCodeProviderConfigOutputLimit(withLimit(undefined))).toBeNull();
+    expect(openCodeProviderConfigOutputLimit(withLimit({ context: 128_000 }))).toBeNull();
+    expect(openCodeProviderConfigOutputLimit(withLimit({ output: 0 }))).toBeNull();
+    expect(openCodeProviderConfigOutputLimit(withLimit({ output: -1 }))).toBeNull();
+    expect(openCodeProviderConfigOutputLimit(withLimit({ output: '65536' }))).toBeNull();
+  });
+
+  it('returns null when config is absent, invalid, or the model does not resolve', () => {
+    expect(openCodeProviderConfigOutputLimit(null)).toBeNull();
+    expect(openCodeProviderConfigOutputLimit(undefined)).toBeNull();
+    expect(openCodeProviderConfigOutputLimit('')).toBeNull();
+    expect(openCodeProviderConfigOutputLimit('{not valid')).toBeNull();
+    // model slug points at a provider/model that is not in the config
+    expect(
+      openCodeProviderConfigOutputLimit(withLimit({ output: 131_072 }, 'other/gpt-4o')),
+    ).toBeNull();
+    // no slash → cannot split into provider + model
+    expect(
+      openCodeProviderConfigOutputLimit(withLimit({ output: 131_072 }, 'minimax-m3')),
+    ).toBeNull();
   });
 });
 
