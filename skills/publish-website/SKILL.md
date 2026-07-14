@@ -500,11 +500,13 @@ rm -f /tmp/dist.zip
 
 发出**一个** `<question-form>` 产物，包含以下字段（顺序固定）：
 
-1. **应用名称**（`site_name`）：type `radio`，选项 `满意，就用这个`（value 为自动生成的名称）；用户可走 Other 自行输入
-2. **应用描述**（`site_description`）：type `textarea`，placeholder 为自动生成的描述；用户可直接采用或修改
-3. **应用作者**（`site_author`）：type `radio`，选项 `匿名作者`（value `anonymous`）；用户可走 Other 输入真名
+1. **应用名称**（`site_name`）：type `text`，`defaultValue` 设为自动生成的名称，用户可直接采用或清空后输入自己的
+2. **应用描述**（`site_description`）：type `textarea`，`defaultValue` 设为自动生成的描述，用户可直接采用或修改
+3. **应用作者**（`site_author`）：type `text`，`defaultValue` 设为 `anonymous`，placeholder 提示"输入作者名或留空使用匿名"
 
-若无可解析内容，对应字段不提供默认值，让用户必须自行输入。
+**不得用 `radio` 只放一个选项**——那样用户既看不到自动生成的值，也无法自行输入。用 `text` / `textarea` + `defaultValue` 预填，用户能看到、能直接用、也能改。
+
+若无可解析内容，对应字段不设 `defaultValue`，让用户必须自行输入。
 
 用户提交表单后，从回答中提取三个字段的值，直接进入步骤 6（static）或步骤 7（backend）。
 
