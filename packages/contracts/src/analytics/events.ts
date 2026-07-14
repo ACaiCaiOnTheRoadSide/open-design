@@ -2212,6 +2212,9 @@ export interface ArtifactHeaderClickProps {
     // indistinguishable in the funnel.
     | 'download_dropdown'
     | 'share_dropdown'
+    // Opens the showcase-publish consent dialog. Tracked so the publish funnel
+    // (button → consent → form → live site) is measurable end to end.
+    | 'publish'
     | 'settings';
   artifact_id?: string;
   artifact_kind?: TrackingArtifactKind;

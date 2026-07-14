@@ -3079,6 +3079,14 @@ export interface Dict {
   'fileViewer.exportPptxNa': string;
   'fileViewer.exportPptxAgentQueued': string;
   'fileViewer.exportImageAgentQueued': string;
+  'fileViewer.publish': string;
+  'fileViewer.publishTooltip': string;
+  'fileViewer.publishConfirmTitle': string;
+  'fileViewer.publishNotice': string;
+  'fileViewer.publishConfirm': string;
+  'fileViewer.publishAgentQueued': string;
+  'fileViewer.publishBusy': string;
+  'fileViewer.publishFailed': string;
   'fileViewer.exportZip': string;
   'fileViewer.exportHtml': string;
   'fileViewer.exportMd': string;

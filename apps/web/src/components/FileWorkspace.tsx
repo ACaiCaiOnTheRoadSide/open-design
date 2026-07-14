@@ -173,6 +173,7 @@ interface Props {
     title?: string;
     format: ImageExportFormat;
   }) => Promise<boolean | void> | boolean | void;
+  onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
   onPluginFolderAgentAction?: (
     relativePath: string,
     action: PluginFolderAgentAction,
@@ -437,6 +438,7 @@ export function FileWorkspace({
   onRequestBrowserUsePrompt,
   onExportPptxViaAgent,
   onExportImageViaAgent,
+  onPublishViaAgent,
   onPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
@@ -2360,6 +2362,7 @@ export function FileWorkspace({
             onSendBoardCommentAttachments={onSendBoardCommentAttachments}
             onExportPptxViaAgent={onExportPptxViaAgent}
             onExportImageViaAgent={onExportImageViaAgent}
+            onPublishViaAgent={onPublishViaAgent}
             onFileSaved={onRefreshFiles}
             onOpenFileReplacing={openFileReplacing}
             commentPortalId={commentPortalId}

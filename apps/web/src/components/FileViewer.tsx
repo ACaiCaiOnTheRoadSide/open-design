@@ -992,6 +992,12 @@ interface Props {
     title?: string;
     format: ImageExportFormat;
   }) => Promise<boolean | void> | boolean | void;
+  // Publish the project to the showcase wall via the project agent
+  // (publish-website skill). Takes no metadata: the agent gathers the site
+  // name/description/author — and shows the public-visibility notice — with a
+  // single <question-form>, the host's one structured-question mechanism.
+  // Return false to decline (e.g. chat busy).
+  onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
 }
 
 export function FileViewer({
@@ -1017,6 +1023,7 @@ export function FileViewer({
   slideNavRequest,
   onExportPptxViaAgent,
   onExportImageViaAgent,
+  onPublishViaAgent,
 }: Props) {
   const rendererMatch = artifactRendererRegistry.resolve({
     file,
@@ -1062,6 +1069,7 @@ export function FileViewer({
         slideNavRequest={slideNavRequest}
         onExportPptxViaAgent={onExportPptxViaAgent}
         onExportImageViaAgent={onExportImageViaAgent}
+        onPublishViaAgent={onPublishViaAgent}
       />
     );
   }
@@ -4461,6 +4469,7 @@ function HtmlViewer({
   slideNavRequest,
   onExportPptxViaAgent,
   onExportImageViaAgent,
+  onPublishViaAgent,
 }: {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -4491,6 +4500,7 @@ function HtmlViewer({
     title?: string;
     format: ImageExportFormat;
   }) => Promise<boolean | void> | boolean | void;
+  onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
 }) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
@@ -4713,6 +4723,7 @@ function HtmlViewer({
       | 'present_dropdown'
       | 'download_dropdown'
       | 'share_dropdown'
+      | 'publish'
       | 'settings',
   ) => {
     trackArtifactHeaderClick(analytics.track, {
@@ -4770,6 +4781,24 @@ function HtmlViewer({
   const [templateNote, setTemplateNote] = useState<string | null>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [templateName, setTemplateName] = useState('');
+  // Showcase publish. The split is deliberate:
+  //   consent  — OURS. Publishing puts the artifact on a public wall and is not
+  //              meaningfully reversible, so the notice must be rendered by the
+  //              host, where it cannot fail to appear. Leaving it to model-emitted
+  //              form text would make consent contingent on model compliance.
+  //   metadata — the AGENT's, via its single <question-form>: it can seed the
+  //              defaults from the artifact's real content, and the answers never
+  //              have to travel through a command line.
+  const [publishConsentOpen, setPublishConsentOpen] = useState(false);
+  const publishConsentTitleId = useId();
+  // The publish delegation resolves after an async round-trip; the user may have
+  // switched file or project by then. Guards the toast against a setState on an
+  // unmounted tree.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     setPreviewViewportState(htmlPreviewViewportState.get(fileViewportKey) ?? 'desktop');
@@ -7920,6 +7949,31 @@ function HtmlViewer({
     setDownloadMenuOpen(false);
     setDeployMenuOpen((v) => !v);
   };
+  const openPublishConsent = () => {
+    if (!onPublishViaAgent || streaming) return;
+    fireArtifactHeaderClick('publish');
+    setDownloadMenuOpen(false);
+    setDeployMenuOpen(false);
+    setPublishConsentOpen(true);
+  };
+  const confirmPublish = () => {
+    if (!onPublishViaAgent) return;
+    setPublishConsentOpen(false);
+    void (async () => {
+      try {
+        const queued = await onPublishViaAgent();
+        if (!mountedRef.current) return;
+        setExportToast(
+          queued === false
+            ? { message: t('fileViewer.publishBusy'), tone: 'error' }
+            : { message: t('fileViewer.publishAgentQueued'), tone: 'success' },
+        );
+      } catch {
+        if (!mountedRef.current) return;
+        setExportToast({ message: t('fileViewer.publishFailed'), tone: 'error' });
+      }
+    })();
+  };
   const captureExportImageSnapshot = useCallback(async (
     options?: { wholeDeck?: boolean; fullPage?: boolean },
   ) => {
@@ -9346,6 +9400,20 @@ function HtmlViewer({
                 ) : null}
               </div>
               ) : null}
+              {canShare && onPublishViaAgent ? (
+                <button
+                  type="button"
+                  data-testid="chrome-publish-button"
+                  className="chrome-action chrome-action-secondary chrome-action-with-label od-tooltip"
+                  data-tooltip={t('fileViewer.publishTooltip')}
+                  data-tooltip-placement="bottom"
+                  disabled={streaming}
+                  onClick={openPublishConsent}
+                >
+                  <RemixIcon name="rocket-line" size={15} />
+                  <span>{t('fileViewer.publish')}</span>
+                </button>
+              ) : null}
             </div>
           ) : null}
         </>)}
@@ -9712,6 +9780,40 @@ function HtmlViewer({
               srcDoc={srcDoc}
             />
           )}
+        </div>,
+        document.body,
+      ) : null}
+      {publishConsentOpen && typeof document !== 'undefined' ? createPortal(
+        <div className="modal-backdrop viewer-modal-backdrop image-export-backdrop" role="presentation">
+          <div
+            className="modal deploy-modal image-export-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={publishConsentTitleId}
+          >
+            <div className="modal-head">
+              <div className="kicker">SHOWCASE</div>
+              <h2 id={publishConsentTitleId}>{t('fileViewer.publishConfirmTitle')}</h2>
+              <p className="subtitle">{t('fileViewer.publishNotice')}</p>
+            </div>
+            <div className="modal-foot">
+              <button
+                type="button"
+                className="ghost-link button-like"
+                onClick={() => setPublishConsentOpen(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid="chrome-publish-confirm"
+                className="viewer-action primary"
+                onClick={confirmPublish}
+              >
+                {t('fileViewer.publishConfirm')}
+              </button>
+            </div>
+          </div>
         </div>,
         document.body,
       ) : null}

@@ -107,6 +107,10 @@ const residualAllowedExactPaths = new Set([
   // above (fetched via the skill asset route, run by plain Node in the sandbox
   // with run-time-installed playwright — no TS build step there).
   "skills/html-to-image/scripts/render-image.mjs",
+  // publish-website skill runtime script: same execution model (run by plain
+  // Node in the agent sandbox, no TS build step there). Pure stdlib — it zips
+  // the project and uploads it to the showcase API with no dependencies at all.
+  "skills/publish-website/scripts/publish.mjs",
   // Manifest diff guard + its node:test coverage. Run directly by Node from the
   // bake workflows (no TS build step there) to decide whether a `previews` entry
   // actually changed, ignoring the per-run `generatedAt` timestamp.

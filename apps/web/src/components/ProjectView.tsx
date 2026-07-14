@@ -1242,6 +1242,11 @@ export function ProjectView({
   // the conversation-created async refresh (#1361) if the user switches
   // projects while the refetch is in flight — the existing project-load
   // effects use the same kind of cancellation guard.
+  // Skills to re-inject on the next question-form answer. `skillIds` is
+  // per-turn, so a skill that ends its turn by ASKING a form would be absent on
+  // the follow-up turn that does the actual work. Set when such a flow starts,
+  // consumed (and cleared) by the question_answer send.
+  const pendingFormSkillIdsRef = useRef<string[]>([]);
   const projectIdRef = useRef(project.id);
   useEffect(() => {
     projectIdRef.current = project.id;
@@ -5225,6 +5230,48 @@ export function ProjectView({
     [currentConversationActionDisabled, handleSend],
   );
 
+  // Publish the project to the showcase wall: the agent runs the
+  // publish-website skill (ask once → zip the project dir → upload → live URL).
+  // The metadata is gathered by the skill's own single <question-form>, not
+  // here — that keeps the site name/description out of this prompt string
+  // entirely, so no user-typed text is ever interpolated into a command line.
+  const handlePublishViaAgent = useCallback(
+    async () => {
+      if (currentConversationActionDisabled) return false;
+      // `skillIds` is PER-TURN. A skill whose flow ends by asking a
+      // <question-form> hands the real work to the NEXT turn — and that turn
+      // (the question_answer send below) would carry no skill at all, so the
+      // agent would run the publish step with none of the skill's runbook or
+      // prohibitions in its system prompt. Remember the skill here and re-inject
+      // it when the answers come back.
+      pendingFormSkillIdsRef.current = ['publish-website'];
+      // A STABLE client id per project. The skill's upstream default (`hostname`)
+      // is a fresh random string in every sandbox run, which would strand the
+      // ticket: the showcase binds ticket→client_id, so a drifting id turns each
+      // re-publish into a new site and breaks the status lookup. Safe to inline:
+      // it is our own id, not user input.
+      const clientId = `od-${project.id}`;
+      const prompt =
+        'Publish this project to the showcase wall using the publish-website skill. ' +
+        `Use --client-id "${clientId}" — that exact value, do not invent one. ` +
+        'Follow the skill exactly: first ask me for the site metadata with the single <question-form> the ' +
+        'skill specifies (one form, all fields at once — do NOT ask me one field at a time, and do NOT ask ' +
+        'in prose), then publish with my answers by running the skill\'s bundled scripts/publish.mjs. ' +
+        'Do NOT hand-roll the zip, the upload, or a replacement script. The whole project directory is the ' +
+        'site root. ' +
+        'When the script prints "ok: <url>", give me that URL on its own line as a plain clickable link and ' +
+        'tell me it needs moderator review before it goes live. If it prints "error: ...", report that error ' +
+        'verbatim — never fabricate a URL or claim a publish that did not happen.';
+      // skillIds is what actually injects the skill (body into the system
+      // prompt, side files staged into `.od-skills/` and synced into sandbox
+      // workspaces) — naming the skill in the prompt text alone does nothing.
+      const started = await handleSend(prompt, [], [], { skillIds: ['publish-website'] });
+      if (started === false) pendingFormSkillIdsRef.current = [];
+      return started !== false;
+    },
+    [currentConversationActionDisabled, handleSend, project.id],
+  );
+
   const selectedPluginActionAgent =
     config.mode === 'daemon' && config.agentId
       ? agentsById.get(config.agentId)
@@ -6984,6 +7031,7 @@ export function ProjectView({
           onRequestBrowserUsePrompt={handleBrowserUsePrompt}
           onExportPptxViaAgent={handleExportPptxViaAgent}
           onExportImageViaAgent={handleExportImageViaAgent}
+          onPublishViaAgent={handlePublishViaAgent}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
           preferredPreviewFile={currentProject.metadata?.entryFile ?? null}
@@ -7068,9 +7116,19 @@ export function ProjectView({
           focusQuestionsRequest={focusQuestionsRequest}
           onSubmitQuestionForm={(text) => {
             if (currentConversationActionDisabled) return;
+            // Re-inject the skill that asked this form. Without it the turn that
+            // consumes the answers — the one that actually publishes — would run
+            // with the skill's runbook and prohibitions absent from its system
+            // prompt (skillIds is per-turn), which is how a delegated flow ends
+            // up hand-rolling a bogus artifact instead of running its script.
+            const skillIds = pendingFormSkillIdsRef.current;
+            pendingFormSkillIdsRef.current = [];
             // Submitting question-form answers is a clarification turn, not a
             // fresh create/edit — tag entry_from so the dashboard can separate it.
-            void handleSend(text, [], [], { entryFrom: 'question_answer' });
+            void handleSend(text, [], [], {
+              entryFrom: 'question_answer',
+              ...(skillIds.length > 0 ? { skillIds } : {}),
+            });
           }}
         />
       </div>
