@@ -817,7 +817,12 @@ async function callGoogle(provider, system, user) {
   return '';
 }
 
-const LOCAL_CLI_TIMEOUT_MS = 60_000;
+// 上游按「opencode 就在本机、秒级返回」设的 60s。SaaS 的 split 形态下
+// OPENCODE_BIN 指向 od-agent-shim,这一次 spawn 其实要跨集群:连 dispatcher →
+// huskbox 拉沙箱 → 装 od-cli → sync pull → 才开始跑 opencode,冷启动本身就可能
+// 吃掉几十秒,60s 必然每次超时(超时后 SIGTERM shim,日志里表现为
+// `[memory-llm] openai call failed OpenCode CLI timed out after 60s`),还白烧一次沙箱。
+const LOCAL_CLI_TIMEOUT_MS = 300_000;
 
 function extractJsonEventText(kind, raw, agentName) {
   const events = [];
