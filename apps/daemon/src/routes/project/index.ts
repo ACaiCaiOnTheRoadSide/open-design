@@ -38,6 +38,13 @@ import { registerProjectConversationRoutes } from './conversations.js';
 
 export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation'> {}
 
+/** projects_pkey 冲突判定(PG 23505 / SQLite SQLITE_CONSTRAINT_*)。 */
+function isProjectIdConflict(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (code === '23505') return true;
+  return typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT');
+}
+
 function projectDetailResolvedDir(
   projectsRoot: string,
   project: any,
@@ -914,7 +921,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { sendApiError, createSseResponse } = ctx.http;
   const { DESIGN_SYSTEMS_DIR, PROJECTS_DIR, SKILLS_DIR, BRANDS_DIR } = ctx.paths;
   const { readAppConfig, writeAppConfig } = ctx.appConfig;
-  const { insertProject, validateLinkedDirs, getProject, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount } = ctx.projectStore;
+  const { insertProject, validateLinkedDirs, getProject, getProjectOwnerUnscoped, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount } = ctx.projectStore;
   const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
@@ -1123,6 +1130,17 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             existing.push(manifest.id);
             continue;
           }
+          // 本租户看不见,不代表这个 id 空着:projects 的主键不含 tenant_id。
+          // 别的租户(或无租户上下文写入的 LEGACY_TENANT 行)占着它时,直接
+          // INSERT 会撞 projects_pkey 把整轮扫描炸成 500——跳过并如实上报。
+          const manifestOwner = await getProjectOwnerUnscoped(db, manifest.id);
+          if (manifestOwner) {
+            skipped.push({
+              path: entry.dir,
+              reason: `project id ${manifest.id} is already owned by tenant ${manifestOwner.tenantId}`,
+            });
+            continue;
+          }
           try {
             const project = await insertProject(db, {
               id: manifest.id,
@@ -1249,6 +1267,16 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       if (typeof name !== 'string' || !name.trim()) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'name required');
       }
+      // 查重必须跨租户:projects 的主键只有 id,而 getProject 带租户过滤。别的
+      // 租户(尤其无租户上下文的 LEGACY_TENANT)占着这个 id 时,租户内查重看不见
+      // 它,INSERT 直接撞 projects_pkey,PG 报文裸透成 500。
+      const idOwner = await getProjectOwnerUnscoped(db, id);
+      if (idOwner) {
+        console.warn(
+          `[projects] create rejected: id '${id}' already owned by tenant '${idOwner.tenantId}'`,
+        );
+        return sendApiError(res, 409, 'PROJECT_ID_CONFLICT', 'project id already exists');
+      }
       // baseDir is privileged: it lets a project root directly inside the
       // user's filesystem. The /api/import/folder endpoint is the only
       // path that's allowed to set it, because that's where realpath() +
@@ -1322,9 +1350,6 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         if (!location || location.builtIn) {
           return sendApiError(res, 400, 'BAD_REQUEST', 'unknown project location');
         }
-        if (await getProject(db, id)) {
-          return sendApiError(res, 400, 'BAD_REQUEST', 'project id already exists');
-        }
         externalProjectDir = await createLocationProjectDir(location, id);
       }
       const projectMetadata =
@@ -1396,6 +1421,11 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       } catch (err) {
         if (externalProjectDir) {
           await rm(externalProjectDir, { recursive: true, force: true }).catch(() => {});
+        }
+        // 上面的查重和这次 INSERT 之间仍有并发窗口(两个请求同时插同一个 id,
+        // 查重都说"没有")。冲突翻成 409,别让 PG 报文透成 500。
+        if (isProjectIdConflict(err)) {
+          return sendApiError(res, 409, 'PROJECT_ID_CONFLICT', 'project id already exists');
         }
         throw err;
       }

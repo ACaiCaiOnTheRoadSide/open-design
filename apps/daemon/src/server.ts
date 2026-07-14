@@ -4354,6 +4354,7 @@ export async function startServer({
   const uploadDeps = { upload, importUpload, handleProjectUpload };
   const projectStoreDeps = {
     getProject,
+    getProjectOwnerUnscoped,
     insertProject,
     updateProject,
     incrementProjectDownloadCount,

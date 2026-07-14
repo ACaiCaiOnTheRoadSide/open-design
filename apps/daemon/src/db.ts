@@ -744,8 +744,12 @@ export async function backfillDesignSystemRow(
   ).run(entry.id, entry.tenantId, entry.creatorId, entry.name, entry.createdAt, entry.updatedAt);
 }
 
-/** 启动 backfill 专用:按项目 id 反查归属(无租户过滤——backfill 要跨租户
- *  回溯存量设计体系挂过的 workspace 项目属于谁)。 */
+/** 按项目 id 反查归属,不带租户过滤。两个用途:
+ *  1. 启动 backfill:跨租户回溯存量设计体系挂过的 workspace 项目属于谁。
+ *  2. insertProject 前的查重:projects 的主键只有 id、不含 tenant_id,而
+ *     getProject 带租户过滤——别的租户(尤其无租户上下文的调用方,落在
+ *     LEGACY_TENANT)占着这个 id 时 getProject 返回 null,随后的 INSERT 却会
+ *     撞 projects_pkey。查重要用它,不能用 getProject。 */
 export async function getProjectOwnerUnscoped(
   db: SqliteDb,
   id: string,
