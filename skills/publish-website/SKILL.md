@@ -37,13 +37,16 @@ arguments:
 
 ## 步骤 1 —— 获取环境信息
 
-执行 `hostname` 命令获取当前主机名，作为后续上传请求中的 `client_id`：
+确定 `client_id`（showcase 用它绑定 ticket，必须在同一项目的多次发布间保持不变）：
 
-```bash
-hostname
-```
+1. 读取环境变量 `OD_PROJECT_ID`（Open Design daemon 启动 agent 时自动设置）：
+   ```bash
+   echo "$OD_PROJECT_ID"
+   ```
+   若非空，`client_id = "od-${OD_PROJECT_ID}"`。
+2. 若 `OD_PROJECT_ID` 为空（非 Open Design 环境），回退到 `hostname`。
 
-将输出的字符串原样记录为 `client_id`。**不得**自行编造或使用其他值；若命令失败，终止并向用户报告。
+**不得**自行编造 `client_id`；若两种途径都失败，终止并向用户报告。
 
 ---
 
@@ -648,7 +651,7 @@ curl -f -X POST \
 
 | 字段 | static | backend | 来源 |
 |---|---|---|---|
-| `client_id` | 必填 | 必填 | 步骤 1 中 `hostname` 命令的输出 |
+| `client_id` | 必填 | 必填 | 步骤 1 确定的值（`od-$OD_PROJECT_ID` 或 `hostname`） |
 | `kind` | 必填（`static`） | 必填（`backend`） | 步骤 2 的自动判定结果 |
 | `site_name` | 必填 | 必填 | 步骤 5b |
 | `site_author` | 必填 | 必填 | 步骤 5d |
@@ -725,7 +728,7 @@ curl -f -X POST \
 GET https://ugc-submit.showcase.monkeycode-ai.online/v1/status?client_id=<client_id>&ticket=<ticket>
 ```
 
-- `client_id`：步骤 1 `hostname` 拿到的值；**必须**与提交时一致
+- `client_id`：步骤 1 确定的值；**必须**与提交时一致
 - `ticket`：会话内已缓存的 `ticket`
 
 服务端用 `ticket` 找 site，再校验 `client_id` 与该 site 匹配；两者其中之一对不上即返回 404 `site_not_found`。
@@ -764,7 +767,7 @@ GET https://ugc-submit.showcase.monkeycode-ai.online/v1/status?client_id=<client
 ### 通用
 
 - **使用系统包管理器（apt/yum/dnf/apk/pacman）安装任何软件前，默认先把系统源切到清华 TUNA**（`mirrors.tuna.tsinghua.edu.cn`），不要等超时了再换
-- **不得自行编造 `client_id`**：必须来自 `hostname` 命令的真实输出
+- **不得自行编造 `client_id`**：必须来自 `OD_PROJECT_ID` 环境变量（优先）或 `hostname` 命令的真实输出
 - **`ticket` 仅在本会话首次提交时询问用户**；首次提交成功拿到的 `ticket` 必须缓存到会话上下文，后续提交自动复用，**不得**反复询问
 - **不得自行编造 `ticket`**：要么来自用户输入，要么来自服务端返回
 - **应用名称/描述的自动生成必须基于真实应用内容**，不得凭空捏造；用户提供的输入优先级最高
@@ -826,7 +829,7 @@ GET https://ugc-submit.showcase.monkeycode-ai.online/v1/status?client_id=<client
 
 | 失败点 | 处理动作 |
 |---|---|
-| `hostname` 命令失败 | 报告错误并终止 |
+| `OD_PROJECT_ID` 与 `hostname` 均不可用 | 报告错误并终止 |
 | 找不到项目根 | 询问用户路径，不得猜测 |
 | 自动判定异常（既非纯前端也非后端项目） | 按步骤 2 兜底规则向用户询问 kind，仍无法确定则终止 |
 | 构建命令无法解析 | 询问用户指定命令 |

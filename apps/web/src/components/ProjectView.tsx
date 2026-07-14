@@ -4527,6 +4527,14 @@ export function ProjectView({
           // CLI without relying on its agent-id re-derivation.
           runtimeType: config.agentId === 'amr' ? ('amr_cloud' as const) : ('local_cli' as const),
         };
+        // Capture this turn's skillIds so they survive into the next turn
+        // if the agent emits a <question-form>. Previously only the publish
+        // button set this; now ANY skill triggered via @mention (or any
+        // other path that populates meta.skillIds) gets the same treatment.
+        const turnSkillIds = Array.isArray(meta?.skillIds) ? meta.skillIds : [];
+        if (turnSkillIds.length > 0) {
+          pendingFormSkillIdsRef.current = turnSkillIds;
+        }
         void streamViaDaemon({
           agentId: config.agentId,
           history: nextHistory,
@@ -4538,7 +4546,7 @@ export function ProjectView({
           assistantMessageId: assistantId,
           clientRequestId: randomUUID(),
           skillId: project.skillId ?? null,
-          skillIds: Array.isArray(meta?.skillIds) ? meta.skillIds : [],
+          skillIds: turnSkillIds,
           context: runContext,
           designSystemId: projectDesignSystemId ?? null,
           attachments: runAttachments.map((a) => a.path),
@@ -5238,13 +5246,9 @@ export function ProjectView({
   const handlePublishViaAgent = useCallback(
     async () => {
       if (currentConversationActionDisabled) return false;
-      // `skillIds` is PER-TURN. A skill whose flow ends by asking a
-      // <question-form> hands the real work to the NEXT turn — and that turn
-      // (the question_answer send below) would carry no skill at all, so the
-      // agent would run the publish step with none of the skill's runbook or
-      // prohibitions in its system prompt. Remember the skill here and re-inject
-      // it when the answers come back.
-      pendingFormSkillIdsRef.current = ['publish-website'];
+      // Cross-turn skill re-injection is now handled generically in the
+      // streamViaDaemon callsite — any turn with skillIds auto-populates
+      // pendingFormSkillIdsRef, so the explicit set here is no longer needed.
       // A STABLE client id per project. The skill's upstream default (`hostname`)
       // is a fresh random string in every sandbox run, which would strand the
       // ticket: the showcase binds ticket→client_id, so a drifting id turns each
