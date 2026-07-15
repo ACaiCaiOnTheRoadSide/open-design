@@ -262,6 +262,7 @@ const READ_ONLY_SHELL_BINARIES = new Set([
   'cat', 'ls', 'grep', 'rg', 'egrep', 'fgrep', 'head', 'tail', 'pwd', 'echo', 'printf',
   'which', 'type', 'wc', 'stat', 'file', 'tree', 'diff', 'jq', 'awk', 'date', 'test',
   'true', 'false', 'basename', 'dirname', 'realpath', 'readlink', 'cut', 'sort', 'uniq', 'column', 'cmp',
+  'curl', 'wget', 'http',
   // `cd` only moves the shell's own cwd — agents habitually prefix inspections
   // with `cd <workspace> && grep …`, and classifying that as a mutation made
   // every such check "progress" that reset the tallies (the font-weight grep
