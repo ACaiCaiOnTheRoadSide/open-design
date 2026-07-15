@@ -181,9 +181,18 @@ export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
   } else {
     window.history.pushState(null, '', target);
   }
+  notifyParentRoute(target);
   queueMicrotask(() => {
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
+}
+
+function notifyParentRoute(path: string): void {
+  try {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'od:route-change', path }, '*');
+    }
+  } catch {}
 }
 
 let cachedPathname: string | null = null;
