@@ -20,15 +20,9 @@ describe('shouldUrlLoadHtmlPreview', () => {
     expect(shouldUrlLoadHtmlPreview({ ...base, isDeck: true })).toBe(false);
   });
 
-  it('falls back to srcDoc when comment mode is active without a URL bridge', () => {
-    expect(shouldUrlLoadHtmlPreview({ ...base, commentMode: true })).toBe(false);
-  });
-
-  it('keeps URL-load when comment mode is active and the artifact owns the bridge', () => {
+  it('keeps URL-load when comment mode is active (daemon bridge handles element picking)', () => {
+    expect(shouldUrlLoadHtmlPreview({ ...base, commentMode: true })).toBe(true);
     expect(shouldUrlLoadHtmlPreview({ ...base, commentMode: true, urlModeBridge: true })).toBe(true);
-  });
-
-  it('keeps URL-load when comment mode is active and the raw route injects the comment bridge', () => {
     expect(shouldUrlLoadHtmlPreview({ ...base, commentMode: true, urlCommentBridge: true })).toBe(true);
   });
 
@@ -70,7 +64,6 @@ describe('shouldUrlLoadHtmlPreview', () => {
   it('treats any disqualifying flag as sufficient on its own', () => {
     expect(shouldUrlLoadHtmlPreview({ ...base, isDeck: true, commentMode: true })).toBe(false);
     expect(shouldUrlLoadHtmlPreview({ ...base, isDeck: true, forceInline: true })).toBe(false);
-    expect(shouldUrlLoadHtmlPreview({ ...base, commentMode: true, forceInline: true })).toBe(false);
     expect(shouldUrlLoadHtmlPreview({ ...base, tweaksBridge: true, forceInline: true })).toBe(false);
     expect(shouldUrlLoadHtmlPreview({ ...base, commentMode: true, urlModeBridge: true, inspectMode: true })).toBe(false);
   });

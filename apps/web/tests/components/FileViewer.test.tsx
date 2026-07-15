@@ -3632,11 +3632,15 @@ describe('FileViewer tweaks toolbar', () => {
         liveHtml='<html><body><main data-od-id="hero">Comment V1</main></body></html>'
       />,
     );
+    // Comment mode keeps the URL-loaded iframe to preserve in-app state;
+    // the daemon-injected bridge handles element picking.
+    const urlFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    expect(urlFrame.getAttribute('data-od-render-mode')).toBe('url-load');
     fireEvent.click(screen.getByTestId('board-mode-toggle'));
     await waitFor(() => {
       const active = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(active.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      expect(active.srcdoc).toContain('Comment V1');
+      expect(active.getAttribute('data-od-render-mode')).toBe('url-load');
+      expect(active).toBe(urlFrame);
     });
 
     rerender(
@@ -3648,8 +3652,8 @@ describe('FileViewer tweaks toolbar', () => {
     await Promise.resolve();
 
     const f = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    expect(f.srcdoc).toContain('Comment V1');
-    expect(f.srcdoc).not.toContain('Comment V2');
+    expect(f.getAttribute('data-od-render-mode')).toBe('url-load');
+    expect(f).toBe(urlFrame);
   });
 
   it('holds the preview steady while manual Edit is open instead of live-reloading on a file change', async () => {
@@ -3757,7 +3761,7 @@ describe('FileViewer tweaks toolbar', () => {
     });
   });
 
-  it('falls back to srcDoc comments when the URL selection bridge is not ready', async () => {
+  it('keeps URL-load when the URL selection bridge is not yet ready (preserves in-app state)', async () => {
     render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
@@ -3769,12 +3773,11 @@ describe('FileViewer tweaks toolbar', () => {
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
-    const srcDocFrame = await waitFor(() => {
+    await waitFor(() => {
       const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      return frame;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('url-load');
+      expect(frame).toBe(urlFrame);
     });
-    expect(srcDocFrame.srcdoc).toContain('data-od-selection-bridge');
   });
 
   it('lets Draw direct send emit a queued annotation while a task is running', async () => {

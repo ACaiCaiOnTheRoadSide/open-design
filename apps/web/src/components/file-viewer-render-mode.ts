@@ -76,7 +76,13 @@ export function hasTweaksTemplate(source: string | null | undefined): boolean {
 export function shouldUrlLoadHtmlPreview(d: UrlLoadDecision): boolean {
   if (d.mode !== 'preview') return false;
   if (d.isDeck) return false;
-  if (d.commentMode && !(d.urlCommentBridge || d.urlModeBridge)) return false;
+  // Comment mode works in URL-loaded iframes via the daemon-injected
+  // selection bridge (odPreviewBridge=selection). Switching to srcDoc here
+  // would discard the iframe's live JavaScript state (in-app navigation,
+  // scroll position), so a multi-screen app jumps to its initial page the
+  // moment the user activates the comment tool. Keep URL-load; the bridge
+  // handles element picking and the host falls back to free-pin if the
+  // bridge hasn't reported ready yet.
   // Inspect needs the selection bridge injected via buildSrcdoc; a raw
   // URL-loaded iframe has no listener to apply per-element overrides.
   if (d.inspectMode) return false;
