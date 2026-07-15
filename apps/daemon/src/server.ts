@@ -419,6 +419,7 @@ import {
   readMcpConfig,
   writeMcpConfig,
 } from './mcp-config.js';
+import { getPlatformDefaultProviderConfig } from './platform-default-provider-config.js';
 import {
   resolveExternalMcpServersForRun,
 } from './run-tool-bundle.js';
@@ -7180,8 +7181,23 @@ export async function startServer({
       // daemon: the Go gateway injects each caller's BYOK via the
       // X-OD-Provider-Config header → ALS) over the container-level env
       // fallback (single-key / local dev).
-      const injectedProviderConfig =
+      let injectedProviderConfig =
         currentProviderConfig() ?? process.env.OD_OPENCODE_PROVIDER_CONFIG;
+      // Header-less run paths — a scheduled routine firing from the daemon's own
+      // timer — carry neither the X-OD-Provider-Config header nor an ALS store,
+      // and the shared deployment leaves the container-level env empty on
+      // purpose. Fall back to the admin's global default (fetched from the
+      // backend, cached) so those runs land on the configured model instead of
+      // OpenCode's free built-in. Only in huskbox mode: local/desktop dev has no
+      // backend to ask and relies on the env fallback above.
+      if (
+        !injectedProviderConfig &&
+        isOpenCodeContent &&
+        process.env.OD_HUSKBOX_BASE_URL
+      ) {
+        injectedProviderConfig =
+          (await getPlatformDefaultProviderConfig()) ?? undefined;
+      }
       opencodeConfigContent = mergeOpenCodeProviderConfig(
         opencodeConfigContent,
         injectedProviderConfig,
