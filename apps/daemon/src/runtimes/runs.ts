@@ -239,7 +239,10 @@ export function createChatRunService({
     // run exactly once per run. A slot leaked here is never recovered — capacity
     // would shrink by one for the lifetime of the process, and the gate would
     // quietly strangle the daemon it exists to protect.
-    run.gateSlot?.release();
+    run.gateSlot?.release(
+      status === 'succeeded' ? 'completed' : status,
+      status === 'failed' ? (run.error ?? undefined) : undefined,
+    );
     run.gateSlot = null;
     run.status = status;
     run.exitCode = code;
