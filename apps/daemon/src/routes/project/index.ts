@@ -560,7 +560,8 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
       if (!el) return;
       var raw = el.getAttribute('href');
       if (!raw || raw.indexOf('odPreviewBridge') >= 0) return;
-      if (/^(?:[a-z][a-z0-9+.\-]*:|\/\/|#)/i.test(raw)) return;
+      if (raw.charAt(0) === '#') return;
+      if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.slice(0,2) === '//') return;
       el.href = raw + (raw.indexOf('?') >= 0 ? '&' : '?') + bridgeQS;
     }, false);
   }
