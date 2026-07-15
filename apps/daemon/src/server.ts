@@ -328,7 +328,7 @@ import {
   runLifecycleMarkersForStreamEvent,
 } from './run-lifecycle-tracer.js';
 import { deriveRunErrorCode, runResultFromStatus } from './run-result.js';
-import { classifyRunFailure, isResumableFailure } from './run-failure-classification.js';
+import { classifyRunFailure, isResumableFailure, selectEmptyOutputFailure } from './run-failure-classification.js';
 import { decideSafeRunRetry } from './run-retry-policy.js';
 import {
   amrUserIdForRunAnalytics,
@@ -9144,21 +9144,17 @@ export async function startServer({
       ) {
         markRpcCloseReason('empty_output');
         // A silent empty exit is often a swallowed provider failure; the
-        // sandbox bootstrap pumps the provider error onto stderr, so prefer
-        // that concrete reason over the generic empty-output message.
-        // Gated on the pump marker — same rationale as the stall path:
-        // a benign keyword in another agent's stderr must not fabricate
-        // a service failure out of a quiet empty exit.
-        const emptyTails = `${agentStderrTail}\n${agentStdoutTail}`;
-        const emptyServiceCode = emptyTails.includes('[opencode-log]')
-          ? classifyAgentServiceFailure(emptyTails)
-          : null;
-        const emptyDetail = (agentStderrTail || agentStdoutTail || '').trim();
+        // sandbox bootstrap pumps the provider error onto stderr. Prefer the
+        // child's own last words over a fabricated guess — selectEmptyOutputFailure
+        // shows the raw tail whenever there is one and falls back to the generic
+        // "no output" sentence only when the tail is genuinely empty.
+        const emptyFailure = selectEmptyOutputFailure({
+          stderrTail: agentStderrTail,
+          stdoutTail: agentStdoutTail,
+        });
         send('error', createSseErrorPayload(
-          emptyServiceCode ?? 'AGENT_EXECUTION_FAILED',
-          emptyServiceCode && emptyDetail
-            ? emptyDetail
-            : 'Agent completed without producing any output. The model or provider may have returned an empty response — check the agent logs for upstream errors.',
+          emptyFailure.code,
+          emptyFailure.message,
           { retryable: true },
         ));
         return await finishWithRetryDecision('failed', code, signal);

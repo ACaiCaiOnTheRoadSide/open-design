@@ -508,6 +508,54 @@ export function isResumableFailure(
   return false;
 }
 
+export interface EmptyOutputFailure {
+  code: string;
+  message: string;
+}
+
+export const GENERIC_EMPTY_OUTPUT_MESSAGE =
+  'Agent completed without producing any output. The model or provider may have returned an empty response — check the agent logs for upstream errors.';
+
+/**
+ * Decide what a silent, clean exit (exit 0, zero visible output) reports to the
+ * user. Invariant: never throw away a real reason we were holding onto.
+ *
+ * A quiet exit-0 almost always still leaves the actual cause on the child's
+ * stderr — the sandbox error pump's `[opencode-log]` line, an `[od-retry]`
+ * give-up, a raw HTTP status from the executor. So:
+ *   - any non-empty tail becomes the message (verbatim), and
+ *   - the fabricated "empty response" sentence is used ONLY when there is
+ *     genuinely nothing to show.
+ * A specific service-failure code (rate-limit / auth / upstream) is still
+ * assigned only when the pump tagged the tail with `[opencode-log]` — a benign
+ * keyword in an unrelated line must not fabricate a service failure out of a
+ * quiet exit. The previous logic discarded the tail entirely unless BOTH the
+ * marker and a classifier hit were present, so a real error with no marker
+ * surfaced as the generic guess and the operator never saw the true reason.
+ */
+export function selectEmptyOutputFailure(input: {
+  stderrTail?: string | null;
+  stdoutTail?: string | null;
+}): EmptyOutputFailure {
+  const stderrTail = input.stderrTail ?? '';
+  const stdoutTail = input.stdoutTail ?? '';
+  const detail = (stderrTail || stdoutTail || '').trim();
+  if (!detail) {
+    return { code: 'AGENT_EXECUTION_FAILED', message: GENERIC_EMPTY_OUTPUT_MESSAGE };
+  }
+  const combined = `${stderrTail}\n${stdoutTail}`;
+  const serviceCode = combined.includes('[opencode-log]')
+    ? classifyAgentServiceFailure(combined)
+    : null;
+  if (serviceCode) {
+    return { code: serviceCode, message: detail };
+  }
+  return {
+    code: 'AGENT_EXECUTION_FAILED',
+    message: `Agent completed without producing any output.\nLast output: ${detail.slice(-600)}`,
+  };
+}
+
 function classification(
   failure_category: TrackingRunFailureCategory,
   failure_detail: TrackingRunFailureDetail,

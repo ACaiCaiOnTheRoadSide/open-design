@@ -42,6 +42,8 @@ vi.mock('../src/runtimes/auth.js', () => ({
 
 import {
   classifyRunFailure,
+  selectEmptyOutputFailure,
+  GENERIC_EMPTY_OUTPUT_MESSAGE,
   type RunEventForFailureClassification,
 } from '../src/run-failure-classification.js';
 
@@ -1108,5 +1110,69 @@ describe('classifyRunFailure — batch A reclassification out of execution_faile
     );
     expect(result?.failure_category).toBe('process_exit');
     expect(result?.failure_detail).toBe('session_resume_expired');
+  });
+});
+
+describe('selectEmptyOutputFailure', () => {
+  it('falls back to the generic message only when both tails are empty', () => {
+    expect(selectEmptyOutputFailure({ stderrTail: '', stdoutTail: '' })).toEqual({
+      code: 'AGENT_EXECUTION_FAILED',
+      message: GENERIC_EMPTY_OUTPUT_MESSAGE,
+    });
+    expect(
+      selectEmptyOutputFailure({ stderrTail: null, stdoutTail: undefined }),
+    ).toEqual({
+      code: 'AGENT_EXECUTION_FAILED',
+      message: GENERIC_EMPTY_OUTPUT_MESSAGE,
+    });
+  });
+
+  // Red spec for the bug: a real reason on stderr with NO [opencode-log] marker
+  // used to be discarded and replaced by the generic guess. It must now surface.
+  it('surfaces a raw stderr tail even without the pump marker', () => {
+    const result = selectEmptyOutputFailure({
+      stderrTail: 'od-agent huskbox: HTTP 500: sandbox worker crashed',
+      stdoutTail: '',
+    });
+    expect(result.code).toBe('AGENT_EXECUTION_FAILED');
+    expect(result.message).toContain('sandbox worker crashed');
+    expect(result.message).not.toBe(GENERIC_EMPTY_OUTPUT_MESSAGE);
+  });
+
+  it('assigns a service-failure code only when the pump tagged the tail', () => {
+    const tagged = selectEmptyOutputFailure({
+      stderrTail: '[opencode-log] llm request failed: status code 429; too many requests',
+      stdoutTail: '',
+    });
+    expect(tagged.code).toBe('RATE_LIMITED');
+    // The classified path shows the tail verbatim (no "Last output:" wrapper).
+    expect(tagged.message).toBe(
+      '[opencode-log] llm request failed: status code 429; too many requests',
+    );
+
+    // Same rate-limit words but WITHOUT the marker must not fabricate a
+    // service-failure code — it stays a generic execution failure that still
+    // shows the raw text.
+    const untagged = selectEmptyOutputFailure({
+      stderrTail: 'HTTP 429 too many requests',
+      stdoutTail: '',
+    });
+    expect(untagged.code).toBe('AGENT_EXECUTION_FAILED');
+    expect(untagged.message).toContain('HTTP 429 too many requests');
+  });
+
+  it('truncates a long tail to the last 600 characters', () => {
+    const long = 'x'.repeat(2000) + 'TAIL_MARKER';
+    const result = selectEmptyOutputFailure({ stderrTail: long, stdoutTail: '' });
+    expect(result.message).toContain('TAIL_MARKER');
+    expect(result.message.length).toBeLessThan(700);
+  });
+
+  it('uses the stdout tail when stderr is empty', () => {
+    const result = selectEmptyOutputFailure({
+      stderrTail: '',
+      stdoutTail: 'partial model text before it went quiet',
+    });
+    expect(result.message).toContain('partial model text before it went quiet');
   });
 });
