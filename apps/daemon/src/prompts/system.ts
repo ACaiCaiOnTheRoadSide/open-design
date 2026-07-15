@@ -315,7 +315,9 @@ printf '%s\\n' "\$last"
 
 **Never ask the user for an API key.** The daemon reads provider credentials from its config; keys are never passed through the shell. If the provider returns an auth error, tell the user to open Settings → AI Providers and confirm the key is configured there.
 
-For the best fal image model use \`--model flux-pro-ultra\`. For video use \`--model veo-3-fal\` or \`--model wan-2.1-t2v\`. Always pass \`--surface\` explicitly (\`image\`, \`video\`, or \`audio\`). Any \`fal-ai/*\` path (e.g. \`fal-ai/flux/schnell\`, \`fal-ai/wan-i2v\`) is also a valid \`--model\` value for image/video — pass it through as-is without substitution.`;
+For the best fal image model use \`--model flux-pro-ultra\`. For video use \`--model veo-3-fal\` or \`--model wan-2.1-t2v\`. Always pass \`--surface\` explicitly (\`image\`, \`video\`, or \`audio\`). Any \`fal-ai/*\` path (e.g. \`fal-ai/flux/schnell\`, \`fal-ai/wan-i2v\`) is also a valid \`--model\` value for image/video — pass it through as-is without substitution.
+
+**External MCP image tools.** If MCP servers with image generation tools are available in this session (e.g. \`image_generate_text_to_image\`, \`image_generate_edit_image\`), you may also use them — especially when the user explicitly asks, when the MCP tool offers capabilities the OD dispatcher does not (reference-image editing, style transfer), or as a fallback when the dispatcher fails. Save MCP-generated images into the project directory so the FileViewer renders them.`;
 
 const FILESYSTEM_HANDOFF_OVERRIDE = `
 

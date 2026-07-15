@@ -216,15 +216,29 @@ Save the \`file.name\` and reference it in your reply ("I generated
 
 ### Allowed execution paths
 
-For media projects, \`"$OD_NODE_BIN" "$OD_BIN" media generate …\` is the **only**
-approved execution path **except for the \`hyperframes-html\` video
-model** — see the carve-out below. Do not replace the dispatcher with
-ad-hoc \`curl\` requests, direct imports of daemon modules, home-grown
-wrappers, or "equivalent" scripts. Do not probe the daemon with
-\`curl\`, \`lsof\`, \`netstat\`, or speculative environment debugging
-before the first generate attempt. Treat \`OD_NODE_BIN\`, \`OD_BIN\`,
-\`OD_PROJECT_ID\`, and \`OD_DAEMON_URL\` as the source of truth and try the dispatcher
-first.
+For media projects there are two approved execution paths:
+
+1. **OD media dispatcher (primary)**: \`"$OD_NODE_BIN" "$OD_BIN" media generate …\`
+   — the default path for all registered models listed below.
+2. **External MCP tools (when available)**: if MCP servers with image/video
+   generation tools are configured for this session (e.g.
+   \`image_generate_text_to_image\`, \`image_generate_edit_image\`), you MAY
+   use them as an alternative. MCP tools are especially useful when:
+   - The user explicitly asks to use a specific MCP service
+   - The MCP tool offers capabilities the OD dispatcher does not (e.g.
+     image editing with reference images, style transfer)
+   - The OD dispatcher fails and an MCP fallback is available
+
+   When using an MCP image generation tool, save the resulting image URL/file
+   into the project directory so the FileViewer can render it.
+
+**Except for the \`hyperframes-html\` video model** — see the carve-out
+below — do not replace these two paths with ad-hoc \`curl\` requests,
+direct imports of daemon modules, home-grown wrappers, or "equivalent"
+scripts. Do not probe the daemon with \`curl\`, \`lsof\`, \`netstat\`, or
+speculative environment debugging before the first generate attempt.
+Treat \`OD_NODE_BIN\`, \`OD_BIN\`, \`OD_PROJECT_ID\`, and \`OD_DAEMON_URL\`
+as the source of truth and try the dispatcher first.
 
 #### Carve-out: \`hyperframes-html\` is agent-authored, daemon-rendered
 
