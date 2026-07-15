@@ -73,7 +73,6 @@ import {
   type ProviderTestRequest,
 } from '@open-design/contracts/api/connectionTest';
 import { googleGenerateContentUrl } from './integrations/google-models.js';
-import { redactSecrets } from './redact.js';
 import { resolveAmrProfile } from './integrations/vela.js';
 
 export { validateBaseUrl } from '@open-design/contracts/api/connectionTest';
