@@ -87,7 +87,18 @@ arguments:
 > 3. **无持久化存储**：服务更新、异常重启或被运维重建容器时，文件系统会被重置，所有运行时写入（SQLite、用户上传、日志、缓存等）都会丢失。
 > 4. **公开可见**：应用发布后会在 用户作品集 (showcase.monkeycode-ai.online) 列表公开可见，所有人都可以访问到你发布的应用。
 
-然后用 `<question-form>` 要求用户确认，选项为「继续发布」/「取消」。
+然后用 `<question-form>`（JSON body，不是 XML 子标签）要求用户确认：
+
+```
+<question-form id="backend-confirm" title="确认发布">
+{
+  "description": "即将以容器方式发布到 MonkeyCode-AI 用户作品集，请确认是否继续。",
+  "questions": [
+    {"id": "action", "label": "是否继续？", "type": "radio", "options": ["继续发布", "取消"], "required": true, "defaultValue": "继续发布"}
+  ]
+}
+</question-form>
+```
 
 - 用户选「继续发布」 → 进入步骤 3b
 - 用户选「取消」 → 终止本次发布
@@ -510,15 +521,26 @@ rm -f /tmp/dist.zip
 
 **必须用 `defaultValue`，不得用 `placeholder` 预填**。`placeholder` 是灰色提示文字，不算真正填入的值——用户如果直接提交，`required` 字段会被当成空的，提交按钮不可点击。`defaultValue` 才是真正写入输入框的值，用户能直接提交也能改。
 
-示例（正确）：
-```json
-{"id": "site_name", "label": "应用名称", "type": "text", "required": true, "defaultValue": "我的应用"}
+**完整输出格式**——`<question-form>` 标签内必须是 JSON（不是 XML 子标签），前端解析器只识别 JSON body：
+
+```
+<question-form id="publish-confirm" title="发布确认 — 应用名">
+{
+  "description": "本应用会被打包提交到 showcase.monkeycode-ai.online，提交前请确认名称、描述、作者与发布方式。",
+  "questions": [
+    {"id": "site_name", "label": "应用名称", "type": "text", "required": true, "defaultValue": "我的应用"},
+    {"id": "site_description", "label": "应用描述", "type": "textarea", "required": true, "defaultValue": "一句话简介"},
+    {"id": "site_author", "label": "应用作者", "type": "text", "required": true, "defaultValue": "anonymous", "placeholder": "输入作者名或留空使用匿名"},
+    {"id": "publish_mode", "label": "发布方式", "type": "radio", "options": ["新建作品", "更新已有作品"], "required": true, "defaultValue": "新建作品"},
+    {"id": "ticket", "label": "已有作品的 ticket", "type": "text", "required": false, "placeholder": "仅更新时填写，新建留空"}
+  ]
+}
+</question-form>
 ```
 
-示例（错误，禁止）：
-```json
-{"id": "site_name", "label": "应用名称", "type": "text", "required": true, "placeholder": "我的应用"}
-```
+**禁止**用 XML 子标签（如 `<question-form-title>`、`<id>`、`<label>`）——前端不识别，会原样显示为纯文本。
+
+**必须用 `defaultValue`，不得用 `placeholder` 预填**。`placeholder` 是灰色提示文字，不算真正填入的值——用户如果直接提交，`required` 字段会被当成空的，提交按钮不可点击。`defaultValue` 才是真正写入输入框的值，用户能直接提交也能改。
 
 若无可解析内容，对应字段不设 `defaultValue`，让用户必须自行输入。
 
