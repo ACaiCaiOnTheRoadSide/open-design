@@ -547,6 +547,23 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
   }, true);
   var mo = new MutationObserver(schedulePostTargets);
   mo.observe(document.documentElement, { subtree: true, childList: true });
+  var bridgeQS = '';
+  try {
+    var qs = window.location.search || '';
+    qs.replace(/[?&](odPreviewBridge=[^&]*)/g, function(_, p){ bridgeQS += (bridgeQS ? '&' : '') + p; });
+  } catch (_) {}
+  if (bridgeQS) {
+    document.addEventListener('click', function(ev){
+      if (commentEnabled) return;
+      var el = ev.target;
+      while (el && el.tagName !== 'A') el = el.parentElement;
+      if (!el) return;
+      var raw = el.getAttribute('href');
+      if (!raw || raw.indexOf('odPreviewBridge') >= 0) return;
+      if (/^(?:[a-z][a-z0-9+.\-]*:|\/\/|#)/i.test(raw)) return;
+      el.href = raw + (raw.indexOf('?') >= 0 ? '&' : '?') + bridgeQS;
+    }, false);
+  }
   ensureStyle();
   window.parent.postMessage({ type: 'od:url-selection-bridge-ready' }, '*');
 })();
