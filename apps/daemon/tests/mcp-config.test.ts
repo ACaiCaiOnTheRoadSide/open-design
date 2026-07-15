@@ -14,6 +14,7 @@ import {
   openCodeProviderConfigOutputLimit,
   readMcpConfig,
   sanitizeMcpServer,
+  shouldRefuseUnconfiguredOpenCodeModel,
   writeMcpConfig,
 } from '../src/mcp-config.js';
 
@@ -1307,5 +1308,51 @@ describe('mergeOpenCodeProviderConfig', () => {
 
   it('returns null when both inputs are empty', () => {
     expect(mergeOpenCodeProviderConfig(null, null)).toBeNull();
+  });
+});
+
+describe('shouldRefuseUnconfiguredOpenCodeModel', () => {
+  const cfg = '{"provider":{"minimax":{}},"model":"minimax/minimax-m3"}';
+
+  it('refuses OpenCode in huskbox mode with no injected config', () => {
+    for (const injectedProviderConfig of [null, undefined, '', '   ']) {
+      expect(
+        shouldRefuseUnconfiguredOpenCodeModel({
+          isOpenCode: true,
+          huskboxMode: true,
+          injectedProviderConfig,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it('allows when a config is present', () => {
+    expect(
+      shouldRefuseUnconfiguredOpenCodeModel({
+        isOpenCode: true,
+        huskboxMode: true,
+        injectedProviderConfig: cfg,
+      }),
+    ).toBe(false);
+  });
+
+  it('never refuses outside huskbox mode (desktop/local uses its own login)', () => {
+    expect(
+      shouldRefuseUnconfiguredOpenCodeModel({
+        isOpenCode: true,
+        huskboxMode: false,
+        injectedProviderConfig: null,
+      }),
+    ).toBe(false);
+  });
+
+  it('never refuses a non-OpenCode agent', () => {
+    expect(
+      shouldRefuseUnconfiguredOpenCodeModel({
+        isOpenCode: false,
+        huskboxMode: true,
+        injectedProviderConfig: null,
+      }),
+    ).toBe(false);
   });
 });

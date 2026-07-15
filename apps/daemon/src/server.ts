@@ -414,6 +414,7 @@ import {
   mergeOpenCodeProviderConfig,
   openCodeProviderConfigModel,
   openCodeProviderConfigOutputLimit,
+  shouldRefuseUnconfiguredOpenCodeModel,
   isManagedProjectCwd,
   readMcpConfig,
   writeMcpConfig,
@@ -7193,6 +7194,28 @@ export async function startServer({
       if (isOpenCodeContent) {
         opencodeOutputTokenMax =
           openCodeProviderConfigOutputLimit(injectedProviderConfig);
+      }
+      // Safety net: refuse to spawn OpenCode with no configured model in the
+      // shared huskbox deployment. Without this it would silently fall back to
+      // its built-in free model (opencode/big-pickle) and fail opaquely under
+      // load. See shouldRefuseUnconfiguredOpenCodeModel / errors.ts.
+      if (
+        shouldRefuseUnconfiguredOpenCodeModel({
+          isOpenCode: isOpenCodeContent,
+          huskboxMode: !!process.env.OD_HUSKBOX_BASE_URL,
+          injectedProviderConfig,
+        })
+      ) {
+        design.runs.emit(
+          run,
+          'error',
+          createSseErrorPayload(
+            'AGENT_MODEL_NOT_CONFIGURED',
+            '本次运行未解析到模型配置,已中止(未跑到默认模型上)。请在后台「模型配置」里设置默认模型;若已设置,说明这条运行路径没有携带模型配置,请反馈以便修复。',
+            { retryable: false },
+          ),
+        );
+        return design.runs.finish(run, 'failed', 1, null);
       }
     }
 

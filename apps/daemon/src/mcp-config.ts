@@ -583,6 +583,31 @@ export function openCodeProviderConfigModel(
   }
 }
 
+// shouldRefuseUnconfiguredOpenCodeModel 决定是否拒绝 spawn 一个"没有配置模型"的
+// OpenCode 运行(安全网,见 errors.ts 的 AGENT_MODEL_NOT_CONFIGURED)。
+//
+// 只在共享 huskbox 部署里强制:那里模型走 per-request 头、没有容器级兜底,
+// 一旦某条运行路径没带上配置(自动化触发、回调子 run、ALS 作用域丢失),
+// injectedProviderConfig 为空,OpenCode 会**静默**回退到自带免费模型
+// (opencode/big-pickle)——一并发就撞它的 session 限流、表现成不透明的空输出。
+// 与其静默跑错模型,不如响亮报错、当场拒跑。
+//
+// 桌面/本地(OpenCode 用自己登录的 provider、本就不注入配置)不受影响:
+// 判据是 huskboxMode(daemon 容器设了 OD_HUSKBOX_BASE_URL 才为真,与
+// entrypoint.sh 里决定 shim 路由的门控同一个信号)。
+export function shouldRefuseUnconfiguredOpenCodeModel(input: {
+  isOpenCode: boolean;
+  huskboxMode: boolean;
+  injectedProviderConfig: string | null | undefined;
+}): boolean {
+  if (!input.isOpenCode || !input.huskboxMode) return false;
+  const raw =
+    typeof input.injectedProviderConfig === 'string'
+      ? input.injectedProviderConfig.trim()
+      : '';
+  return raw === '';
+}
+
 // openCodeProviderConfigOutputLimit 从注入的 BYOK provider 配置里取所选模型的
 // `limit.output`(后台「模型配置」里管理员填的输出上限,Go 侧 byok_service.go
 // buildOpencodeProviderConfig 写入)。

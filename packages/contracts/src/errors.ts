@@ -13,6 +13,16 @@ export const API_ERROR_CODES = [
   'AGENT_UNAVAILABLE',
   'AGENT_AUTH_REQUIRED',
   'AGENT_EXECUTION_FAILED',
+  // The run reached spawn with no model configured. In the shared/huskbox
+  // deployment the model rides a per-request header (X-OD-Provider-Config)
+  // and there is no container-level fallback, so a run triggered outside the
+  // gateway's injection path would otherwise let OpenCode silently fall back
+  // to its built-in free model (which rate-limits under load and surfaces as
+  // an opaque empty-output failure). The daemon refuses to spawn instead and
+  // emits this so the misconfiguration is loud and diagnosable rather than a
+  // silently-wrong model. Not retryable — the config, not the attempt, is the
+  // problem.
+  'AGENT_MODEL_NOT_CONFIGURED',
   // The agent's connection to its model provider was established and then
   // dropped or kept resetting mid-response (e.g. "socket connection was closed
   // unexpectedly", ECONNRESET, "Unable to connect to API", ETIMEDOUT). Distinct
