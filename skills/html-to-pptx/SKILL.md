@@ -71,14 +71,14 @@ sh <skill-root>/scripts/setup-env.sh
 runtimes that is `.od-skills/html-to-pptx/` inside the project working
 directory.
 
-What it does (so you don't have to): creates `/tmp/od-pptx-export` OUTSIDE
+What it does (so you don't have to): creates `${TMPDIR:-/tmp}/od-pptx-export` OUTSIDE
 the project directory (dependencies in the project dir would sync back into
 the user's file list), installs `playwright`/`pptxgenjs`, then picks the ONLY
 browser branch that can work on this system — on musl (Alpine) sandboxes it
 downloads a prebuilt self-contained musl Chromium bundle (~320MB, sha256
 verified, once per session); on glibc systems it uses Playwright's own
 browser; when a system chromium exists it uses that. It finishes with an
-`ok:` line and writes `/tmp/od-pptx-export/env.sh`, which every later command
+`ok:` line and writes `${TMPDIR:-/tmp}/od-pptx-export/env.sh`, which every later command
 MUST source (shell state does not survive between your commands).
 
 Do NOT substitute your own environment setup for this script — no
@@ -102,7 +102,7 @@ the skill root advertised in the skill preamble — in staged runtimes that is
 use the absolute skill-root path from the preamble:
 
 ```bash
-WORKDIR=/tmp/od-pptx-export
+WORKDIR=${TMPDIR:-/tmp}/od-pptx-export
 cp <skill-root>/scripts/render-pptx.mjs "$WORKDIR/"
 cp <skill-root>/assets/dom-to-pptx.bundle.js.gz "$WORKDIR/"   # editable mode only
 ```
@@ -122,12 +122,12 @@ in place).
 
 ```bash
 # screenshot mode (default)
-. /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
-node /tmp/od-pptx-export/render-pptx.mjs "<project-dir>/<deck>.html" "<project-dir>/<deck-title>-截图版.pptx"
+. ${TMPDIR:-/tmp}/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
+node ${TMPDIR:-/tmp}/od-pptx-export/render-pptx.mjs "<project-dir>/<deck>.html" "<project-dir>/<deck-title>-截图版.pptx"
 
 # editable mode (native text/shapes — only when the user chose it)
-. /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
-node /tmp/od-pptx-export/render-pptx.mjs --editable "<project-dir>/<deck>.html" "<project-dir>/<deck-title>-可编辑版.pptx"
+. ${TMPDIR:-/tmp}/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
+node ${TMPDIR:-/tmp}/od-pptx-export/render-pptx.mjs --editable "<project-dir>/<deck>.html" "<project-dir>/<deck-title>-可编辑版.pptx"
 ```
 
 The two modes are DIFFERENT artifacts and their filenames MUST stay distinct:

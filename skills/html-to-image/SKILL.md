@@ -67,7 +67,7 @@ sh <skill-root>/scripts/setup-env.sh
 runtimes that is `.od-skills/html-to-image/` inside the project working
 directory.
 
-What it does (so you don't have to): creates `/tmp/od-pptx-export` OUTSIDE
+What it does (so you don't have to): creates `${TMPDIR:-/tmp}/od-pptx-export` OUTSIDE
 the project directory (the workspace is deliberately SHARED with the
 html-to-pptx skill, so a session that already exported a .pptx reuses the
 same browser download), installs the npm dependencies, then picks the ONLY
@@ -75,7 +75,7 @@ browser branch that can work on this system — on musl (Alpine) sandboxes it
 downloads a prebuilt self-contained musl Chromium bundle (~320MB, sha256
 verified, once per session); on glibc systems it uses Playwright's own
 browser; when a system chromium exists it uses that. It finishes with an
-`ok:` line and writes `/tmp/od-pptx-export/env.sh`, which every later command
+`ok:` line and writes `${TMPDIR:-/tmp}/od-pptx-export/env.sh`, which every later command
 MUST source (shell state does not survive between your commands).
 
 Do NOT substitute your own environment setup for this script — no
@@ -98,7 +98,7 @@ the skill root advertised in the skill preamble — in staged runtimes that is
 use the absolute skill-root path from the preamble:
 
 ```bash
-WORKDIR=/tmp/od-pptx-export
+WORKDIR=${TMPDIR:-/tmp}/od-pptx-export
 cp <skill-root>/scripts/render-image.mjs "$WORKDIR/"
 ```
 
@@ -114,8 +114,8 @@ against the workspace `node_modules`.
 ## Step 3 — render
 
 ```bash
-. /tmp/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
-node /tmp/od-pptx-export/render-image.mjs --format <png|jpeg|webp> \
+. ${TMPDIR:-/tmp}/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
+node ${TMPDIR:-/tmp}/od-pptx-export/render-image.mjs --format <png|jpeg|webp> \
   "<project-dir>/<page>.html" "<project-dir>/<page-title>-整页图.<png|jpg|webp>"
 ```
 

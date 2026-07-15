@@ -6,7 +6,7 @@
 # This file ships in BOTH skills and must stay BYTE-IDENTICAL between them
 # (scripts/guard.ts enforces this): each skill stages self-contained into the
 # sandbox, but both copies drive the SAME shared workspace
-# (/tmp/od-pptx-export) so the expensive Chromium acquisition (~320MB on musl
+# (${TMPDIR:-/tmp}/od-pptx-export) so the expensive Chromium acquisition (~320MB on musl
 # sandboxes) happens once per session no matter which skill runs first. That
 # sharing is also why pptxgenjs is installed even for image-only sessions:
 # the node_modules/.od-pptx-deps-ok marker is shared, so whichever copy runs
@@ -30,7 +30,7 @@
 #   OD_PPTX_NPM_REGISTRY / PLAYWRIGHT_DOWNLOAD_HOST   mirror overrides
 set -eu
 
-WORKDIR=/tmp/od-pptx-export
+WORKDIR="${OD_PPTX_WORKDIR:-${TMPDIR:-/tmp}/od-pptx-export}"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 

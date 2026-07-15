@@ -138,12 +138,12 @@ async function launchOrExplain(options) {
     if (/Error relocating|error while loading shared libraries/i.test(msg)) {
       console.error(
         'a glibc browser is being run on a musl (Alpine) system — installing dependencies can never fix this. ' +
-          "Run: OD_PPTX_FORCE_BUNDLE=1 sh <skill-root>/scripts/setup-env.sh, then source /tmp/od-pptx-export/env.sh and retry.",
+          "Run: OD_PPTX_FORCE_BUNDLE=1 sh <skill-root>/scripts/setup-env.sh, then source ${TMPDIR:-/tmp}/od-pptx-export/env.sh and retry.",
       );
     } else {
       console.error(
         "environment not prepared for this system — run the skill's bundled setup script " +
-          '(sh <skill-root>/scripts/setup-env.sh), then source /tmp/od-pptx-export/env.sh in the same command and retry. ' +
+          '(sh <skill-root>/scripts/setup-env.sh), then source ${TMPDIR:-/tmp}/od-pptx-export/env.sh in the same command and retry. ' +
           'Do not install a browser by hand.',
       );
     }
