@@ -123,7 +123,17 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
       `INSERT INTO task_queue
          (id, tenant_id, user_id, task_type, run_id, payload_json,
           status, priority, worker_id, started_at, heartbeat_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET
+         status = EXCLUDED.status,
+         priority = EXCLUDED.priority,
+         worker_id = EXCLUDED.worker_id,
+         started_at = EXCLUDED.started_at,
+         heartbeat_at = EXCLUDED.heartbeat_at,
+         created_at = EXCLUDED.created_at,
+         finished_at = NULL,
+         result_json = NULL,
+         error_text = NULL`,
     ).run(
       opts.id,
       opts.tenantId ?? '__legacy__',
