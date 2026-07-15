@@ -653,6 +653,7 @@ import { listLibraryTokenOrigins } from './library-store.js';
 import { apiTokenFromEnv, isApiAuthDisabled, isApiTokenMiddlewareEnabled } from './api-token-auth.js';
 import { createOpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
 import { resolveMaxConcurrentRuns } from './run-concurrency-gate.js';
+import { redactSecrets } from './redact.js';
 import { createTaskQueue, type TaskQueue } from './task-queue.js';
 
 /** @typedef {import('@open-design/contracts').ApiErrorCode} ApiErrorCode */
@@ -7990,13 +7991,13 @@ export async function startServer({
       const visibleChunk = agentStderrFilter.write(chunk);
       if (!visibleChunk) return;
       agentStderrTail = `${agentStderrTail}${visibleChunk}`.slice(-2000);
-      send('stderr', { chunk: visibleChunk });
+      send('stderr', { chunk: redactSecrets(visibleChunk) });
     };
     const flushVisibleAgentStderr = () => {
       const visibleChunk = agentStderrFilter.flush();
       if (!visibleChunk) return;
       agentStderrTail = `${agentStderrTail}${visibleChunk}`.slice(-2000);
-      send('stderr', { chunk: visibleChunk });
+      send('stderr', { chunk: redactSecrets(visibleChunk) });
     };
     try {
       // Prompt delivery via stdin is now the universal default. This bypasses
@@ -9468,7 +9469,7 @@ export async function startServer({
               rewritten !== 'Agent stream error'
                 ? rewritten
                 : `Agent exited unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`}) without reporting a reason.` +
-                  (failDetail ? `\nLast output: ${failDetail.slice(-600)}` : '');
+                  (failDetail ? `\nLast output: ${redactSecrets(failDetail.slice(-600))}` : '');
             send('error', createSseErrorPayload(
               'AGENT_EXECUTION_FAILED',
               message,

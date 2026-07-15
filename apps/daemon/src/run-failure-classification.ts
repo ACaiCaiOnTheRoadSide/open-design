@@ -6,6 +6,7 @@ import type {
 } from '@open-design/contracts/analytics';
 
 import { classifyAmrAccountFailure } from './integrations/vela-errors.js';
+import { redactSecrets } from './redact.js';
 import { classifyAgentServiceFailure } from './runtimes/auth.js';
 import type { RunResult, RunStatusForAnalytics } from './run-result.js';
 
@@ -548,11 +549,11 @@ export function selectEmptyOutputFailure(input: {
     ? classifyAgentServiceFailure(combined)
     : null;
   if (serviceCode) {
-    return { code: serviceCode, message: detail };
+    return { code: serviceCode, message: redactSecrets(detail) };
   }
   return {
     code: 'AGENT_EXECUTION_FAILED',
-    message: `Agent completed without producing any output.\nLast output: ${detail.slice(-600)}`,
+    message: `Agent completed without producing any output.\nLast output: ${redactSecrets(detail.slice(-600))}`,
   };
 }
 

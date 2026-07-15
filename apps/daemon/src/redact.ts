@@ -104,6 +104,8 @@ const CARD_CANDIDATE = /\b(?:\d[ -]?){12,18}\d\b/g;
 const API_KEY_HEADER =
   /(^|[^?&\w-])("?)(x-api-key|api-key|x-goog-api-key)\2(\s*[:=]\s*)("[^"]*"|[^\s,;"'#}]+)/gi;
 const API_KEY_QUERY = /([?&](?:key|api_key|api-key)=)[^&#\s,;"']+/gi;
+const JSON_SECRET_FIELD =
+  /("(?:apiKey|api_key|apiSecret|api_secret|secretKey|secret_key|accessToken|access_token)")\s*:\s*"[^"]{8,}"/gi;
 
 function isLuhnValid(digits: string): boolean {
   if (digits.length < 13 || digits.length > 19) return false;
@@ -161,7 +163,8 @@ export function redactSecrets(input: string): string {
         value: string,
       ) => redactApiKeyHeaderValue(prefix, quote, name, separator, value),
     )
-    .replace(API_KEY_QUERY, '$1[REDACTED:api_key_query]');
+    .replace(API_KEY_QUERY, '$1[REDACTED:api_key_query]')
+    .replace(JSON_SECRET_FIELD, '$1:"[REDACTED:json_secret]"');
   out = out.replace(CARD_CANDIDATE, (match) => {
     const digits = match.replace(/\D/g, '');
     return isLuhnValid(digits) ? '[REDACTED:credit_card]' : match;
@@ -211,6 +214,12 @@ export function redactSecretsWithCounts(input: string): {
     return `${prefix}[REDACTED:api_key_query]`;
   });
   if (apiKeyQueryCount > 0) counts.api_key_query = apiKeyQueryCount;
+  let jsonSecretCount = 0;
+  out = out.replace(JSON_SECRET_FIELD, (_match, fieldName: string) => {
+    jsonSecretCount += 1;
+    return `${fieldName}:"[REDACTED:json_secret]"`;
+  });
+  if (jsonSecretCount > 0) counts.json_secret = jsonSecretCount;
   let cardCount = 0;
   out = out.replace(CARD_CANDIDATE, (match) => {
     const digits = match.replace(/\D/g, '');
