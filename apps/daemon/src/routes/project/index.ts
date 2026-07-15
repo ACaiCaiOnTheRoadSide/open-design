@@ -2222,14 +2222,19 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   // containing every file the user has uploaded, pasted, sketched, or that
   // the agent has generated. Names are sanitized; paths are confined to the
   // project's own folder (see apps/daemon/src/projects.ts).
+  async function ensureHydrated(projectId: string, metadata: unknown): Promise<void> {
+    const meta = metadata as { baseDir?: string } | null | undefined;
+    if (meta?.baseDir) return;
+    await hydrateProject(projectId, { ifMissing: true }).catch((err) => {
+      console.error(`[sync] hydrate before file listing failed for ${projectId}:`, err?.message ?? err);
+    });
+  }
+
   app.get('/api/projects/:id/files', async (req, res) => {
     try {
       const since = Number(req.query?.since);
       const project = await getProject(db, req.params.id);
-      const meta = project?.metadata as { baseDir?: string } | null | undefined;
-      if (!meta?.baseDir) {
-        await hydrateProject(req.params.id, { ifMissing: true }).catch(() => {});
-      }
+      if (project) await ensureHydrated(req.params.id, project.metadata);
       const files = await listFiles(PROJECTS_DIR, req.params.id, {
         since: Number.isFinite(since) ? since : undefined,
         metadata: project?.metadata,
@@ -2252,6 +2257,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const pattern = req.query.pattern ? String(req.query.pattern) : null;
       const max = Math.min(Number(req.query.max) || 200, 1000);
       const searchProject = await getProject(db, req.params.id);
+      if (searchProject) await ensureHydrated(req.params.id, searchProject.metadata);
       const matches = await searchProjectFiles(PROJECTS_DIR, req.params.id, query, {
         pattern,
         max,
@@ -2269,6 +2275,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (!project) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
+      await ensureHydrated(req.params.id, project.metadata);
       const folders = await listProjectFolders(PROJECTS_DIR, req.params.id, {
         metadata: project.metadata,
       });
@@ -2535,6 +2542,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   app.get('/api/projects/:id/files/:name/preview', async (req, res) => {
     try {
       const project = await getProject(db, req.params.id);
+      if (project) await ensureHydrated(req.params.id, project.metadata);
       const file = await readProjectFile(
         PROJECTS_DIR,
         req.params.id,
