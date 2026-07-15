@@ -321,24 +321,26 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
     const dir = projectDirOf(projectId);
 
     if (ifMissing) {
-      // Version-aware check: compare local state version against remote.
-      // A readdir-only check is insufficient — a partial hydrate or file
-      // deletion leaves the directory non-empty but incomplete.
-      const remote = await getManifest(target, projectId);
-      if (state.baseVersion === remote.version && state.baseVersion > 0) {
-        let hasFiles = false;
-        try {
-          const entries = await readdir(dir);
-          hasFiles = entries.length > 0;
-        } catch {
-          // ENOENT
-        }
-        if (hasFiles) {
+      // Fast path: if the local state version matches, skip the HTTP call.
+      // Only fetch remote manifest when versions might disagree or the
+      // directory is empty — keeps the common case (project already present
+      // and up-to-date) as cheap as a local readdir.
+      let entries: string[] = [];
+      try {
+        entries = await readdir(dir);
+      } catch {
+        // ENOENT → treat as missing
+      }
+      if (entries.length > 0 && state.baseVersion > 0) {
+        // Directory has files and we have a baseline — check remote version
+        // to detect stale state, but only when there's reason to suspect it.
+        const remote = await getManifest(target, projectId);
+        if (state.baseVersion === remote.version) {
           await persistState(projectId);
           return { updated: false, version: state.baseVersion, reason: 'already present' };
         }
       }
-      // Version mismatch or empty directory — reset state for full hydration.
+      // Version mismatch, empty directory, or no baseline — reset for full hydration.
       if (state.baseVersion > 0 || Object.keys(state.baseFiles).length > 0) {
         state.baseVersion = 0;
         state.baseFiles = {};
@@ -349,7 +351,7 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
       await scanAndPush(projectId);
     }
 
-    let remote = await getManifest(target, projectId);
+    const remote = await getManifest(target, projectId);
     if (remote.version === state.baseVersion) {
       await persistState(projectId);
       return { updated: false, version: remote.version, reason: 'up to date' };
@@ -361,6 +363,7 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
       return localFiles[relPath]?.sha256 !== entry.sha256;
     });
 
+    let activeRemote = remote;
     try {
       await mapWithConcurrency(toFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
         await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
@@ -379,15 +382,24 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
         const history = await getManifestHistory(target, projectId);
         const previous = history.find((h) => h.version < remote.version);
         if (previous && Object.keys(previous.files).length > 0) {
+          // Re-scan disk after the partial download so we correctly diff
+          // against what's actually on disk, not the stale pre-download snapshot.
+          const currentDisk = await scanLocalManifest(projectId);
           const fallbackFetch = Object.entries(previous.files).filter(([relPath, entry]) => {
             if (!isValidManifestPath(relPath)) return false;
-            return localFiles[relPath]?.sha256 !== entry.sha256;
+            return currentDisk[relPath]?.sha256 !== entry.sha256;
           });
           await mapWithConcurrency(fallbackFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
             await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
           });
-          remote = previous;
-          toFetch = fallbackFetch;
+          // Clean up orphaned files from the partial v(N) download that are
+          // not in the fallback version.
+          for (const relPath of Object.keys(currentDisk)) {
+            if (relPath in previous.files) continue;
+            if (relPath in localFiles) continue; // pre-existing file, not from failed download
+            await rm(path.join(dir, relPath), { force: true }).catch(() => {});
+          }
+          activeRemote = previous;
           fallbackUsed = true;
           console.error(`[sync] fell back to v${previous.version} for project ${projectId}`);
         }
@@ -405,7 +417,7 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
     // has unpushed edits (possible only on the ifMissing path, which skips the
     // implicit flush) — never discard local-only work.
     for (const relPath of Object.keys(localFiles)) {
-      if (relPath in remote.files) continue;
+      if (relPath in activeRemote.files) continue;
       const basedOn = state.baseFiles[relPath];
       if (basedOn && localFiles[relPath]?.sha256 === basedOn.sha256) {
         await rm(path.join(dir, relPath), { force: true }).catch(() => {});
@@ -415,14 +427,14 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
     // Downloaded files now carry the manifest's mtime; refresh the cache from
     // disk so the next scan does not re-hash everything.
     const stats = await walkProjectFiles(dir);
-    for (const [relPath, entry] of Object.entries(remote.files)) {
+    for (const [relPath, entry] of Object.entries(activeRemote.files)) {
       const st = stats.get(relPath);
       if (st) state.hashCache[relPath] = { size: st.size, mtimeMs: st.mtimeMs, sha256: entry.sha256 };
     }
-    state.baseVersion = remote.version;
-    state.baseFiles = remote.files;
+    state.baseVersion = activeRemote.version;
+    state.baseFiles = activeRemote.files;
     await persistState(projectId);
-    console.error(`[sync] hydrated project ${projectId} to v${remote.version} (${toFetch.length} blobs)`);
+    console.error(`[sync] hydrated project ${projectId} to v${activeRemote.version}`);
     return { updated: true, version: remote.version };
   });
 }
