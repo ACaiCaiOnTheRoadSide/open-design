@@ -6357,7 +6357,6 @@ export async function startServer({
       }
     }
     const connectedExternalMcp = enabledExternalMcp
-      .filter((s) => typeof oauthTokensForSpawn[s.id] === 'string')
       .map((s) => ({ id: s.id, label: s.label }));
 
     const {

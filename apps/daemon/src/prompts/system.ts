@@ -1108,12 +1108,12 @@ function renderConnectedExternalMcpDirective(
   if (lines.length === 0) return '';
   return [
     '\n\n---\n\n',
-    '## External MCP servers — already authenticated\n\n',
-    'The following external MCP servers are already authenticated for this run via an OAuth Bearer token the daemon injected into `.mcp.json`. You can call their real tools directly:\n\n',
+    '## External MCP servers — available for this run\n\n',
+    'The following external MCP servers are configured and available. Their credentials (API keys or OAuth tokens) have been injected by the daemon — you can call their tools directly without any authentication step:\n\n',
     lines.join('\n'),
     '\n\n',
-    '**Before starting work, list the tools available from these MCP servers** (e.g. `mcp__<server>__list_tools` or equivalent) to discover what capabilities they provide — image generation, editing, search, etc. Prefer MCP tools over built-in alternatives when both can accomplish the task (e.g. prefer an MCP image generation tool over `od media generate`).\n\n',
-    '**Do NOT call any tool whose name matches `mcp__<server>__authenticate` or `mcp__<server>__complete_authentication` for the servers above.** Those are synthetic fallback tools Claude Code exposes when its first HTTP connect briefly flipped the server into a needs-auth state. The flow they drive (a `localhost:<random>/callback` redirect) cannot complete in this environment, and the real tools (e.g. `generate_image`, `models_explore`, `balance`, …) are already reachable.\n\n',
+    '**Before starting work, list the tools available from these MCP servers** to discover what capabilities they provide — image generation, editing, search, etc. Prefer MCP tools over built-in alternatives when both can accomplish the task (e.g. prefer an MCP image generation tool over `od media generate`).\n\n',
+    '**Do NOT call any tool whose name matches `mcp__<server>__authenticate` or `mcp__<server>__complete_authentication` for the servers above.** Those are synthetic fallback tools the agent runtime exposes when its first HTTP connect briefly flipped the server into a needs-auth state. The flow they drive (a `localhost:<random>/callback` redirect) cannot complete in this environment, and the real tools (e.g. `generate_image`, `models_explore`, `balance`, …) are already reachable.\n\n',
     'If a real tool actually fails with an auth-related error, report the exact tool name and error text and stop — the user will reconnect the server in Settings → External MCP. Do not retry by invoking any `*_authenticate` tool.\n',
   ].join('');
 }
