@@ -420,6 +420,7 @@ import {
   writeMcpConfig,
 } from './mcp-config.js';
 import { getPlatformDefaultProviderConfig } from './platform-default-provider-config.js';
+import { getPlatformMcpServers } from './platform-mcp-servers.js';
 import {
   resolveExternalMcpServersForRun,
 } from './run-tool-bundle.js';
@@ -6253,6 +6254,24 @@ export async function startServer({
           err && err.message ? err.message : err,
         );
       }
+    }
+    // Platform-level MCP servers (admin-configured via the Go backend).
+    // Merge them into the local config — local entries win on id conflict.
+    try {
+      const platformServers = await getPlatformMcpServers();
+      if (platformServers.length > 0) {
+        const localIds = new Set(externalMcpConfig.servers.map((s) => s.id));
+        for (const ps of platformServers) {
+          if (!localIds.has(ps.id)) {
+            externalMcpConfig.servers.push(ps);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(
+        '[platform-mcp] fetch failed:',
+        err && err.message ? err.message : err,
+      );
     }
     const runScopedMcpServers = Array.isArray(run?.toolBundle?.mcpServers)
       ? run.toolBundle.mcpServers
