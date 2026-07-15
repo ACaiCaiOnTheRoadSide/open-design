@@ -7821,7 +7821,7 @@ export async function startServer({
           const detail = (agentStderrTail || agentStdoutTail || '').trim();
           stallPayload = createSseErrorPayload(
             serviceCode,
-            detail || 'The model service returned an error.',
+            redactSecrets(detail) || 'The model service returned an error.',
             { retryable: true },
           );
         }
@@ -8172,7 +8172,7 @@ export async function startServer({
       cleanupPromptFile();
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
-      send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', `spawn failed: ${err.message}`));
+      send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', `spawn failed: ${redactSecrets(err.message)}`));
       design.runs.finish(run, 'failed', 1, null);
       return;
     }
@@ -8351,7 +8351,7 @@ export async function startServer({
         });
         child.on('error', (err) => {
           flushVisibleAgentStderr();
-          send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err.message));
+          send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', redactSecrets(err.message)));
         });
 
         // Wrap the child's close event so the orchestrator can race child
@@ -8406,7 +8406,7 @@ export async function startServer({
           }
         } catch (err) {
           flushVisibleAgentStderr();
-          send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err instanceof Error ? err.message : String(err)));
+          send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', redactSecrets(err instanceof Error ? err.message : String(err))));
           design.runs.finish(run, 'failed', 1, null);
         } finally {
           critiqueRunRegistry.unregister(critiqueProjectKey, critiqueRunId);
@@ -9126,7 +9126,7 @@ export async function startServer({
       flushVisibleAgentStderr();
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
-      send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err.message));
+      send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', redactSecrets(err.message)));
       await finishWithRetryDecision('failed', 1, null);
     });
     child.on('close', async (code, signal) => {
@@ -9428,7 +9428,7 @@ export async function startServer({
           const detail = (agentStderrTail || agentStdoutTail || '').trim();
           send('error', createSseErrorPayload(
             serviceCode,
-            detail || 'The model service returned an error.',
+            redactSecrets(detail) || 'The model service returned an error.',
             { retryable: true },
           ));
         } else {
@@ -9464,11 +9464,12 @@ export async function startServer({
               failDetail,
               `${agentStderrTail}\n${agentStdoutTail}`,
             );
-            const message =
+            const message = redactSecrets(
               rewritten !== 'Agent stream error'
                 ? rewritten
                 : `Agent exited unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`}) without reporting a reason.` +
-                  (failDetail ? `\nLast output: ${redactSecrets(failDetail.slice(-600))}` : '');
+                  (failDetail ? `\nLast output: ${failDetail.slice(-600)}` : ''),
+            );
             send('error', createSseErrorPayload(
               'AGENT_EXECUTION_FAILED',
               message,

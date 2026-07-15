@@ -73,6 +73,7 @@ import {
   type ProviderTestRequest,
 } from '@open-design/contracts/api/connectionTest';
 import { googleGenerateContentUrl } from './integrations/google-models.js';
+import { redactSecrets } from './redact.js';
 import { resolveAmrProfile } from './integrations/vela.js';
 
 export { validateBaseUrl } from '@open-design/contracts/api/connectionTest';
@@ -1833,9 +1834,9 @@ function attachAgentStreamHandlers(
     });
     child.on('close', () => handler.flush());
   } else {
-    child.stdout?.on('data', (chunk: string) => send('stdout', { chunk }));
+    child.stdout?.on('data', (chunk: string) => send('stdout', { chunk: redactSecrets(chunk) }));
   }
-  child.stderr?.on('data', (chunk: string) => send('stderr', { chunk }));
+  child.stderr?.on('data', (chunk: string) => send('stderr', { chunk: redactSecrets(chunk) }));
   return { child, acpSession };
 }
 
