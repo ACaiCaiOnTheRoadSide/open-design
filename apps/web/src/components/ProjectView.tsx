@@ -5255,13 +5255,7 @@ export function ProjectView({
       // re-publish into a new site and breaks the status lookup. Safe to inline:
       // it is our own id, not user input.
       const clientId = `od-${project.id}`;
-      const prompt =
-        'Publish this project to the showcase wall using the publish-website skill. ' +
-        `The client_id for this project is "${clientId}" — use that exact value, do not run hostname. ` +
-        'Follow the skill\'s pipeline exactly. The whole project directory is the site root. ' +
-        'When publish succeeds, give me the site_url on its own line as a plain clickable link and ' +
-        'tell me it needs moderator review before it goes live. If it fails, report the error ' +
-        'verbatim — never fabricate a URL or claim a publish that did not happen.';
+      const prompt = `发布这个项目。client_id="${clientId}"。`;
       // skillIds is what actually injects the skill (body into the system
       // prompt, side files staged into `.od-skills/` and synced into sandbox
       // workspaces) — naming the skill in the prompt text alone does nothing.

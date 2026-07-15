@@ -9404,13 +9404,12 @@ function HtmlViewer({
                 <button
                   type="button"
                   data-testid="chrome-publish-button"
-                  className="chrome-action chrome-action-secondary chrome-action-with-label od-tooltip"
+                  className="chrome-action chrome-action-primary chrome-action-export od-tooltip"
                   data-tooltip={t('fileViewer.publishTooltip')}
                   data-tooltip-placement="bottom"
                   disabled={streaming}
                   onClick={openPublishConsent}
                 >
-                  <RemixIcon name="rocket-line" size={15} />
                   <span>{t('fileViewer.publish')}</span>
                 </button>
               ) : null}
