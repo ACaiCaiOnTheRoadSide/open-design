@@ -192,22 +192,21 @@ async function scanWorkingTree(ctx: CliContext, base: ManifestFiles): Promise<Ma
 async function runPush(ctx: CliContext): Promise<void> {
   const state = await readState(ctx);
   let base: Manifest;
-  let allowDeletes = true;
   if (state) {
     base = { version: state.baseVersion, files: state.baseFiles };
   } else {
     base = await getManifest(ctx.target, ctx.projectId);
-    allowDeletes = false;
   }
 
   const local = await scanWorkingTree(ctx, base.files);
   let ops = diffManifests(base.files, local);
-  if (!allowDeletes) ops = ops.filter((op) => op.op !== 'delete');
-  // Large files the pull skipped were never materialized locally — their
-  // absence is not a deletion. (A file the agent explicitly `od file get`-ed
-  // and then removed also survives remotely; conservative by design.)
-  const neverMaterialized = new Set((state?.skippedLarge ?? []).map((f) => f.path));
-  ops = ops.filter((op) => !(op.op === 'delete' && neverMaterialized.has(op.path)));
+  // Sandbox pushes are always append-only: never emit delete ops.
+  // If the sandbox was killed before materializing all files (partial pull,
+  // OOM, timeout), absent files look like deletions to diffManifests.
+  // Deleting them would destroy the remote copy permanently. File deletions
+  // are only safe from the daemon side (engine.ts scanAndPush), which has a
+  // stable lifecycle and can verify intent.
+  ops = ops.filter((op) => op.op !== 'delete');
   if (ops.length === 0) {
     emit(ctx, { version: base.version, pushed: 0, deleted: 0 }, `nothing to push (v${base.version})`);
     return;

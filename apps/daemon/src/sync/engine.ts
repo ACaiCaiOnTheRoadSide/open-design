@@ -15,6 +15,7 @@ import {
   checkBlobs,
   getBlobToFile,
   getManifest,
+  getManifestHistory,
   putBlobFromFile,
   submitDiff,
   syncTargetFromEnv,
@@ -299,9 +300,13 @@ export async function flush(projectId: string): Promise<FlushResult> {
  * Local dirty changes are pushed first (implicit flush), so after this the
  * disk, the base state and the remote manifest agree.
  *
- * ifMissing=true is the open-a-project fast path: when the directory already
- * has files it only touches the access clock — cheap enough for the gateway
- * to call on every project-detail GET.
+ * ifMissing=true is the open-a-project fast path: checks the remote manifest
+ * version against the local state version — cheap enough for the gateway to
+ * call on every project-detail GET.
+ *
+ * If blob downloads fail for the current version (e.g. sandbox was killed
+ * before uploading), automatically falls back to the most recent historical
+ * version whose blobs are all available.
  */
 export async function hydrate(projectId: string, opts?: { ifMissing?: boolean }): Promise<HydrateResult> {
   if (!syncEnabled()) return { updated: false, version: 0, reason: 'sync disabled' };
@@ -316,19 +321,24 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
     const dir = projectDirOf(projectId);
 
     if (ifMissing) {
-      let entries: string[] = [];
-      try {
-        entries = await readdir(dir);
-      } catch {
-        // ENOENT → treat as missing
+      // Version-aware check: compare local state version against remote.
+      // A readdir-only check is insufficient — a partial hydrate or file
+      // deletion leaves the directory non-empty but incomplete.
+      const remote = await getManifest(target, projectId);
+      if (state.baseVersion === remote.version && state.baseVersion > 0) {
+        let hasFiles = false;
+        try {
+          const entries = await readdir(dir);
+          hasFiles = entries.length > 0;
+        } catch {
+          // ENOENT
+        }
+        if (hasFiles) {
+          await persistState(projectId);
+          return { updated: false, version: state.baseVersion, reason: 'already present' };
+        }
       }
-      if (entries.length > 0) {
-        await persistState(projectId);
-        return { updated: false, version: state.baseVersion, reason: 'already present' };
-      }
-      // 目录空了但基线非空 = 本地缓存丢了(目录被单独删掉、状态文件幸存)。
-      // 不重置基线的话,下面 remote.version === baseVersion 会误判 up to date,
-      // 目录永远拉不回来。
+      // Version mismatch or empty directory — reset state for full hydration.
       if (state.baseVersion > 0 || Object.keys(state.baseFiles).length > 0) {
         state.baseVersion = 0;
         state.baseFiles = {};
@@ -339,20 +349,58 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
       await scanAndPush(projectId);
     }
 
-    const remote = await getManifest(target, projectId);
+    let remote = await getManifest(target, projectId);
     if (remote.version === state.baseVersion) {
       await persistState(projectId);
       return { updated: false, version: remote.version, reason: 'up to date' };
     }
 
     const localFiles = await scanLocalManifest(projectId);
-    const toFetch = Object.entries(remote.files).filter(([relPath, entry]) => {
+    let toFetch = Object.entries(remote.files).filter(([relPath, entry]) => {
       if (!isValidManifestPath(relPath)) return false;
       return localFiles[relPath]?.sha256 !== entry.sha256;
     });
-    await mapWithConcurrency(toFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
-      await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
-    });
+
+    try {
+      await mapWithConcurrency(toFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
+        await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
+      });
+    } catch (err) {
+      // Blob download failed — try falling back to the previous version.
+      // This happens when a sandbox was killed before uploading its blobs:
+      // the manifest advanced but the referenced blobs don't exist on OSS.
+      console.error(
+        `[sync] hydrate v${remote.version} blob download failed for project ${projectId}: ${
+          err instanceof Error ? err.message : err
+        }; attempting fallback to previous version`,
+      );
+      let fallbackUsed = false;
+      try {
+        const history = await getManifestHistory(target, projectId);
+        const previous = history.find((h) => h.version < remote.version);
+        if (previous && Object.keys(previous.files).length > 0) {
+          const fallbackFetch = Object.entries(previous.files).filter(([relPath, entry]) => {
+            if (!isValidManifestPath(relPath)) return false;
+            return localFiles[relPath]?.sha256 !== entry.sha256;
+          });
+          await mapWithConcurrency(fallbackFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
+            await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
+          });
+          remote = previous;
+          toFetch = fallbackFetch;
+          fallbackUsed = true;
+          console.error(`[sync] fell back to v${previous.version} for project ${projectId}`);
+        }
+      } catch (fallbackErr) {
+        console.error(
+          `[sync] fallback also failed for project ${projectId}: ${
+            fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
+          }`,
+        );
+      }
+      if (!fallbackUsed) throw err;
+    }
+
     // Files the remote manifest dropped: delete locally unless the local copy
     // has unpushed edits (possible only on the ifMissing path, which skips the
     // implicit flush) — never discard local-only work.

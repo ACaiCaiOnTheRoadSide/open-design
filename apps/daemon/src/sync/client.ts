@@ -54,6 +54,27 @@ export async function getManifest(target: SyncTarget, projectId: string): Promis
   return { version: body.version ?? 0, files: body.files ?? {} };
 }
 
+export async function getManifestHistory(target: SyncTarget, projectId: string): Promise<Manifest[]> {
+  const url = `${target.backendUrl}/api/internal/sync/manifest/history?projectId=${encodeURIComponent(projectId)}`;
+  const resp = await fetchWithRetry(url, { headers: authHeaders(target) });
+  if (!resp.ok) throw new Error(`sync manifest/history: HTTP ${resp.status}`);
+  const body = (await resp.json()) as Array<{ version?: number; files?: ManifestFiles }>;
+  return body.map((entry) => ({ version: entry.version ?? 0, files: entry.files ?? {} }));
+}
+
+export async function getManifestVersion(
+  target: SyncTarget,
+  projectId: string,
+  version: number,
+): Promise<Manifest | null> {
+  const url = `${target.backendUrl}/api/internal/sync/manifest/version?projectId=${encodeURIComponent(projectId)}&version=${version}`;
+  const resp = await fetchWithRetry(url, { headers: authHeaders(target) });
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`sync manifest/version: HTTP ${resp.status}`);
+  const body = (await resp.json()) as { version?: number; files?: ManifestFiles };
+  return { version: body.version ?? 0, files: body.files ?? {} };
+}
+
 export async function checkBlobs(
   target: SyncTarget,
   projectId: string,
