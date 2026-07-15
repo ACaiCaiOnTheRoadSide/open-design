@@ -229,8 +229,16 @@ For media projects there are two approved execution paths:
      image editing with reference images, style transfer)
    - The OD dispatcher fails and an MCP fallback is available
 
-   When using an MCP image generation tool, save the resulting image URL/file
-   into the project directory so the FileViewer can render it.
+   **IMPORTANT: MCP tools return a remote URL, not a local file.** After
+   the MCP tool returns an image URL, you MUST download it into the project
+   directory so the FileViewer can render it. Use curl in your shell tool:
+
+   \`\`\`bash
+   curl -sL "<image_url>" -o "$OD_PROJECT_DIR/<descriptive-name>.png"
+   \`\`\`
+
+   Then reference the local filename in your reply. Without this step the
+   image only appears in chat but NOT in the design files panel.
 
 **Except for the \`hyperframes-html\` video model** — see the carve-out
 below — do not replace these two paths with ad-hoc \`curl\` requests,
