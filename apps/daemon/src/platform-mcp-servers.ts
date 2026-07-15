@@ -120,10 +120,12 @@ async function fetchPlatformMcpServers(deps: PlatformMcpDeps): Promise<McpServer
     if (!isValidTransport(entry.transport)) continue;
     const config: McpServerConfig = {
       id: entry.id,
-      label: typeof entry.name === 'string' ? entry.name : undefined,
       transport: entry.transport,
       enabled: entry.enabled !== false,
     };
+    if (typeof entry.name === 'string' && entry.name) {
+      config.label = entry.name;
+    }
     if (entry.transport === 'stdio') {
       if (typeof entry.command !== 'string' || !entry.command) continue;
       config.command = entry.command;
