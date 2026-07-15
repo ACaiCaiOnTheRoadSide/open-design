@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   __resetPlatformDefaultCacheForTests,
+  getPlatformDefaultExtractionConfig,
   getPlatformDefaultProviderConfig,
   type PlatformDefaultDeps,
 } from '../src/platform-default-provider-config.js';
@@ -156,5 +157,64 @@ describe('getPlatformDefaultProviderConfig', () => {
     expect(await a).toBe('{"model":"m"}');
     expect(await b).toBe('{"model":"m"}');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getPlatformDefaultExtractionConfig', () => {
+  afterEach(() => {
+    __resetPlatformDefaultCacheForTests();
+    vi.restoreAllMocks();
+  });
+
+  it('fetches the flat extraction config from its own endpoint', async () => {
+    const { deps, fetchMock } = makeDeps();
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        provider: 'openai',
+        model: 'minimax-m3',
+        baseUrl: 'https://api.minimax.io/v1',
+        apiKey: 'sk-x',
+      }),
+    );
+
+    const cfg = await getPlatformDefaultExtractionConfig(deps);
+
+    expect(cfg).toEqual({
+      provider: 'openai',
+      model: 'minimax-m3',
+      baseUrl: 'https://api.minimax.io/v1',
+      apiKey: 'sk-x',
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://backend:8080/api/internal/agent/default-extraction-config',
+    );
+  });
+
+  it('returns null when provider or apiKey is missing (no default)', async () => {
+    const { deps, fetchMock } = makeDeps();
+    fetchMock.mockResolvedValue(jsonResponse({ provider: '' }));
+    expect(await getPlatformDefaultExtractionConfig(deps)).toBeNull();
+
+    __resetPlatformDefaultCacheForTests();
+    fetchMock.mockResolvedValue(jsonResponse({ provider: 'openai', apiKey: '' }));
+    expect(await getPlatformDefaultExtractionConfig(deps)).toBeNull();
+  });
+
+  it('caches independently of the provider-config slot', async () => {
+    const { deps, fetchMock } = makeDeps();
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith('default-provider-config')
+          ? jsonResponse({ providerConfig: '{"model":"m"}' })
+          : jsonResponse({ provider: 'openai', model: 'minimax-m3', baseUrl: 'b', apiKey: 'k' }),
+      ),
+    );
+
+    const provider = await getPlatformDefaultProviderConfig(deps);
+    const extraction = await getPlatformDefaultExtractionConfig(deps);
+
+    expect(provider).toBe('{"model":"m"}');
+    expect(extraction?.model).toBe('minimax-m3');
+    expect(fetchMock).toHaveBeenCalledTimes(2); // one per distinct endpoint
   });
 });

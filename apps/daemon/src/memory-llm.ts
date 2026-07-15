@@ -61,6 +61,7 @@ import {
   markFailed,
 } from './memory-extractions.js';
 import { resolveProviderConfig } from './media/config.js';
+import { getPlatformDefaultExtractionConfig } from './platform-default-provider-config.js';
 import { AIHUBMIX_APP_CODE } from './integrations/aihubmix.js';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -416,6 +417,37 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider, cha
   }
 
   const envOverrideModel = (process.env.OD_MEMORY_MODEL || '').trim();
+
+  // SaaS/huskbox: with no explicit memory-config override, use the admin's
+  // backend-configured global default model directly. Without this, an opencode
+  // chat (chatProtocol='openai') falls into the local-CLI one-shot path below —
+  // which in the shared deployment has no local opencode binary (runs go through
+  // the huskbox shim) and either fails or burns the shim's own fallback model.
+  // Gated on huskbox mode so local/desktop dev keeps its existing chain. The
+  // admin default is a full chat model (no fast variant), so extraction runs on
+  // it verbatim; OD_MEMORY_MODEL can still override the model name.
+  if (process.env.OD_HUSKBOX_BASE_URL) {
+    try {
+      const platformDefault = await getPlatformDefaultExtractionConfig();
+      if (platformDefault && PROVIDER_DEFAULTS[platformDefault.provider]) {
+        const defaults = PROVIDER_DEFAULTS[platformDefault.provider];
+        return {
+          kind: platformDefault.provider,
+          apiKey: platformDefault.apiKey,
+          model: envOverrideModel || platformDefault.model || defaults.model,
+          baseUrl: platformDefault.baseUrl || defaults.baseUrl,
+          apiVersion: '',
+          credentialSource: 'platform-default',
+        };
+      }
+    } catch (err) {
+      console.warn(
+        '[memory-llm] platform-default extraction config failed',
+        err?.message ?? err,
+      );
+      // Fall through to the existing chain rather than dropping extraction.
+    }
+  }
 
   // Chat-protocol-constrained branch (path 1). Only run when we know
   // which CLI is in use AND it maps to one of the four providers; we
