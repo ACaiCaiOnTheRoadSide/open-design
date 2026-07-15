@@ -6,26 +6,15 @@
  * respects OD_MAX_CONCURRENT_RUNS. The queue survives daemon restarts:
  * pending tasks are cleaned up on boot, stale running tasks are failed.
  *
- * Key design decisions vs the original in-memory gate:
+ * Capacity is decided entirely by PG — there is no in-memory counter.
+ * tryClaimTask() atomically checks `running < limit` inside the UPDATE,
+ * so two concurrent acquire() calls can never both pass the check. This
+ * eliminates the counter-leak class of bugs that plagued the old design
+ * (a DB error after `active += 1` would permanently shrink capacity).
  *
- *  - tryClaimTask(id) targets a SPECIFIC row by id, never grabs "whatever
- *    is oldest". This eliminates the orphan-livelock class of bugs entirely:
- *    pump() only ever touches rows that have a live in-memory waiter.
- *
- *  - `active` is incremented synchronously BEFORE the async tryClaimTask()
- *    await, and rolled back on failure. This prevents the TOCTOU race where
- *    two concurrent acquire() calls both pass `active < limit` before either
- *    increments (Node.js is single-threaded but async code yields at awaits).
- *
- *  - abandon() only cancels 'pending' rows (never 'running'), matching the
- *    old gate's no-op-for-already-slotted contract.
- *
- *  - stop() cancels PG rows for departing waiters so they don't linger as
- *    orphaned 'pending' rows across restarts.
- *
- *  - start() cleans up ALL orphaned pending/stale-running rows from any
- *    previous incarnation (not filtered by WORKER_ID, which embeds pid and
- *    changes on every restart).
+ * The only in-memory state is the `waiters` array, which holds Promise
+ * resolvers for HTTP requests parked behind a full queue. pump() wakes
+ * them when a slot is released or a stale task is recovered.
  */
 
 import os from 'node:os';
@@ -56,7 +45,7 @@ export interface TaskQueueAcquireOptions {
 export interface TaskQueue {
   acquire: (opts: TaskQueueAcquireOptions) => Promise<TaskQueueSlot | null>;
   abandon: (id: string) => void;
-  stats: () => { active: number; queued: number; max: number };
+  stats: () => Promise<{ active: number; queued: number; max: number }>;
   start: () => void;
   stop: () => void;
 }
@@ -85,7 +74,6 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
   const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : 0;
   const unlimited = limit === 0;
 
-  let active = 0;
   const waiters: PendingWaiter[] = [];
 
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -93,6 +81,7 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
   let pumpScheduled = false;
   let stopped = false;
 
+  // Tracks tasks this process owns, for heartbeat only.
   const activeTasks = new Set<string>();
 
   // ---- slot ----
@@ -104,7 +93,6 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
       release: (status: 'completed' | 'failed' | 'canceled' = 'completed', error?: string) => {
         if (released) return;
         released = true;
-        active -= 1;
         activeTasks.delete(taskId);
         finishTask(taskId, status, error).catch(() => {});
         schedulePump();
@@ -156,8 +144,9 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
       `UPDATE task_queue
           SET status = 'running', worker_id = ?, started_at = ?, heartbeat_at = ?
         WHERE id = ? AND status = 'pending'
+          AND (SELECT COUNT(*) FROM task_queue WHERE status = 'running') < ?
         RETURNING id`,
-    ).get(WORKER_ID, now, now, taskId);
+    ).get(WORKER_ID, now, now, taskId, limit);
     return !!row;
   }
 
@@ -179,6 +168,13 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
         WHERE id = ? AND status = 'pending'`,
     ).run(Date.now(), taskId);
     return result.changes > 0;
+  }
+
+  async function countRunning(): Promise<number> {
+    const row = await db.prepare(
+      `SELECT COUNT(*) AS cnt FROM task_queue WHERE status = 'running'`,
+    ).get() as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
   }
 
   // ---- heartbeat ----
@@ -210,6 +206,7 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
     ).run(Date.now(), threshold);
     if (result.changes > 0) {
       console.log(`[task-queue] failed ${result.changes} stale running task(s)`);
+      schedulePump();
     }
   }
 
@@ -241,25 +238,27 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
   async function pump(): Promise<void> {
     if (stopped || unlimited) return;
 
-    while (active < limit && waiters.length > 0) {
+    while (waiters.length > 0) {
       const waiter = waiters[0]!;
-      // Reserve a slot synchronously BEFORE the await — prevents TOCTOU.
-      active += 1;
-      const claimed = await tryClaimTask(waiter.id);
+      let claimed: boolean;
+      try {
+        claimed = await tryClaimTask(waiter.id);
+      } catch (err) {
+        console.error('[task-queue] tryClaimTask failed in pump:', (err as Error)?.message ?? err);
+        break;
+      }
       // After the await, abandon() may have removed this waiter.
       if (waiters[0] !== waiter) {
-        active -= 1;
         if (claimed) finishTask(waiter.id, 'canceled').catch(() => {});
         continue;
       }
-      waiters.shift();
-      if (claimed) {
-        activeTasks.add(waiter.id);
-        waiter.resolve(makeSlot(waiter.id));
-      } else {
-        active -= 1;
-        waiter.resolve(null);
+      if (!claimed) {
+        // Queue is full — stop trying, remaining waiters stay parked.
+        break;
       }
+      waiters.shift();
+      activeTasks.add(waiter.id);
+      waiter.resolve(makeSlot(waiter.id));
     }
 
     for (let i = 0; i < waiters.length; i += 1) {
@@ -272,27 +271,24 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
   const acquire = async (opts: TaskQueueAcquireOptions): Promise<TaskQueueSlot | null> => {
     if (unlimited) {
       await insertTask(opts, 'running');
-      active += 1;
       activeTasks.add(opts.id);
       return makeSlot(opts.id);
     }
 
     await insertTask(opts);
 
-    // Fast path: claim immediately if capacity is available.
-    // active is incremented synchronously before the await to prevent TOCTOU.
-    if (active < limit) {
-      active += 1;
+    // Try to claim immediately — the SQL checks capacity atomically.
+    try {
       const claimed = await tryClaimTask(opts.id);
       if (claimed) {
         activeTasks.add(opts.id);
         return makeSlot(opts.id);
       }
-      active -= 1;
-      schedulePump();
-      return null;
+    } catch {
+      // DB error — fall through to queue the waiter.
     }
 
+    // Queue is full (or DB errored). Park the request.
     opts.onQueued?.(waiters.length + 1);
 
     return new Promise<TaskQueueSlot | null>((resolve) => {
@@ -309,8 +305,8 @@ export function createTaskQueue(db: AsyncDb, max: number): TaskQueue {
     schedulePump();
   };
 
-  const stats = (): { active: number; queued: number; max: number } => ({
-    active,
+  const stats = async (): Promise<{ active: number; queued: number; max: number }> => ({
+    active: await countRunning(),
     queued: waiters.length,
     max: limit,
   });
