@@ -418,15 +418,16 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider, cha
 
   const envOverrideModel = (process.env.OD_MEMORY_MODEL || '').trim();
 
-  // SaaS/huskbox: with no explicit memory-config override, use the admin's
-  // backend-configured global default model directly. Without this, an opencode
-  // chat (chatProtocol='openai') falls into the local-CLI one-shot path below —
-  // which in the shared deployment has no local opencode binary (runs go through
-  // the huskbox shim) and either fails or burns the shim's own fallback model.
-  // Gated on huskbox mode so local/desktop dev keeps its existing chain. The
-  // admin default is a full chat model (no fast variant), so extraction runs on
-  // it verbatim; OD_MEMORY_MODEL can still override the model name.
-  if (process.env.OD_HUSKBOX_BASE_URL) {
+  // SaaS: with no explicit memory-config override, use the admin's backend-
+  // configured global default model directly. Without this, an opencode chat
+  // (chatProtocol='openai') falls into the local-CLI one-shot path below —
+  // which in the shared deployment has no local opencode binary and either
+  // fails or spawns a 300s-timeout sandbox just for a tiny extraction call.
+  // Gated on backend presence (OD_BACKEND_URL) so local/desktop dev keeps
+  // its existing chain. The admin default is a full chat model (no fast
+  // variant), so extraction runs on it verbatim; OD_MEMORY_MODEL can still
+  // override the model name.
+  if (process.env.OD_BACKEND_URL) {
     try {
       const platformDefault = await getPlatformDefaultExtractionConfig();
       if (platformDefault && PROVIDER_DEFAULTS[platformDefault.provider]) {
@@ -445,8 +446,10 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider, cha
         '[memory-llm] platform-default extraction config failed',
         err?.message ?? err,
       );
-      // Fall through to the existing chain rather than dropping extraction.
     }
+    // SaaS 模式下只走直连 API,绝不 fallthrough 到 callLocalCli 起容器。
+    // 直连失败(后台未配默认模型 / 网络不通)就放弃本次抽取。
+    return null;
   }
 
   // Chat-protocol-constrained branch (path 1). Only run when we know

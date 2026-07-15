@@ -7193,12 +7193,12 @@ export async function startServer({
       // and the shared deployment leaves the container-level env empty on
       // purpose. Fall back to the admin's global default (fetched from the
       // backend, cached) so those runs land on the configured model instead of
-      // OpenCode's free built-in. Only in huskbox mode: local/desktop dev has no
-      // backend to ask and relies on the env fallback above.
+      // OpenCode's free built-in. Only when a backend is configured: local/
+      // desktop dev has no backend to ask and relies on the env fallback above.
       if (
         !injectedProviderConfig &&
         isOpenCodeContent &&
-        process.env.OD_HUSKBOX_BASE_URL
+        process.env.OD_BACKEND_URL
       ) {
         injectedProviderConfig =
           (await getPlatformDefaultProviderConfig()) ?? undefined;
@@ -7217,13 +7217,13 @@ export async function startServer({
           openCodeProviderConfigOutputLimit(injectedProviderConfig);
       }
       // Safety net: refuse to spawn OpenCode with no configured model in the
-      // shared huskbox deployment. Without this it would silently fall back to
-      // its built-in free model (opencode/big-pickle) and fail opaquely under
+      // shared deployment. Without this it would silently fall back to its
+      // built-in free model (opencode/big-pickle) and fail opaquely under
       // load. See shouldRefuseUnconfiguredOpenCodeModel / errors.ts.
       if (
         shouldRefuseUnconfiguredOpenCodeModel({
           isOpenCode: isOpenCodeContent,
-          huskboxMode: !!process.env.OD_HUSKBOX_BASE_URL,
+          huskboxMode: !!process.env.OD_BACKEND_URL,
           injectedProviderConfig,
         })
       ) {
