@@ -227,7 +227,7 @@ const DAEMON_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json', 'headless', 'serve-web', 'no-open',
 ]);
 const LIBRARY_STRING_FLAGS = new Set(['daemon-url', 'query', 'tag']);
-const LIBRARY_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const LIBRARY_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'body']);
 // `od library …` (OD Library asset registry). Hoisted so the dispatcher can
 // parse flags without hitting a temporal-dead-zone on these sets.
 const LIBRARY_ASSET_STRING_FLAGS = new Set([
@@ -7575,12 +7575,17 @@ async function runLibraryList(name, args) {
     case 'show': {
       const id = rest.find((a) => !a.startsWith('-'));
       if (!id) {
-        console.error(`Usage: od ${name} show <id>`);
+        console.error(`Usage: od ${name} show <id> [--json] [--body]`);
         process.exit(2);
       }
       const resp = await fetch(`${base}${apiPath}/${encodeURIComponent(id)}`);
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
+      if (flags.body) {
+        const body = typeof data?.body === 'string' ? data.body : '';
+        process.stdout.write(body + '\n');
+        return;
+      }
       process.stdout.write(JSON.stringify(data, null, 2) + '\n');
       return;
     }

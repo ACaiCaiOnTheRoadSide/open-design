@@ -5802,6 +5802,27 @@ export async function startServer({
       }
     }
 
+    // Build a lightweight skill catalog for the on-demand pull channel.
+    // Skills already loaded into this turn (primary + ad-hoc) are excluded
+    // — the agent already has their full body. Uses listAllSkills() (only
+    // SKILL_ROOTS) so design templates don't pollute the catalog.
+    let skillCatalog;
+    try {
+      const catalogSkills = await listAllSkills();
+      const activeIds = new Set(
+        [
+          effectiveCanonicalSkillId,
+          ...adHocSkillIds.map((id) => resolveSkillId(id)),
+        ].filter(Boolean),
+      );
+      skillCatalog = catalogSkills
+        .filter((s) => s.id && !activeIds.has(resolveSkillId(s.id)))
+        .filter((s) => typeof s.body === 'string' && s.body.length > 0)
+        .map((s) => ({ id: s.id, description: s.description ?? '' }));
+    } catch {
+      skillCatalog = undefined;
+    }
+
     const prompt = composeSystemPrompt({
       agentId,
       includeCodexImagegenOverride: false,
@@ -5848,6 +5869,7 @@ export async function startServer({
       ...(pluginBlock ? { pluginBlock } : {}),
       ...(activeStageBlocks ? { activeStageBlocks } : {}),
       userInstructions,
+      skillCatalog,
     });
     // The chat handler also needs to know where the active skill lives
     // on disk so it can stage a per-project copy of its side files

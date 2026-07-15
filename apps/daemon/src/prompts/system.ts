@@ -541,6 +541,11 @@ export interface ComposeInput {
   // native tools; text_artifact runs (BYOK/plain) deliver source through
   // assistant-text <artifact> blocks.
   executionProfile?: ExecutionProfile | undefined;
+  // Lightweight skill catalog injected so the agent can pull full
+  // instructions on demand via `od skills show <id> --body`. Each entry
+  // is `{ id, description }`. When absent or empty, the catalog section
+  // is omitted entirely.
+  skillCatalog?: ReadonlyArray<{ id: string; description?: string }> | undefined;
 }
 
 // Fill imageModel/videoModel from the admin-set global default (carried in
@@ -658,6 +663,7 @@ export function composeSystemPrompt({
   projectInstructions,
   mediaExecution,
   executionProfile,
+  skillCatalog,
 }: ComposeInput): string {
   // Fill the media model the project did not pin from the admin-set global
   // default (X-OD-Media-Defaults header → ALS). Only touches imageModel/
@@ -867,6 +873,15 @@ export function composeSystemPrompt({
     const preflight = derivePreflight(skillBody);
     parts.push(
       `\n\n## Active skill${skillName ? ` — ${skillName}` : ''}\n\nFollow this skill's workflow exactly.${preflight}\n\n${skillBody.trim()}`,
+    );
+  }
+
+  if (Array.isArray(skillCatalog) && skillCatalog.length > 0) {
+    const rows = skillCatalog
+      .map((s) => `- \`${s.id}\` — ${s.description ?? ''}`)
+      .join('\n');
+    parts.push(
+      `\n\n## Available skills (on-demand)\n\nThe following skills are installed on this runtime but not loaded into this turn. When your workflow requires one of these skills (e.g. for publishing, deploying, exporting), load its full instructions by running:\n\n\`\`\`bash\n"$OD_NODE_BIN" "$OD_BIN" skills show <id> --body\n\`\`\`\n\nThen follow the loaded instructions exactly.\n\n${rows}`,
     );
   }
 
