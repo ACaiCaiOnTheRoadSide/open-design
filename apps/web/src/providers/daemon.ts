@@ -1186,8 +1186,8 @@ async function consumeDaemonRun({
             const position = Number(event.data.position ?? 0);
             handlers.onConnectionStatus?.(
               position > 1
-                ? `queued — ${position - 1} run(s) ahead`
-                : 'queued — starting next',
+                ? `任务队列拥挤,正在排队(前面还有 ${position - 1} 个任务)`
+                : '任务队列拥挤,正在排队(即将开始)',
             );
             continue;
           }
