@@ -20,7 +20,7 @@ import {
   resolvePluginSnapshot,
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
-import { markDirty } from '../../sync/engine.js';
+import { markDirty, hydrate as hydrateProject } from '../../sync/engine.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
@@ -2226,6 +2226,10 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     try {
       const since = Number(req.query?.since);
       const project = await getProject(db, req.params.id);
+      const meta = project?.metadata as { baseDir?: string } | null | undefined;
+      if (!meta?.baseDir) {
+        await hydrateProject(req.params.id, { ifMissing: true }).catch(() => {});
+      }
       const files = await listFiles(PROJECTS_DIR, req.params.id, {
         since: Number.isFinite(since) ? since : undefined,
         metadata: project?.metadata,
