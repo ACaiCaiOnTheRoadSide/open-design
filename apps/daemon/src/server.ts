@@ -6281,13 +6281,17 @@ export async function startServer({
     // Merge them into the local config — local entries win on id conflict.
     try {
       const platformServers = await getPlatformMcpServers();
+      console.log('[platform-mcp] fetched %d server(s)', platformServers.length);
       if (platformServers.length > 0) {
         const localIds = new Set(externalMcpConfig.servers.map((s) => s.id));
+        let merged = 0;
         for (const ps of platformServers) {
           if (!localIds.has(ps.id)) {
             externalMcpConfig.servers.push(ps);
+            merged++;
           }
         }
+        console.log('[platform-mcp] merged %d new server(s), total %d', merged, externalMcpConfig.servers.length);
       }
     } catch (err) {
       console.warn(
@@ -6863,6 +6867,10 @@ export async function startServer({
     // drive a second close-handler pass that finalizes the run as failed before
     // the retry ever spawns.
     const tearDownAttemptForRetry = () => {
+      // Release the concurrency slot from the failed attempt so it does not
+      // leak when startChatRun acquires a fresh one on retry.
+      run.gateSlot?.release('failed');
+      run.gateSlot = null;
       // Release the previous child's stdio streams before letting the
       // reference drop — see destroyChildStdio for rationale.
       destroyChildStdio(run.child);
@@ -7207,6 +7215,7 @@ export async function startServer({
     const isOpenCodeContent = def.externalMcpInjection === 'opencode-env-content';
     const isMiMoContent = def.externalMcpInjection === 'mimo-env-content';
     if (isOpenCodeContent || isMiMoContent) {
+      console.log('[mcp-config] building %s config, %d enabled MCP server(s)', isOpenCodeContent ? 'opencode' : 'mimo', enabledExternalMcp.length);
       try {
         opencodeConfigContent = buildOpenCodeMcpConfigContent(
           enabledExternalMcp,
@@ -7215,6 +7224,9 @@ export async function startServer({
             allowedDirectories: [effectiveCwd, ...extraAllowedDirs],
           },
         );
+        if (opencodeConfigContent) {
+          console.log('[mcp-config] OPENCODE_CONFIG_CONTENT built, %d chars', opencodeConfigContent.length);
+        }
       } catch (err) {
         console.warn(
           '[mcp-config] failed to build OPENCODE_CONFIG_CONTENT:',
