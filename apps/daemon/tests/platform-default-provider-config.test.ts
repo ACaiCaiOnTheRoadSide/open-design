@@ -24,8 +24,7 @@ function makeDeps(overrides: Partial<PlatformDefaultDeps> = {}): {
   const deps: PlatformDefaultDeps = {
     now: () => clock.t,
     fetchImpl: fetchMock as unknown as typeof fetch,
-    backendUrl: 'http://backend:8080',
-    daemonToken: 'daemon-secret',
+    target: { backendUrl: 'http://backend:8080', apiToken: 'daemon-secret' },
     ...overrides,
   };
   return { deps, fetchMock, clock };
@@ -37,7 +36,7 @@ describe('getPlatformDefaultProviderConfig', () => {
     vi.restoreAllMocks();
   });
 
-  it('fetches the backend endpoint with the daemon bearer token', async () => {
+  it('fetches the backend endpoint with the daemon bearer token and a timeout', async () => {
     const { deps, fetchMock } = makeDeps();
     fetchMock.mockResolvedValue(jsonResponse({ providerConfig: '{"model":"minimax-m3"}' }));
 
@@ -47,7 +46,8 @@ describe('getPlatformDefaultProviderConfig', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://backend:8080/api/internal/agent/default-provider-config');
-    expect(init.headers.Authorization).toBe('Bearer daemon-secret');
+    expect(init.headers.authorization).toBe('Bearer daemon-secret');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('returns null when the backend reports no default configured', async () => {
@@ -80,16 +80,50 @@ describe('getPlatformDefaultProviderConfig', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('retries once on a transport error and succeeds', async () => {
+    const { deps, fetchMock } = makeDeps();
+    fetchMock
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(jsonResponse({ providerConfig: '{"model":"m"}' }));
+
+    expect(await getPlatformDefaultProviderConfig(deps)).toBe('{"model":"m"}');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry on an HTTP error status', async () => {
+    const { deps, fetchMock } = makeDeps();
+    fetchMock.mockResolvedValue(jsonResponse({}, false, 500));
+
+    expect(await getPlatformDefaultProviderConfig(deps)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('serves the last good value when a refresh fails', async () => {
     const { deps, fetchMock, clock } = makeDeps();
     fetchMock.mockResolvedValueOnce(jsonResponse({ providerConfig: '{"model":"good"}' }));
     await getPlatformDefaultProviderConfig(deps);
 
     clock.t += 61_000;
-    fetchMock.mockRejectedValueOnce(new Error('backend down'));
+    fetchMock.mockRejectedValue(new Error('backend down'));
     const cfg = await getPlatformDefaultProviderConfig(deps);
 
     expect(cfg).toBe('{"model":"good"}');
+  });
+
+  it('backs off after a failure: serves stale without re-fetching inside the window', async () => {
+    const { deps, fetchMock, clock } = makeDeps();
+    fetchMock.mockResolvedValueOnce(jsonResponse({ providerConfig: '{"model":"good"}' }));
+    await getPlatformDefaultProviderConfig(deps); // 1 call, cache primed
+
+    clock.t += 61_000; // TTL expired
+    fetchMock.mockRejectedValue(new Error('backend down'));
+    await getPlatformDefaultProviderConfig(deps); // 2 calls (retry), fails, backoff armed
+
+    clock.t += 1_000; // inside FAILURE_BACKOFF_MS
+    const cfg = await getPlatformDefaultProviderConfig(deps); // no new fetch
+    expect(cfg).toBe('{"model":"good"}');
+    // 1 (prime) + 2 (failed refresh: try + retry) = 3, no more during backoff
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('returns null on a cold failure with no cache', async () => {
@@ -99,18 +133,11 @@ describe('getPlatformDefaultProviderConfig', () => {
     expect(await getPlatformDefaultProviderConfig(deps)).toBeNull();
   });
 
-  it('returns null (no fetch) when the backend URL is unset', async () => {
-    const { deps, fetchMock } = makeDeps({ backendUrl: undefined });
+  it('returns null (no fetch) when no backend target is configured', async () => {
+    const { deps, fetchMock } = makeDeps({ target: null });
 
     expect(await getPlatformDefaultProviderConfig(deps)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('treats a non-2xx response as a failure', async () => {
-    const { deps, fetchMock } = makeDeps();
-    fetchMock.mockResolvedValue(jsonResponse({}, false, 500));
-
-    expect(await getPlatformDefaultProviderConfig(deps)).toBeNull();
   });
 
   it('dedupes concurrent cold calls into a single fetch', async () => {
