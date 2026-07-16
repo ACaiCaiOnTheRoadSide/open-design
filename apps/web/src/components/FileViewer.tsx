@@ -74,6 +74,7 @@ import {
   exportProjectAsPdf,
   exportProjectAsPptx,
   exportProjectAsZip,
+  uploadProjectArchiveToOss,
   exportProjectImageDataUrl,
   exportProjectScreenshotPdf,
   copyImageDataUrlToClipboard,
@@ -4536,7 +4537,8 @@ function HtmlViewer({
       | 'markdown'
       | 'template'
       | 'share_link'
-      | 'share_page',
+      | 'share_page'
+      | 'monkeycode',
     fn: () => Promise<unknown> | unknown,
   ) => {
     const requestId = analytics.newRequestId();
@@ -9359,6 +9361,44 @@ function HtmlViewer({
                   >
                     <span className="share-menu-icon"><RemixIcon name="file-code-line" size={15} /></span>
                     <span>{t('fileViewer.exportHtml')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="share-menu-item"
+                    role="menuitem"
+                    data-testid="export-to-monkeycode"
+                    onClick={() => {
+                      setDownloadMenuOpen(false);
+                      fireShareExport('monkeycode', async () => {
+                        setExportToast({ message: t('fileViewer.exportToMonkeycodeLoading'), tone: 'loading' });
+                        try {
+                          const result = await uploadProjectArchiveToOss({
+                            projectId,
+                            filePath: file.name,
+                          });
+                          const prompt = [
+                            t('fileViewer.exportToMonkeycodePromptDownload'),
+                            result.url,
+                            '',
+                            t('fileViewer.exportToMonkeycodePromptDevelop'),
+                          ].join('\n');
+                          const copied = await copyToClipboard(prompt);
+                          if (!copied) {
+                            setExportToast({ message: t('fileViewer.exportToMonkeycodeCopyFailed'), tone: 'error' });
+                            return;
+                          }
+                          setExportToast({ message: t('fileViewer.exportToMonkeycodeCopied'), tone: 'success' });
+                          window.open('https://monkeycode-ai.com/console/tasks', '_blank');
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : t('fileViewer.exportFailed');
+                          setExportToast({ message: msg, tone: 'error' });
+                          throw err;
+                        }
+                      });
+                    }}
+                  >
+                    <span className="share-menu-icon"><RemixIcon name="rocket-line" size={15} /></span>
+                    <span>{t('fileViewer.exportToMonkeycode')}</span>
                   </button>
                   {showMarkdownExport ? (
                     <button

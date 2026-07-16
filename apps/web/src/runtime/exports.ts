@@ -856,6 +856,22 @@ export async function exportProjectAsZip(opts: {
   }
 }
 
+export async function uploadProjectArchiveToOss(opts: {
+  projectId: string;
+  filePath: string;
+}): Promise<{ url: string }> {
+  const root = archiveRootFromFilePath(opts.filePath);
+  const url = `/api/projects/${encodeURIComponent(opts.projectId)}/archive/upload-oss${
+    root ? `?root=${encodeURIComponent(root)}` : ''
+  }`;
+  const resp = await fetch(url, { method: 'POST' });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`upload-oss failed (${resp.status}): ${text.slice(0, 200)}`);
+  }
+  return (await resp.json()) as { url: string };
+}
+
 // Tri-state, mirroring exportProjectImageDataUrl: callers must distinguish a
 // genuinely-unavailable off-screen renderer (no desktop host / 501 / transport
 // failure) — where falling back to the vector/browser PDF is correct — from a

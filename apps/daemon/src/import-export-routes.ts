@@ -2,6 +2,7 @@ import type { Express, Response } from 'express';
 import { PROJECT_EXPORT_MANIFEST_SCHEMA, isExportFormat } from '@open-design/contracts';
 import nodePath from 'node:path';
 import { readFile, rm } from 'node:fs/promises';
+import { postMultipartToBackend } from './media/index.js';
 import type { RouteDeps } from './server-context.js';
 import {
   InlineAssetsLimitError,
@@ -825,6 +826,47 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         res,
         status,
         status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST',
+        String(err?.message || err),
+      );
+    }
+  });
+
+  // Upload project archive to OSS and return a presigned download URL.
+  // Used by the "export to MonkeyCode" flow in the download menu.
+  app.post('/api/projects/:id/archive/upload-oss', async (req, res) => {
+    const backendUrl = process.env.OD_BACKEND_URL;
+    const daemonToken = process.env.OD_API_TOKEN;
+    if (!backendUrl || !daemonToken) {
+      sendApiError(res, 503, 'NOT_CONFIGURED', 'backend URL or daemon token not configured');
+      return;
+    }
+    try {
+      const root = typeof req.query?.root === 'string' ? req.query.root : '';
+      const project = await getProject(db, req.params.id);
+      const { buffer } = await buildProjectArchive(
+        PROJECTS_DIR,
+        req.params.id,
+        root,
+        project?.metadata,
+      );
+
+      const result = await postMultipartToBackend({
+        backendUrl,
+        daemonToken,
+        endpoint: '/api/internal/archive/upload',
+        fields: { projectId: req.params.id },
+        fileName: 'archive.zip',
+        fileContentType: 'application/zip',
+        fileData: buffer,
+      });
+      res.json(result);
+    } catch (err: any) {
+      const code = err && err.code;
+      const status = code === 'ENOENT' || code === 'ENOTDIR' ? 404 : 500;
+      sendApiError(
+        res,
+        status,
+        status === 404 ? 'FILE_NOT_FOUND' : 'UPLOAD_FAILED',
         String(err?.message || err),
       );
     }

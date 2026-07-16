@@ -3089,6 +3089,12 @@ export interface Dict {
   'fileViewer.publishFailed': string;
   'fileViewer.exportZip': string;
   'fileViewer.exportHtml': string;
+  'fileViewer.exportToMonkeycode': string;
+  'fileViewer.exportToMonkeycodeLoading': string;
+  'fileViewer.exportToMonkeycodeCopied': string;
+  'fileViewer.exportToMonkeycodeCopyFailed': string;
+  'fileViewer.exportToMonkeycodePromptDownload': string;
+  'fileViewer.exportToMonkeycodePromptDevelop': string;
   'fileViewer.exportMd': string;
   'fileViewer.exportImage': string;
   'fileViewer.exportPptxImages': string;

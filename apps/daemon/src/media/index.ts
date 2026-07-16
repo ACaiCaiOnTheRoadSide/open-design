@@ -4228,6 +4228,45 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export async function postMultipartToBackend(opts: {
+  backendUrl: string;
+  daemonToken: string;
+  endpoint: string;
+  fields: Record<string, string>;
+  fileName: string;
+  fileContentType?: string;
+  fileData: Buffer;
+}): Promise<Record<string, string>> {
+  const boundary = `----OD${Date.now().toString(36)}`;
+  const parts: Buffer[] = [];
+  for (const [name, value] of Object.entries(opts.fields)) {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+    ));
+  }
+  const contentType = opts.fileContentType || 'application/octet-stream';
+  parts.push(Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${opts.fileName}"\r\nContent-Type: ${contentType}\r\n\r\n`,
+  ));
+  parts.push(opts.fileData);
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  const body = Buffer.concat(parts);
+
+  const resp = await fetch(`${opts.backendUrl.replace(/\/$/, '')}${opts.endpoint}`, {
+    method: 'POST',
+    headers: {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      'authorization': `Bearer ${opts.daemonToken}`,
+    },
+    body,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`backend ${opts.endpoint} ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  return (await resp.json()) as Record<string, string>;
+}
+
 export async function storeMediaToBackend(
   backendUrl: string,
   daemonToken: string,
@@ -4236,33 +4275,12 @@ export async function storeMediaToBackend(
   filePath: string,
 ): Promise<{ key: string; url: string }> {
   const fileBytes = await readFile(filePath);
-  const boundary = `----OD${Date.now().toString(36)}`;
-  const parts: Buffer[] = [];
-  const addField = (name: string, value: string) => {
-    parts.push(Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
-    ));
-  };
-  addField('projectId', projectId);
-  addField('filename', filename);
-  parts.push(Buffer.from(
-    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
-  ));
-  parts.push(fileBytes);
-  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
-  const body = Buffer.concat(parts);
-
-  const resp = await fetch(`${backendUrl.replace(/\/$/, '')}/api/internal/media/store`, {
-    method: 'POST',
-    headers: {
-      'content-type': `multipart/form-data; boundary=${boundary}`,
-      'authorization': `Bearer ${daemonToken}`,
-    },
-    body,
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`backend media store ${resp.status}: ${text.slice(0, 200)}`);
-  }
-  return (await resp.json()) as { key: string; url: string };
+  return postMultipartToBackend({
+    backendUrl,
+    daemonToken,
+    endpoint: '/api/internal/media/store',
+    fields: { projectId, filename },
+    fileName: filename,
+    fileData: fileBytes,
+  }) as Promise<{ key: string; url: string }>;
 }
