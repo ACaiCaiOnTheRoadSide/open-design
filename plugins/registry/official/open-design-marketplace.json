@@ -9,7 +9,7 @@
   },
   "trust": "official",
   "metadata": {
-    "description": "Official Open Design plugin registry seed. The generated public catalog is served from open-design.ai/marketplace.",
+    "description": "Official plugin registry seed. The generated public catalog is served from open-design.ai/marketplace.",
     "version": "0.1.0",
     "generatedFrom": "plugins/_official",
     "bundledPreinstallCount": 414
@@ -6828,7 +6828,7 @@
         "prompt:inject",
         "fs:write"
       ],
-      "description": "Create refreshable, auditable Open Design artifacts backed by connector or local data.\nTrigger when the user asks for live dashboards, refreshable reports, synced views, or reusable data-backed artifacts.",
+      "description": "Create refreshable, auditable artifacts backed by connector or local data.\nTrigger when the user asks for live dashboards, refreshable reports, synced views, or reusable data-backed artifacts.",
       "tags": [
         "example",
         "first-party",
@@ -9726,7 +9726,7 @@
         "fs:read",
         "fs:write"
       ],
-      "description": "Baseline Refine plugin for improving an existing Open Design artifact with a focused critique, small patch, and handoff summary.",
+      "description": "Baseline Refine plugin for improving an existing artifact with a focused critique, small patch, and handoff summary.",
       "tags": [
         "scenario",
         "first-party",
@@ -9834,7 +9834,7 @@
         "fs:read",
         "fs:write"
       ],
-      "description": "Starter downstream export plugin for turning an accepted Open Design artifact into a Next.js App Router handoff.",
+      "description": "Starter downstream export plugin for turning an accepted artifact into a Next.js App Router handoff.",
       "tags": [
         "scenario",
         "first-party",
@@ -9862,7 +9862,7 @@
       "capabilitiesSummary": [
         "prompt:inject"
       ],
-      "description": "Guided scenario for creating a local Open Design plugin folder that can be added to My plugins.",
+      "description": "Guided scenario for creating a local plugin folder that can be added to My plugins.",
       "tags": [
         "scenario",
         "first-party",
@@ -9872,38 +9872,6 @@
       "homepage": "https://github.com/nexu-io/open-design/tree/main/plugins/_official/scenarios/od-plugin-authoring",
       "license": "MIT",
       "mode": "scenario",
-      "taskKind": "new-generation"
-    },
-    {
-      "name": "open-design/od-plugin-contribute-open-design",
-      "title": "Contribute Plugin to Open Design",
-      "version": "0.1.0",
-      "source": "github:nexu-io/open-design@main/plugins/_official/examples/od-plugin-contribute-open-design",
-      "publisher": {
-        "id": "open-design",
-        "url": "https://open-design.ai"
-      },
-      "capabilitiesSummary": [
-        "fs:read",
-        "fs:write",
-        "bash",
-        "subprocess",
-        "network"
-      ],
-      "description": "Opens a pull request that adds a local Open Design plugin to the Open Design community catalog using the GitHub CLI.",
-      "tags": [
-        "share",
-        "github",
-        "github-pr",
-        "pull-request",
-        "open-design",
-        "plugin-authoring",
-        "community-plugin",
-        "first-party"
-      ],
-      "homepage": "https://github.com/nexu-io/open-design/tree/main/plugins/_official/examples/od-plugin-contribute-open-design",
-      "license": "MIT",
-      "mode": "utility",
       "taskKind": "new-generation"
     },
     {
@@ -9922,7 +9890,7 @@
         "subprocess",
         "network"
       ],
-      "description": "Creates a public GitHub repository for a local Open Design plugin using the GitHub CLI.",
+      "description": "Creates a public GitHub repository for a local plugin using the GitHub CLI.",
       "tags": [
         "share",
         "publish",
@@ -9952,7 +9920,7 @@
         "fs:read",
         "fs:write"
       ],
-      "description": "Starter downstream export plugin for turning an accepted Open Design artifact into a React component handoff.",
+      "description": "Starter downstream export plugin for turning an accepted artifact into a React component handoff.",
       "tags": [
         "scenario",
         "first-party",
@@ -10006,7 +9974,7 @@
         "fs:read",
         "fs:write"
       ],
-      "description": "Starter downstream export plugin for turning an accepted Open Design artifact into a Vue 3 single-file component handoff.",
+      "description": "Starter downstream export plugin for turning an accepted artifact into a Vue 3 single-file component handoff.",
       "tags": [
         "scenario",
         "first-party",
@@ -10037,7 +10005,7 @@
         "fs:write",
         "subprocess"
       ],
-      "description": "Extract visual effects, Canvas/WebGL/Shader behavior, and interaction details from a reference website, then rebuild them as an editable Open Design artifact.",
+      "description": "Extract visual effects, Canvas/WebGL/Shader behavior, and interaction details from a reference website, then rebuild them as an editable artifact.",
       "tags": [
         "scenario",
         "first-party",
