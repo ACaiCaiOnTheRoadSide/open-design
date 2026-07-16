@@ -7964,6 +7964,14 @@ function HtmlViewer({
     void (async () => {
       try {
         const queued = await onPublishViaAgent();
+        // 发布计数 beacon:口径="用户发起过发布"(发布委托 agent 异步执行,无可靠
+        // 成功回执),daemon 侧 projects.published_count 自增,后台统计算发布率。
+        // fire-and-forget:失败静默,不影响发布本身。
+        if (queued !== false && projectId) {
+          void fetch(`/api/projects/${encodeURIComponent(projectId)}/publish-events`, {
+            method: 'POST',
+          }).catch(() => {});
+        }
         if (!mountedRef.current) return;
         setExportToast(
           queued === false

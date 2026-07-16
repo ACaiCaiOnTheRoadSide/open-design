@@ -43,6 +43,9 @@ describe('project delete tombstone', () => {
       const bump = await fetch(`${baseUrl}/api/projects/${id}/download-events`, { method: 'POST' });
       expect(bump.status).toBe(200);
     }
+    // 生前发起一次发布:发布计数同样随墓碑保留(后台发布率口径="创建过的项目")。
+    const publishBump = await fetch(`${baseUrl}/api/projects/${id}/publish-events`, { method: 'POST' });
+    expect(publishBump.status).toBe(200);
 
     const resp = await fetch(`${baseUrl}/api/projects/${id}`, { method: 'DELETE' });
     expect(resp.status).toBe(200);
@@ -54,7 +57,7 @@ describe('project delete tombstone', () => {
     const tomb = (await db
       .prepare(
         `SELECT tenant_id AS tenantId, name, created_at AS createdAt, deleted_at AS deletedAt,
-                download_count AS downloadCount
+                download_count AS downloadCount, published_count AS publishedCount
            FROM deleted_projects WHERE id = ?`,
       )
       .get(id)) as
@@ -64,6 +67,7 @@ describe('project delete tombstone', () => {
           createdAt: number | string;
           deletedAt: number | string;
           downloadCount: number | string;
+          publishedCount: number | string;
         }
       | undefined;
     expect(tomb).toBeTruthy();
@@ -73,6 +77,7 @@ describe('project delete tombstone', () => {
     expect(Number(tomb!.createdAt)).toBeGreaterThan(0);
     expect(Number(tomb!.deletedAt)).toBeGreaterThanOrEqual(Number(tomb!.createdAt));
     expect(Number(tomb!.downloadCount)).toBe(2);
+    expect(Number(tomb!.publishedCount)).toBe(1);
   });
 
   it('skips the tombstone for creation-rollback deletes (tombstone:false)', async () => {

@@ -939,7 +939,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { sendApiError, createSseResponse } = ctx.http;
   const { DESIGN_SYSTEMS_DIR, PROJECTS_DIR, SKILLS_DIR, BRANDS_DIR } = ctx.paths;
   const { readAppConfig, writeAppConfig } = ctx.appConfig;
-  const { insertProject, validateLinkedDirs, getProject, getProjectOwnerUnscoped, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount } = ctx.projectStore;
+  const { insertProject, validateLinkedDirs, getProject, getProjectOwnerUnscoped, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount, incrementProjectPublishCount } = ctx.projectStore;
   const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
@@ -1570,6 +1570,20 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const existing = await getProject(db, req.params.id);
       if (!existing) return sendApiError(res, 404, 'NOT_FOUND', 'project not found');
       await incrementProjectDownloadCount(db, req.params.id);
+      return res.json({ ok: true });
+    } catch (err) {
+      return sendApiError(res, 500, 'INTERNAL_ERROR', String(err));
+    }
+  });
+
+  // 项目发布计数 beacon:用户确认「发布到案例墙」时上报一次(口径="发起过发布",
+  // 发布委托 agent 异步执行无可靠成功回执)。后台统计跨 schema 直读
+  // projects.published_count 算发布率。同 download-events 尽力而为语义。
+  app.post('/api/projects/:id/publish-events', async (req, res) => {
+    try {
+      const existing = await getProject(db, req.params.id);
+      if (!existing) return sendApiError(res, 404, 'NOT_FOUND', 'project not found');
+      await incrementProjectPublishCount(db, req.params.id);
       return res.json({ ok: true });
     } catch (err) {
       return sendApiError(res, 500, 'INTERNAL_ERROR', String(err));
