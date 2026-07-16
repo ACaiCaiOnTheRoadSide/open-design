@@ -117,6 +117,7 @@ import { Icon } from './Icon';
 import { RemixIcon } from './RemixIcon';
 import { SocialShareGrid } from './SocialShareGrid';
 import { Toast } from './Toast';
+import { confirm } from './confirm-dialog-host';
 import { PreviewDrawOverlay, type DrawToolbarElement } from './PreviewDrawOverlay';
 import {
   buildBoardCommentAttachments,
@@ -9393,9 +9394,16 @@ function HtmlViewer({
                           const copied = await copyToClipboard(prompt);
                           if (!copied) {
                             setExportToast({ message: t('fileViewer.exportToMonkeycodeCopyFailed'), tone: 'error' });
-                            return;
+                            return 'cancelled';
                           }
-                          setExportToast({ message: t('fileViewer.exportToMonkeycodeCopied'), tone: 'success' });
+                          setExportToast(null);
+                          const go = await confirm({
+                            title: t('fileViewer.exportToMonkeycodeReadyTitle'),
+                            message: t('fileViewer.exportToMonkeycodeReadyMessage'),
+                            confirmLabel: t('fileViewer.exportToMonkeycodeGo'),
+                            cancelLabel: t('fileViewer.exportToMonkeycodeCancel'),
+                          });
+                          if (!go) return 'cancelled';
                           window.open('https://monkeycode-ai.com/console/tasks', '_blank');
                         } catch (err) {
                           const msg = err instanceof Error ? err.message : t('fileViewer.exportFailed');

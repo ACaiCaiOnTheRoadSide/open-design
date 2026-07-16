@@ -3091,10 +3091,13 @@ export interface Dict {
   'fileViewer.exportHtml': string;
   'fileViewer.exportToMonkeycode': string;
   'fileViewer.exportToMonkeycodeLoading': string;
-  'fileViewer.exportToMonkeycodeCopied': string;
   'fileViewer.exportToMonkeycodeCopyFailed': string;
   'fileViewer.exportToMonkeycodePromptDownload': string;
   'fileViewer.exportToMonkeycodePromptDevelop': string;
+  'fileViewer.exportToMonkeycodeReadyTitle': string;
+  'fileViewer.exportToMonkeycodeReadyMessage': string;
+  'fileViewer.exportToMonkeycodeGo': string;
+  'fileViewer.exportToMonkeycodeCancel': string;
   'fileViewer.exportMd': string;
   'fileViewer.exportImage': string;
   'fileViewer.exportPptxImages': string;
