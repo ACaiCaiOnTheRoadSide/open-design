@@ -6598,7 +6598,7 @@ export async function startServer({
     // persistRunEventToAssistantMessage 写 usage 事件与 message_token_usage 时用。
     if (typeof safeModel === 'string' && safeModel) run.resolvedModel = safeModel;
     const agentResumeCtx =
-      agentSupportsSessionResume && run.conversationId
+      agentSupportsSessionResume && run.conversationId && !SANDBOX_RUNTIME.enabled
         ? await resolveAgentResumeContext(db, {
             conversationId: run.conversationId,
             agentId: def.id,
@@ -7061,6 +7061,7 @@ export async function startServer({
           : agentResumeCtx.newSessionId;
       const resumableFailure =
         result === 'failed' &&
+        !SANDBOX_RUNTIME.enabled &&
         def.resumesSessionViaCli === true &&
         !!run.conversationId &&
         !!liveSessionId &&
@@ -7622,7 +7623,7 @@ export async function startServer({
     }
 
     let persistDeliveredAgentSessionState = async () => {};
-    if (def.resumesSessionViaCli === true && run.conversationId) {
+    if (def.resumesSessionViaCli === true && run.conversationId && !SANDBOX_RUNTIME.enabled) {
       let persisted = false;
       persistDeliveredAgentSessionState = async () => {
         if (persisted) return;
@@ -9533,7 +9534,7 @@ export async function startServer({
       // another conversation in the same cwd cannot inherit this history.
       if (acpSession && typeof acpSession.getLastSessionPath === 'function') {
         const sessionPath = acpSession.getLastSessionPath();
-        if (status === 'succeeded' && def.streamFormat === 'pi-rpc') {
+        if (status === 'succeeded' && def.streamFormat === 'pi-rpc' && !SANDBOX_RUNTIME.enabled) {
           await persistCapturedAgentSession(db, {
             conversationId: run.conversationId,
             agentId: def.id,
@@ -9553,6 +9554,7 @@ export async function startServer({
       if (
         def.resumesSessionViaAcpLoad === true &&
         status === 'succeeded' &&
+        !SANDBOX_RUNTIME.enabled &&
         acpSession &&
         typeof acpSession.getDurableSessionId === 'function'
       ) {
