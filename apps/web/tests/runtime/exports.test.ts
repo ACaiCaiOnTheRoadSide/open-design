@@ -5,6 +5,8 @@ import {
   archiveRootFromFilePath,
   buildDesignHandoffContent,
   buildDesignManifestContent,
+  buildMonkeycodeTaskUrl,
+  MONKEYCODE_TASKS_URL,
   downloadImageDataUrl,
   buildSandboxedPreviewDocument,
   downloadDesignSystemArchive,
@@ -1437,5 +1439,35 @@ describe('exportAsImage', () => {
     expect(showSaveFilePicker).not.toHaveBeenCalled();
     expect(target?.method).toBe('download');
     expect(target?.filename).toBe('My-Design.png');
+  });
+});
+
+describe('buildMonkeycodeTaskUrl (prompt handoff via URL fragment)', () => {
+  const decodeFragment = (url: string): string => {
+    const encoded = url.split('#od-task=')[1] ?? '';
+    const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  };
+
+  it('round-trips a CJK + URL prompt through base64url', () => {
+    const prompt = '请先从以下链接下载设计产物 ZIP 包：\nhttps://oss.example.com/a.zip?sig=x%2By\n\n然后开发。';
+    const url = buildMonkeycodeTaskUrl(prompt);
+    expect(url).not.toBeNull();
+    expect(url!.startsWith(`${MONKEYCODE_TASKS_URL}#od-task=`)).toBe(true);
+    expect(decodeFragment(url!)).toBe(prompt);
+  });
+
+  it('emits only URL-safe fragment characters (no +, /, =)', () => {
+    // 0xfb-ish byte patterns force '+' and '/' in plain base64.
+    const url = buildMonkeycodeTaskUrl('参数>>>???~~~û߿');
+    expect(url).not.toBeNull();
+    const fragment = url!.split('#od-task=')[1]!;
+    expect(fragment).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it('falls back to null when the encoded URL exceeds the browser-safe cap', () => {
+    expect(buildMonkeycodeTaskUrl('设'.repeat(120_000))).toBeNull();
   });
 });

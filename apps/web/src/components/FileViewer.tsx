@@ -75,6 +75,8 @@ import {
   exportProjectAsPptx,
   exportProjectAsZip,
   uploadProjectArchiveToOss,
+  buildMonkeycodeTaskUrl,
+  MONKEYCODE_TASKS_URL,
   exportProjectImageDataUrl,
   exportProjectScreenshotPdf,
   copyImageDataUrlToClipboard,
@@ -118,6 +120,7 @@ import { RemixIcon } from './RemixIcon';
 import { SocialShareGrid } from './SocialShareGrid';
 import { Toast } from './Toast';
 import { confirm } from './confirm-dialog-host';
+import { MonkeycodeExportDialog } from './MonkeycodeExportDialog';
 import { PreviewDrawOverlay, type DrawToolbarElement } from './PreviewDrawOverlay';
 import {
   buildBoardCommentAttachments,
@@ -5180,6 +5183,20 @@ function HtmlViewer({
     { message: string; tone: 'default' | 'success' | 'error' | 'loading' } | null
   >(null);
   const [shareLinkFeedback, setShareLinkFeedback] = useState<'copied' | 'failed' | null>(null);
+  // "导入到 MonkeyCode"的提示词编辑弹窗:命令式 await,确认返回编辑后的提示词,
+  // 取消返回 null(与 confirm-dialog-host 同一模式,但要回传文本所以本地持有)。
+  const [monkeycodePrompt, setMonkeycodePrompt] = useState<string | null>(null);
+  const monkeycodeResolveRef = useRef<((edited: string | null) => void) | null>(null);
+  const requestMonkeycodePrompt = (prompt: string) =>
+    new Promise<string | null>((resolve) => {
+      monkeycodeResolveRef.current = resolve;
+      setMonkeycodePrompt(prompt);
+    });
+  const settleMonkeycodePrompt = (edited: string | null) => {
+    monkeycodeResolveRef.current?.(edited);
+    monkeycodeResolveRef.current = null;
+    setMonkeycodePrompt(null);
+  };
   const [shareGuideToast, setShareGuideToast] = useState<string | null>(null);
   const [selectedSideCommentIds, setSelectedSideCommentIds] = useState<Set<string>>(() => new Set());
   const [commentSidePanelCollapsed, setCommentSidePanelCollapsed] = useState(false);
@@ -9391,20 +9408,18 @@ function HtmlViewer({
                             '',
                             t('fileViewer.exportToMonkeycodePromptDevelop'),
                           ].join('\n');
-                          const copied = await copyToClipboard(prompt);
-                          if (!copied) {
-                            setExportToast({ message: t('fileViewer.exportToMonkeycodeCopyFailed'), tone: 'error' });
-                            return 'cancelled';
-                          }
                           setExportToast(null);
-                          const go = await confirm({
-                            title: t('fileViewer.exportToMonkeycodeReadyTitle'),
-                            message: t('fileViewer.exportToMonkeycodeReadyMessage'),
-                            confirmLabel: t('fileViewer.exportToMonkeycodeGo'),
-                            cancelLabel: t('fileViewer.exportToMonkeycodeCancel'),
-                          });
-                          if (!go) return 'cancelled';
-                          window.open('https://monkeycode-ai.com/console/tasks', '_blank');
+                          const edited = await requestMonkeycodePrompt(prompt);
+                          if (edited == null) return 'cancelled';
+                          // 剪贴板是兜底(未登录 MonkeyCode 时锚点会丢),失败不阻断:
+                          // 锚点预填仍是主通道。
+                          await copyToClipboard(edited);
+                          // 提示词经 URL 锚点带往 MonkeyCode,由其任务页解码预填;
+                          // 超长(理论上不可能)时退回纯剪贴板流程。
+                          window.open(
+                            buildMonkeycodeTaskUrl(edited) ?? MONKEYCODE_TASKS_URL,
+                            '_blank',
+                          );
                         } catch (err) {
                           const msg = err instanceof Error ? err.message : t('fileViewer.exportFailed');
                           setExportToast({ message: msg, tone: 'error' });
@@ -9665,6 +9680,20 @@ function HtmlViewer({
                       ttlMs={exportToast.tone === 'loading' ? 60000 : 2200}
                       placement="top"
                       onDismiss={() => setExportToast(null)}
+                    />,
+                    document.body,
+                  )
+                : null}
+              {/* 同样 portal 到 <body>:预览面板的 transform 会把 fixed 定位的
+                  modal-backdrop 圈进自己的包含块。条件渲染保持 SSR 安全
+                  (portal 不能出现在服务端渲染里),与上面的 exportToast 一致。 */}
+              {monkeycodePrompt != null
+                ? createPortal(
+                    <MonkeycodeExportDialog
+                      open
+                      prompt={monkeycodePrompt}
+                      onConfirm={(edited) => settleMonkeycodePrompt(edited)}
+                      onCancel={() => settleMonkeycodePrompt(null)}
                     />,
                     document.body,
                   )

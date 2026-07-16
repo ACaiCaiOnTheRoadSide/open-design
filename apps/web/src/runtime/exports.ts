@@ -856,6 +856,28 @@ export async function exportProjectAsZip(opts: {
   }
 }
 
+export const MONKEYCODE_TASKS_URL = 'https://monkeycode-ai.com/console/tasks';
+
+// Fragments never reach any server, so the only hard limit is the browser's
+// own URL cap (~2MB in Chromium). Stay far below it; past this we fall back
+// to the clipboard-only flow instead of risking a browser-side failure.
+const MONKEYCODE_TASK_URL_MAX = 100_000;
+
+// The prompt rides in the URL fragment as `#od-task=<base64url(utf8)>`:
+// fragments never leave the browser, so the prompt (and its presigned OSS
+// link) stays out of MonkeyCode's server/access logs. The tasks page decodes
+// it client-side and pre-fills the task input; clipboard copy remains the
+// fallback for users not yet signed in to MonkeyCode.
+// Returns null when the encoded URL would exceed the browser-safe cap.
+export function buildMonkeycodeTaskUrl(prompt: string): string | null {
+  const bytes = new TextEncoder().encode(prompt);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const url = `${MONKEYCODE_TASKS_URL}#od-task=${encoded}`;
+  return url.length > MONKEYCODE_TASK_URL_MAX ? null : url;
+}
+
 export async function uploadProjectArchiveToOss(opts: {
   projectId: string;
   filePath: string;
