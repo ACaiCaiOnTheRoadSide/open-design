@@ -232,6 +232,21 @@ async function scanAndPush(projectId: string): Promise<Manifest> {
   state.lastAccessAt = Date.now();
   rt.dirty = false;
 
+  // Cold-cache guard: base v0 with a non-empty remote manifest means this
+  // disk never held the project (pod rebuild or eviction lost the state
+  // file) and a write raced ahead of any hydrate. Pushing from that state
+  // would eventually read "never downloaded" as "locally deleted" and emit
+  // destructive deletes — reconcile from the remote first so the diff below
+  // runs against a base the disk truly matches. Local-only files survive the
+  // pull (empty baseFiles → nothing qualifies for deletion) and are pushed
+  // as ordinary puts right after.
+  if (state.baseVersion === 0) {
+    const remote = await getManifest(target, projectId);
+    if (remote.version > 0) {
+      await pullRemoteLocked(projectId, target, state, remote);
+    }
+  }
+
   const localFiles = await scanLocalManifest(projectId);
   const base: Manifest = { version: state.baseVersion, files: state.baseFiles };
   const ops = diffManifests(base.files, localFiles);
@@ -243,16 +258,43 @@ async function scanAndPush(projectId: string): Promise<Manifest> {
     await uploadMissingBlobs(target, projectId, ops);
     const result = await submitDiff(target, projectId, base, ops);
     state.baseVersion = result.version;
-    state.baseFiles = result.files;
+    state.baseFiles = retainAccountableBase(result.files, base.files, localFiles);
     await persistState(projectId);
     console.error(
       `[sync] pushed ${result.committedOps.length}/${ops.length} ops for project ${projectId} (v${result.version})`,
     );
+    if (Object.keys(state.baseFiles).length !== Object.keys(result.files).length) {
+      // The conflict rebase accepted files this disk never held; materialize
+      // them now so the directory, the base and the remote agree again. The
+      // base version is already current, so the pull must be forced.
+      await pullRemoteLocked(projectId, target, state, undefined, { force: true });
+    }
     return { version: state.baseVersion, files: state.baseFiles };
   } catch (err) {
     rt.dirty = true; // keep dirty so the next flush/debounce retries
     throw err;
   }
+}
+
+/**
+ * A base entry may only claim files this disk can account for: present in
+ * the local scan or carried over from the previous base. A conflict-rebased
+ * commit adopts the server's full file map, which can reference files never
+ * downloaded here (cold cache, concurrent sandbox round-end); keeping those
+ * in the base would make the next scan read "never downloaded" as "locally
+ * deleted" and push destructive deletes. Dropped entries leave the remote
+ * files untouched — a diff never mentions files absent from its base.
+ */
+function retainAccountableBase(
+  accepted: ManifestFiles,
+  previousBase: ManifestFiles,
+  localFiles: ManifestFiles,
+): ManifestFiles {
+  const out: ManifestFiles = {};
+  for (const [relPath, entry] of Object.entries(accepted)) {
+    if (relPath in localFiles || relPath in previousBase) out[relPath] = entry;
+  }
+  return out;
 }
 
 /**
@@ -351,92 +393,112 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
       await scanAndPush(projectId);
     }
 
-    const remote = await getManifest(target, projectId);
-    if (remote.version === state.baseVersion) {
-      await persistState(projectId);
-      return { updated: false, version: remote.version, reason: 'up to date' };
-    }
-
-    const localFiles = await scanLocalManifest(projectId);
-    let toFetch = Object.entries(remote.files).filter(([relPath, entry]) => {
-      if (!isValidManifestPath(relPath)) return false;
-      return localFiles[relPath]?.sha256 !== entry.sha256;
-    });
-
-    let activeRemote = remote;
-    try {
-      await mapWithConcurrency(toFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
-        await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
-      });
-    } catch (err) {
-      // Blob download failed — try falling back to the previous version.
-      // This happens when a sandbox was killed before uploading its blobs:
-      // the manifest advanced but the referenced blobs don't exist on OSS.
-      console.error(
-        `[sync] hydrate v${remote.version} blob download failed for project ${projectId}: ${
-          err instanceof Error ? err.message : err
-        }; attempting fallback to previous version`,
-      );
-      let fallbackUsed = false;
-      try {
-        const history = await getManifestHistory(target, projectId);
-        const previous = history.find((h) => h.version < remote.version);
-        if (previous && Object.keys(previous.files).length > 0) {
-          // Re-scan disk after the partial download so we correctly diff
-          // against what's actually on disk, not the stale pre-download snapshot.
-          const currentDisk = await scanLocalManifest(projectId);
-          const fallbackFetch = Object.entries(previous.files).filter(([relPath, entry]) => {
-            if (!isValidManifestPath(relPath)) return false;
-            return currentDisk[relPath]?.sha256 !== entry.sha256;
-          });
-          await mapWithConcurrency(fallbackFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
-            await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
-          });
-          // Clean up orphaned files from the partial v(N) download that are
-          // not in the fallback version.
-          for (const relPath of Object.keys(currentDisk)) {
-            if (relPath in previous.files) continue;
-            if (relPath in localFiles) continue; // pre-existing file, not from failed download
-            await rm(path.join(dir, relPath), { force: true }).catch(() => {});
-          }
-          activeRemote = previous;
-          fallbackUsed = true;
-          console.error(`[sync] fell back to v${previous.version} for project ${projectId}`);
-        }
-      } catch (fallbackErr) {
-        console.error(
-          `[sync] fallback also failed for project ${projectId}: ${
-            fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
-          }`,
-        );
-      }
-      if (!fallbackUsed) throw err;
-    }
-
-    // Files the remote manifest dropped: delete locally unless the local copy
-    // has unpushed edits (possible only on the ifMissing path, which skips the
-    // implicit flush) — never discard local-only work.
-    for (const relPath of Object.keys(localFiles)) {
-      if (relPath in activeRemote.files) continue;
-      const basedOn = state.baseFiles[relPath];
-      if (basedOn && localFiles[relPath]?.sha256 === basedOn.sha256) {
-        await rm(path.join(dir, relPath), { force: true }).catch(() => {});
-        delete state.hashCache[relPath];
-      }
-    }
-    // Downloaded files now carry the manifest's mtime; refresh the cache from
-    // disk so the next scan does not re-hash everything.
-    const stats = await walkProjectFiles(dir);
-    for (const [relPath, entry] of Object.entries(activeRemote.files)) {
-      const st = stats.get(relPath);
-      if (st) state.hashCache[relPath] = { size: st.size, mtimeMs: st.mtimeMs, sha256: entry.sha256 };
-    }
-    state.baseVersion = activeRemote.version;
-    state.baseFiles = activeRemote.files;
-    await persistState(projectId);
-    console.error(`[sync] hydrated project ${projectId} to v${activeRemote.version}`);
-    return { updated: true, version: remote.version };
+    return pullRemoteLocked(projectId, target, state);
   });
+}
+
+/**
+ * The pull half of hydrate: reconcile the local directory with the remote
+ * manifest. Must already run on the project chain (hydrate and the cold-cache
+ * guard in scanAndPush call it there). Pass `prefetchedRemote` when the
+ * caller just fetched the manifest to save the round trip. `force` skips the
+ * version-equality short-circuit — needed when the base version is already
+ * current but the directory is known to be missing files (conflict-adopted
+ * entries retained on the server but never downloaded here).
+ */
+async function pullRemoteLocked(
+  projectId: string,
+  target: SyncTarget,
+  state: ProjectSyncState,
+  prefetchedRemote?: Manifest,
+  opts?: { force?: boolean },
+): Promise<HydrateResult> {
+  const dir = projectDirOf(projectId);
+  const remote = prefetchedRemote ?? (await getManifest(target, projectId));
+  if (!opts?.force && remote.version === state.baseVersion) {
+    await persistState(projectId);
+    return { updated: false, version: remote.version, reason: 'up to date' };
+  }
+
+  const localFiles = await scanLocalManifest(projectId);
+  const toFetch = Object.entries(remote.files).filter(([relPath, entry]) => {
+    if (!isValidManifestPath(relPath)) return false;
+    return localFiles[relPath]?.sha256 !== entry.sha256;
+  });
+
+  let activeRemote = remote;
+  try {
+    await mapWithConcurrency(toFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
+      await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
+    });
+  } catch (err) {
+    // Blob download failed — try falling back to the previous version.
+    // This happens when a sandbox was killed before uploading its blobs:
+    // the manifest advanced but the referenced blobs don't exist on OSS.
+    console.error(
+      `[sync] hydrate v${remote.version} blob download failed for project ${projectId}: ${
+        err instanceof Error ? err.message : err
+      }; attempting fallback to previous version`,
+    );
+    let fallbackUsed = false;
+    try {
+      const history = await getManifestHistory(target, projectId);
+      const previous = history.find((h) => h.version < remote.version);
+      if (previous && Object.keys(previous.files).length > 0) {
+        // Re-scan disk after the partial download so we correctly diff
+        // against what's actually on disk, not the stale pre-download snapshot.
+        const currentDisk = await scanLocalManifest(projectId);
+        const fallbackFetch = Object.entries(previous.files).filter(([relPath, entry]) => {
+          if (!isValidManifestPath(relPath)) return false;
+          return currentDisk[relPath]?.sha256 !== entry.sha256;
+        });
+        await mapWithConcurrency(fallbackFetch, BLOB_TRANSFER_CONCURRENCY, async ([relPath, entry]) => {
+          await getBlobToFile(target, projectId, entry.sha256, path.join(dir, relPath), entry.mtime);
+        });
+        // Clean up orphaned files from the partial v(N) download that are
+        // not in the fallback version.
+        for (const relPath of Object.keys(currentDisk)) {
+          if (relPath in previous.files) continue;
+          if (relPath in localFiles) continue; // pre-existing file, not from failed download
+          await rm(path.join(dir, relPath), { force: true }).catch(() => {});
+        }
+        activeRemote = previous;
+        fallbackUsed = true;
+        console.error(`[sync] fell back to v${previous.version} for project ${projectId}`);
+      }
+    } catch (fallbackErr) {
+      console.error(
+        `[sync] fallback also failed for project ${projectId}: ${
+          fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
+        }`,
+      );
+    }
+    if (!fallbackUsed) throw err;
+  }
+
+  // Files the remote manifest dropped: delete locally unless the local copy
+  // has unpushed edits (possible only on the ifMissing path, which skips the
+  // implicit flush) — never discard local-only work.
+  for (const relPath of Object.keys(localFiles)) {
+    if (relPath in activeRemote.files) continue;
+    const basedOn = state.baseFiles[relPath];
+    if (basedOn && localFiles[relPath]?.sha256 === basedOn.sha256) {
+      await rm(path.join(dir, relPath), { force: true }).catch(() => {});
+      delete state.hashCache[relPath];
+    }
+  }
+  // Downloaded files now carry the manifest's mtime; refresh the cache from
+  // disk so the next scan does not re-hash everything.
+  const stats = await walkProjectFiles(dir);
+  for (const [relPath, entry] of Object.entries(activeRemote.files)) {
+    const st = stats.get(relPath);
+    if (st) state.hashCache[relPath] = { size: st.size, mtimeMs: st.mtimeMs, sha256: entry.sha256 };
+  }
+  state.baseVersion = activeRemote.version;
+  state.baseFiles = activeRemote.files;
+  await persistState(projectId);
+  console.error(`[sync] hydrated project ${projectId} to v${activeRemote.version}`);
+  return { updated: true, version: remote.version };
 }
 
 /**

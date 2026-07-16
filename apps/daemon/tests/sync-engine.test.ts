@@ -155,6 +155,75 @@ describe('sync engine', () => {
     );
   });
 
+  // 冷缓存写路径事故复现(2026-07-16 c264f832):pod 重建后项目目录与 sync
+  // state 全空,agent spawn 先写文件(种技能)再 flush。第一次 push 撞 CAS 冲突
+  // 后把远端完整清单收编为本地 base,但磁盘上并没有那些文件;第二次 flush 的
+  // diff 就把"从未下载"当成"本地已删除",推 delete 清空远端 manifest。
+  describe('cold-cache write path', () => {
+    it('flush on a never-hydrated project must not wipe the remote manifest', async () => {
+      const p = 'proj-cold-write';
+      const html = '<html>user-design</html>';
+      const js = 'console.log(1)';
+      backend.blobs.set(sha(html), Buffer.from(html));
+      backend.blobs.set(sha(js), Buffer.from(js));
+      backend.manifests.set(p, {
+        version: 1,
+        files: {
+          'index.html': { sha256: sha(html), size: html.length, mtime: 1_730_000_000_000 },
+          'app.js': { sha256: sha(js), size: js.length, mtime: 1_730_000_000_000 },
+        },
+      });
+
+      // Pod rebuild: no project dir, no state file. The agent spawn seeds a
+      // skill file and flushes (pre-run barrier) before any hydrate ran.
+      await fsp.mkdir(join(projectsDir, p, '.od-skills'), { recursive: true });
+      await fsp.writeFile(join(projectsDir, p, '.od-skills', 'SKILL.md'), '# seed');
+      await engine.flush(p);
+
+      // The agent keeps writing; the next debounced push follows.
+      await fsp.writeFile(join(projectsDir, p, 'notes.md'), 'wip');
+      await engine.flush(p);
+
+      const remote = backend.manifests.get(p)!;
+      expect(remote.files['index.html']).toBeDefined();
+      expect(remote.files['app.js']).toBeDefined();
+      expect(remote.files['.od-skills/SKILL.md']).toBeDefined();
+      expect(remote.files['notes.md']).toBeDefined();
+      // The cold guard also materializes the remote files locally.
+      await expect(fsp.readFile(join(projectsDir, p, 'index.html'), 'utf8')).resolves.toBe(html);
+    });
+
+    it('a conflict-rebased push must not adopt never-downloaded files into the base', async () => {
+      const p = 'proj-conflict-adopt';
+      await fsp.mkdir(join(projectsDir, p), { recursive: true });
+      await fsp.writeFile(join(projectsDir, p, 'a.txt'), 'aaa');
+      await engine.flush(p); // v1, synced baseline
+
+      // A sandbox commits v2 remotely, adding a file this daemon never saw.
+      const bin = 'sandbox-bytes';
+      backend.blobs.set(sha(bin), Buffer.from(bin));
+      const current = backend.manifests.get(p)!;
+      backend.manifests.set(p, {
+        version: current.version + 1,
+        files: {
+          ...current.files,
+          'sandbox.bin': { sha256: sha(bin), size: bin.length, mtime: 1_730_000_000_000 },
+        },
+      });
+
+      // Daemon-side write → stale base → 409 → rebase commit.
+      await fsp.writeFile(join(projectsDir, p, 'b.txt'), 'bbb');
+      await engine.flush(p);
+      // Another write + flush: the diff must not read the adopted-but-absent
+      // sandbox.bin as a local deletion.
+      await fsp.writeFile(join(projectsDir, p, 'c.txt'), 'ccc');
+      await engine.flush(p);
+
+      expect(backend.manifests.get(p)!.files['sandbox.bin']).toBeDefined();
+      await expect(fsp.readFile(join(projectsDir, p, 'sandbox.bin'), 'utf8')).resolves.toBe(bin);
+    });
+  });
+
   it('markDirty on an imported (baseDir) project is ignored', async () => {
     engine.markDirty('proj-imported', { baseDir: '/home/user/own-folder' });
     // No runtime chain work should have been scheduled; flushing finds an
