@@ -860,13 +860,11 @@ const MONKEYCODE_DEFAULT_BASE_URL = 'https://monkeycode-ai.com';
 export const MONKEYCODE_TASKS_URL = `${MONKEYCODE_DEFAULT_BASE_URL}/console/tasks`;
 
 // SaaS backend provides the MonkeyCode base URL via /api/v1/site-config
-// (different per environment). Fetched once and cached; standalone mode
-// (no backend) falls back to the public default silently.
+// (different per environment). Fired at module load so the result is cached
+// long before the user clicks export. Standalone mode (no backend) 404s
+// silently and falls back to the public default.
 let _monkeycodeBaseUrl: string | undefined;
-let _siteConfigFetched = false;
-function ensureSiteConfig(): void {
-  if (_siteConfigFetched) return;
-  _siteConfigFetched = true;
+if (typeof window !== 'undefined') {
   fetch('/api/v1/site-config')
     .then(r => r.ok ? r.json() : null)
     .then(d => {
@@ -896,7 +894,6 @@ const MONKEYCODE_TASK_URL_MAX = 100_000;
 // fallback for users not yet signed in to MonkeyCode.
 // Returns null when the encoded URL would exceed the browser-safe cap.
 export function buildMonkeycodeTaskUrl(prompt: string): string | null {
-  ensureSiteConfig();
   const tasksUrl = resolveMonkeycodeTasksUrl();
   const bytes = new TextEncoder().encode(prompt);
   let binary = '';
