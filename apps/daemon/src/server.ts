@@ -3524,6 +3524,102 @@ export interface DaemonRuntimeContext {
   source?: string;
 }
 
+// Re-install plugins whose files are gone but whose row survived.
+//
+// An install writes to two places with different lifetimes: the folder under
+// `<dataDir>/plugins/<id>` and the `installed_plugins` row. On k8s the data dir
+// is an emptyDir, so a pod restart wipes the folders while the row lives on in
+// shared PG. The result is not "plugin missing" but worse: the gallery still
+// lists the card (from the row) and every read 404s (`fsPath` points at
+// nothing). Project design files solve the same emptyDir problem with lazy
+// restore on open; plugins had no equivalent, so do it eagerly at boot.
+//
+// The row already carries what a re-install needs (`source`), so this is a
+// replay, not a guess. Local-folder sources are skipped: their bytes lived on
+// the same wiped disk, so there is nothing to fetch. Failures only warn — a
+// broken plugin must never stop the daemon from booting.
+async function rehydrateInstalledPlugins(db) {
+  let installed;
+  try {
+    installed = await listInstalledPlugins(db);
+  } catch (err) {
+    console.warn(`[plugins] rehydrate: cannot list installed plugins: ${err?.message ?? err}`);
+    return;
+  }
+
+  const missing = [];
+  for (const plugin of installed) {
+    if (!plugin.fsPath) continue;
+    // Bundled plugins ship inside the image, so their files are never wiped.
+    if (plugin.sourceKind === 'bundled') continue;
+    if (!isPathWithin(PLUGIN_REGISTRY_ROOTS.userPluginsRoot, plugin.fsPath)) continue;
+    try {
+      await fs.promises.access(plugin.fsPath);
+    } catch {
+      missing.push(plugin);
+    }
+  }
+
+  if (missing.length === 0) return;
+
+  const refetchable = missing.filter((p) => p.sourceKind === 'github' || p.sourceKind === 'https');
+  const stranded = missing.filter((p) => !refetchable.includes(p));
+  if (stranded.length > 0) {
+    console.warn(
+      `[plugins] rehydrate: ${stranded.length} plugin(s) lost their files and cannot be refetched ` +
+        `(source is a local path): ${stranded.map((p) => p.id).join(', ')}`,
+    );
+  }
+  if (refetchable.length === 0) return;
+
+  console.log(`[plugins] rehydrate: refetching ${refetchable.length} plugin(s) with missing files`);
+  let ok = 0;
+  for (const plugin of refetchable) {
+    // Carry the row's provenance back in so a replay reproduces the original
+    // record instead of a bare re-install that drops marketplace lineage.
+    // `trust` is deliberately absent: the installer recomputes it from
+    // sourceKind, so the same source yields the same tier.
+    const replay = async () => {
+      for await (const ev of installPlugin(db, {
+        source: plugin.source,
+        roots: PLUGIN_REGISTRY_ROOTS,
+        sourceMarketplaceId: plugin.sourceMarketplaceId,
+        sourceMarketplaceEntryName: plugin.sourceMarketplaceEntryName,
+        sourceMarketplaceEntryVersion: plugin.sourceMarketplaceEntryVersion,
+        marketplaceTrust: plugin.marketplaceTrust,
+        resolvedSource: plugin.resolvedSource,
+        resolvedRef: plugin.resolvedRef,
+        manifestDigest: plugin.manifestDigest,
+        archiveIntegrity: plugin.archiveIntegrity,
+        lockfilePath: PLUGIN_LOCKFILE_PATH,
+      })) {
+        if (ev.kind === 'success') return true;
+        if (ev.kind === 'error') {
+          console.warn(`[plugins] rehydrate ${plugin.id} failed: ${ev.message}`);
+          return false;
+        }
+      }
+      return false;
+    };
+    try {
+      // installPlugin has no timeout of its own; without this race one wedged
+      // tarball fetch would stall every plugin queued behind it forever.
+      const done = await Promise.race([
+        replay(),
+        new Promise((resolve) => setTimeout(() => resolve('timeout'), 120_000)),
+      ]);
+      if (done === 'timeout') {
+        console.warn(`[plugins] rehydrate ${plugin.id} timed out after 120s, moving on`);
+      } else if (done) {
+        ok++;
+      }
+    } catch (err) {
+      console.warn(`[plugins] rehydrate ${plugin.id} threw: ${err?.message ?? err}`);
+    }
+  }
+  console.log(`[plugins] rehydrate: restored ${ok}/${refetchable.length} plugin(s)`);
+}
+
 export interface StartServerOptions {
   desktopArtifactExporter?: DesktopArtifactExporter | null;
   desktopPdfExporter?: DesktopPdfExporter | null;
@@ -3990,6 +4086,17 @@ export async function startServer({
   } catch (err) {
     console.warn(`[plugins] bundled registration failed: ${(err)?.message ?? err}`);
   }
+
+  // Deliberately NOT awaited: rehydrate reaches out to GitHub, and a slow or
+  // unreachable network must never hold up `app.listen`. If it did, the
+  // readiness probe would kill the pod, the restart would wipe the emptyDir
+  // again, and the boot would re-enter the same stall — a self-inflicted
+  // crash loop. Running it in the background degrades gracefully instead:
+  // the gallery serves bundled plugins immediately and the refetched ones
+  // appear as they land.
+  void rehydrateInstalledPlugins(db).catch((err) => {
+    console.warn(`[plugins] rehydrate crashed: ${err?.message ?? err}`);
+  });
 
   try {
     const seedDirs = await fs.promises.readdir(PLUGIN_REGISTRY_DIR, { withFileTypes: true }).catch((err) => {
