@@ -858,6 +858,10 @@ export async function exportProjectAsZip(opts: {
 
 export const MONKEYCODE_TASKS_URL = 'https://monkeycode-ai.com/console/tasks';
 
+// MonkeyCode 任务输入框的内容上限(其 MAX_TASK_CONTENT_LENGTH,UTF-16 单元)。
+// 接收端超出会静默截断,所以发送端编辑框用 maxLength 在源头挡住。
+export const MONKEYCODE_TASK_CONTENT_MAX = 10_000;
+
 // Fragments never reach any server, so the only hard limit is the browser's
 // own URL cap (~2MB in Chromium). Stay far below it; past this we fall back
 // to the clipboard-only flow instead of risking a browser-side failure.

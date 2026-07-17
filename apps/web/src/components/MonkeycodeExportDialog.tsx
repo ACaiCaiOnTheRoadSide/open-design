@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Button, Textarea } from '@open-design/components';
 import { useT } from '../i18n';
 import { modalOverlay, modalContent } from '../motion';
+import { MONKEYCODE_TASK_CONTENT_MAX } from '../runtime/exports';
 
 // "导入到 MonkeyCode 开发"的确认弹窗:展示即将带往 MonkeyCode 的开发提示词,
 // 用户可在跳转前直接编辑。确认后调用方负责复制剪贴板(兜底)并携带编辑后的
@@ -63,6 +64,7 @@ export function MonkeycodeExportDialog({ open, prompt, onConfirm, onCancel }: Pr
               value={value}
               onChange={(event) => setValue(event.target.value)}
               autoFocus
+              maxLength={MONKEYCODE_TASK_CONTENT_MAX}
               data-testid="monkeycode-prompt-editor"
             />
             <div className="row">

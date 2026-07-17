@@ -119,7 +119,6 @@ import { Icon } from './Icon';
 import { RemixIcon } from './RemixIcon';
 import { SocialShareGrid } from './SocialShareGrid';
 import { Toast } from './Toast';
-import { confirm } from './confirm-dialog-host';
 import { MonkeycodeExportDialog } from './MonkeycodeExportDialog';
 import { PreviewDrawOverlay, type DrawToolbarElement } from './PreviewDrawOverlay';
 import {
@@ -5189,6 +5188,8 @@ function HtmlViewer({
   const monkeycodeResolveRef = useRef<((edited: string | null) => void) | null>(null);
   const requestMonkeycodePrompt = (prompt: string) =>
     new Promise<string | null>((resolve) => {
+      // 覆盖前先按"取消"结清上一个 pending 的 resolver,避免其 await 永久挂起。
+      monkeycodeResolveRef.current?.(null);
       monkeycodeResolveRef.current = resolve;
       setMonkeycodePrompt(prompt);
     });
@@ -5197,6 +5198,19 @@ function HtmlViewer({
     monkeycodeResolveRef.current = null;
     setMonkeycodePrompt(null);
   };
+  useEffect(
+    () => () => {
+      // 弹窗开着时组件被卸载(路由切换/agent 替换当前文件):按"取消"结清,
+      // 否则 fireShareExport 的 await 永不结束,该次导出的结果遥测永久缺失。
+      monkeycodeResolveRef.current?.(null);
+      monkeycodeResolveRef.current = null;
+    },
+    [],
+  );
+  // SSR 渲染不支持 portal,首帧后才挂载;弹窗此后常挂载靠 open 驱动,
+  // 关闭时退场动画才播得出来(卸载式关闭会直接跳过退场,见 AGENTS.md)。
+  const [monkeycodePortalReady, setMonkeycodePortalReady] = useState(false);
+  useEffect(() => setMonkeycodePortalReady(true), []);
   const [shareGuideToast, setShareGuideToast] = useState<string | null>(null);
   const [selectedSideCommentIds, setSelectedSideCommentIds] = useState<Set<string>>(() => new Set());
   const [commentSidePanelCollapsed, setCommentSidePanelCollapsed] = useState(false);
@@ -9411,15 +9425,31 @@ function HtmlViewer({
                           setExportToast(null);
                           const edited = await requestMonkeycodePrompt(prompt);
                           if (edited == null) return 'cancelled';
-                          // 剪贴板是兜底(未登录 MonkeyCode 时锚点会丢),失败不阻断:
-                          // 锚点预填仍是主通道。
-                          await copyToClipboard(edited);
-                          // 提示词经 URL 锚点带往 MonkeyCode,由其任务页解码预填;
-                          // 超长(理论上不可能)时退回纯剪贴板流程。
-                          window.open(
+                          // window.open 必须紧跟确认点击:Safari 的瞬时用户激活会被
+                          // 之后的异步剪贴板写入消耗,先开窗再复制。弹窗被拦截时
+                          // window.open 返回 null 而非抛错,必须显式检查。
+                          const opened = window.open(
                             buildMonkeycodeTaskUrl(edited) ?? MONKEYCODE_TASKS_URL,
                             '_blank',
                           );
+                          // 剪贴板是兜底(未登录 MonkeyCode 时锚点会丢),失败不阻断
+                          // 锚点主通道,但要让用户知道"备份"没成。
+                          const copied = await copyToClipboard(edited);
+                          if (!opened && !copied) {
+                            // 两条通道全失败:提示词(含 OSS 链接)一份都没送出去。
+                            throw new Error(t('fileViewer.exportToMonkeycodeOpenFailed'));
+                          }
+                          if (!opened) {
+                            setExportToast({
+                              message: t('fileViewer.exportToMonkeycodePopupBlocked'),
+                              tone: 'error',
+                            });
+                          } else if (!copied) {
+                            setExportToast({
+                              message: t('fileViewer.exportToMonkeycodeCopyFailed'),
+                              tone: 'error',
+                            });
+                          }
                         } catch (err) {
                           const msg = err instanceof Error ? err.message : t('fileViewer.exportFailed');
                           setExportToast({ message: msg, tone: 'error' });
@@ -9685,13 +9715,13 @@ function HtmlViewer({
                   )
                 : null}
               {/* 同样 portal 到 <body>:预览面板的 transform 会把 fixed 定位的
-                  modal-backdrop 圈进自己的包含块。条件渲染保持 SSR 安全
-                  (portal 不能出现在服务端渲染里),与上面的 exportToast 一致。 */}
-              {monkeycodePrompt != null
+                  modal-backdrop 圈进自己的包含块。portal 门控保证 SSR 安全,
+                  客户端常挂载由 open 驱动,退场动画不被卸载吞掉。 */}
+              {monkeycodePortalReady
                 ? createPortal(
                     <MonkeycodeExportDialog
-                      open
-                      prompt={monkeycodePrompt}
+                      open={monkeycodePrompt != null}
+                      prompt={monkeycodePrompt ?? ''}
                       onConfirm={(edited) => settleMonkeycodePrompt(edited)}
                       onCancel={() => settleMonkeycodePrompt(null)}
                     />,

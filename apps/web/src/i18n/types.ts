@@ -3095,6 +3095,9 @@ export interface Dict {
   'fileViewer.exportToMonkeycodePromptDevelop': string;
   'fileViewer.exportToMonkeycodeEditTitle': string;
   'fileViewer.exportToMonkeycodeEditHint': string;
+  'fileViewer.exportToMonkeycodeCopyFailed': string;
+  'fileViewer.exportToMonkeycodePopupBlocked': string;
+  'fileViewer.exportToMonkeycodeOpenFailed': string;
   'fileViewer.exportToMonkeycodeGo': string;
   'fileViewer.exportToMonkeycodeCancel': string;
   'fileViewer.exportMd': string;
