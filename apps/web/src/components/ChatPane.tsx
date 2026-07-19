@@ -523,6 +523,8 @@ interface Props {
   composerPlaceholder?: string;
   // Focus the right-hand Questions tab from the chat banner.
   onOpenQuestions?: (request?: QuestionFormOpenRequest) => void;
+  // User clicked a design reference card — send the selection text as a message.
+  onSelectDesignReference?: (text: string) => void;
   onContinueRemainingTasks?: (assistantMessage: ChatMessage, todos: TodoItem[]) => void;
   onAssistantFeedback?: (assistantMessage: ChatMessage, change: ChatMessageFeedbackChange) => void;
   // Client-side confirm for a brand-browser-assist od-card: read the unblocked
@@ -744,6 +746,7 @@ export function ChatPane({
   initialDraft,
   composerPlaceholder,
   onOpenQuestions,
+  onSelectDesignReference,
   onContinueRemainingTasks,
   onAssistantFeedback,
   onBrandBrowserAssistConfirm,
@@ -2404,6 +2407,7 @@ export function ChatPane({
                 forkingMessageId={forkingMessageId}
                 t={t}
                 onOpenQuestions={onOpenQuestions}
+                onSelectDesignReference={onSelectDesignReference}
                 scrollContainerRef={logRef}
               />
               {displayError ? (
@@ -2800,6 +2804,7 @@ function ChatRows({
   forkingMessageId,
   t,
   onOpenQuestions,
+  onSelectDesignReference,
   scrollContainerRef,
   fallbackAgentId,
 }: {
@@ -2850,6 +2855,7 @@ function ChatRows({
   forkingMessageId?: string | null;
   t: TranslateFn;
   onOpenQuestions?: (request?: QuestionFormOpenRequest) => void;
+  onSelectDesignReference?: (text: string) => void;
   scrollContainerRef: MutableRefObject<HTMLDivElement | null>;
   // App's effective agent id (from config), used as the role-icon fallback for
   // messages that carry no agent of their own.
@@ -2946,6 +2952,7 @@ function ChatRows({
         suppressDirectionForms={hasActiveDesignSystem}
         hasDesignSystemContext={hasActiveDesignSystem || !!activeDesignSystem}
         onOpenQuestions={onOpenQuestions}
+        onSelectDesignReference={onSelectDesignReference}
         onBrandBrowserAssistConfirm={
           onBrandBrowserAssistConfirm
             ? (card) => assistantCallbacksRef.current.onBrandBrowserAssistConfirm?.(card)

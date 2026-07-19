@@ -37,6 +37,13 @@ import {
   stripTrailingOpenOdCard,
   type OdCard,
 } from "@open-design/contracts";
+import {
+  splitOnDesignReferences,
+  stripTrailingOpenDesignReferences,
+  DESIGN_REF_SELECTION_RE,
+  type DesignReferences,
+} from "../artifacts/design-references";
+import { DesignReferencesGrid } from "./DesignReferencesGrid";
 import { OdCardView, type BrandBrowserAssistConfirm } from "./OdCard";
 import { parseSubmittedAnswers } from "./QuestionForm";
 import { splitStreamingArtifact, stripArtifact, stripRecoveredHtmlFallbackForDisplay } from "../artifacts/strip";
@@ -315,6 +322,7 @@ interface Props {
   // there (Claude-Design style) instead of inline; this assistant message
   // shows a banner that focuses the tab on click.
   onOpenQuestions?: (request?: QuestionFormOpenRequest) => void;
+  onSelectDesignReference?: (text: string) => void;
   onContinueRemainingTasks?: (todos: TodoItem[]) => void;
   onForkFromMessage?: () => void;
   forking?: boolean;
@@ -439,6 +447,7 @@ function AssistantMessageImpl({
   errorCardOwnerId = null,
   nextUserContent,
   onOpenQuestions,
+  onSelectDesignReference,
   onContinueRemainingTasks,
   onForkFromMessage,
   forking = false,
@@ -681,6 +690,7 @@ function AssistantMessageImpl({
                 nextUserContent={nextUserContent}
                 suppressDirectionForms={suppressDirectionForms}
                 onOpenQuestions={onOpenQuestions}
+                onSelectDesignReference={onSelectDesignReference}
                 projectId={projectId}
                 conversationId={conversationId}
                 runId={message.runId ?? null}
@@ -2024,6 +2034,7 @@ function ProseBlock({
   nextUserContent,
   suppressDirectionForms,
   onOpenQuestions,
+  onSelectDesignReference,
   projectId,
   conversationId,
   runId,
@@ -2044,6 +2055,7 @@ function ProseBlock({
   runId?: string | null;
   projectFileNames?: Set<string>;
   onOpenQuestions?: (request?: QuestionFormOpenRequest) => void;
+  onSelectDesignReference?: (text: string) => void;
   onRequestOpenFile?: (name: string) => void;
   onBrandBrowserAssistConfirm?: BrandBrowserAssistConfirm;
 }) {
@@ -2062,7 +2074,8 @@ function ProseBlock({
     if (!(isLastAssistant && streaming)) return { text: cleaned, hadOpenForm: false };
     const form = stripTrailingOpenQuestionForm(cleaned);
     const card = stripTrailingOpenOdCard(form.text);
-    return { text: card.text, hadOpenForm: form.hadOpenForm };
+    const refs = stripTrailingOpenDesignReferences(card.text);
+    return { text: refs.text, hadOpenForm: form.hadOpenForm };
   }, [cleaned, isLastAssistant, streaming]);
   // While an `<artifact type="text/html">` is still streaming (no closing tag
   // yet), surface its body in a live code panel instead of leaking the raw
@@ -2097,6 +2110,7 @@ function ProseBlock({
     | { key: string; kind: "reminder"; text: string }
     | { key: string; kind: "form"; form: QuestionForm }
     | { key: string; kind: "od-card"; card: OdCard }
+    | { key: string; kind: "design-references"; refs: DesignReferences }
     | { key: string; kind: "suppressed-direction" };
   const renderable = segments.flatMap((seg, idx): Renderable[] => {
     if (seg.kind === "form") {
@@ -2111,11 +2125,17 @@ function ProseBlock({
         return [{ key: `c-${idx}-${c}`, kind: "od-card", card: cardSeg.card }];
       }
       if (cardSeg.text.trim().length === 0) return [];
-      return splitSystemReminders(cardSeg.text).map((s, j) => ({
-        key: `t-${idx}-${c}-${j}`,
-        kind: s.kind,
-        text: s.text,
-      }));
+      return splitOnDesignReferences(cardSeg.text).flatMap((refSeg, r): Renderable[] => {
+        if (refSeg.kind === "design-references") {
+          return [{ key: `dr-${idx}-${c}-${r}`, kind: "design-references", refs: refSeg.refs }];
+        }
+        if (refSeg.text.trim().length === 0) return [];
+        return splitSystemReminders(refSeg.text).map((s, j) => ({
+          key: `t-${idx}-${c}-${r}-${j}`,
+          kind: s.kind,
+          text: s.text,
+        }));
+      });
     });
   });
   if (renderable.length === 0 && !live) return null;
@@ -2145,6 +2165,19 @@ function ProseBlock({
                 assistantMessageId,
                 seg.key,
               ].join(":")}
+            />
+          );
+        }
+        if (seg.kind === "design-references") {
+          const alreadySelected = nextUserContent?.match(DESIGN_REF_SELECTION_RE)?.[1]?.trim() ?? null;
+          return (
+            <DesignReferencesGrid
+              key={seg.key}
+              refs={seg.refs}
+              projectId={projectId}
+              onSelect={onSelectDesignReference}
+              selectedId={alreadySelected}
+              disabled={!onSelectDesignReference}
             />
           );
         }

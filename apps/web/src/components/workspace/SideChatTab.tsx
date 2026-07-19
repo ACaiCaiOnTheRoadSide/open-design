@@ -123,6 +123,11 @@ export function SideChatTab({
       ? activeConversationChat
       : null;
 
+  const handleSelectDesignReference = (text: string) => {
+    const send = controlledChat?.onSend ?? chat.onSend;
+    send(text, [], []);
+  };
+
   return (
     <div className={styles.sideChat} data-testid="side-chat-tab">
       <div className={styles.banner} data-testid="side-chat-context-banner">
@@ -150,6 +155,7 @@ export function SideChatTab({
           projectFileNames={projectFileNames}
           onEnsureProject={async () => projectId}
           onSend={controlledChat?.onSend ?? chat.onSend}
+          onSelectDesignReference={handleSelectDesignReference}
           onRetry={controlledChat?.onRetry ?? chat.onRetry}
           onStop={controlledChat?.onStop ?? chat.onStop}
           onAssistantFeedback={controlledChat?.onAssistantFeedback}

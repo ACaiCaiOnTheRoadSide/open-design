@@ -5198,6 +5198,14 @@ export function ProjectView({
     [currentConversationActionDisabled, handleSend],
   );
 
+  const handleSelectDesignReference = useCallback(
+    (text: string) => {
+      if (currentConversationActionDisabled) return;
+      void handleSend(text, [], []);
+    },
+    [currentConversationActionDisabled, handleSend],
+  );
+
   // Image export for runtimes without an off-screen renderer: hand the capture
   // to the project agent, which runs the html-to-image skill (headless
   // Chromium, full-page / whole-deck) and writes the image into the project
@@ -6849,6 +6857,7 @@ export function ProjectView({
               forceStreamingMessageIds={forceStreamingPluginMessageIds}
               initialDraft={chatInitialDraft}
               onOpenQuestions={openQuestionsTab}
+              onSelectDesignReference={handleSelectDesignReference}
               onContinueRemainingTasks={handleContinueRemainingTasks}
               onAssistantFeedback={handleAssistantFeedback}
               onArtifactShare={handleArtifactShare}

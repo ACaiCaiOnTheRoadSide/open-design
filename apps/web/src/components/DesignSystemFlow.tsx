@@ -2531,6 +2531,9 @@ export function DesignSystemDetailView({
             onSend={(prompt, attachments, commentAttachments) => {
               void sendProjectChatMessage(prompt, attachments, commentAttachments);
             }}
+            onSelectDesignReference={(text) => {
+              void sendProjectChatMessage(text, [], []);
+            }}
             onStop={stopProjectChat}
             initialDraft={chatSeed?.text}
             composerPlaceholder="Follow-up action: use AI extraction to refine this system. Longer run; updates land here."

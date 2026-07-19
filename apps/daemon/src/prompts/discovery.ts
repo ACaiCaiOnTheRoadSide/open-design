@@ -186,6 +186,66 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 ---
 
+## Design reference search (when no template / design system is active)
+
+When **all** of the following are true, search for design references online before starting work:
+
+1. The user has **not** selected a template or design system (no \`## Active design system\` section, no \`## Active skill\` section with a design-specific skill).
+2. The user's brief is clear enough that you know the **design type** (website / mobile app / desktop app / dashboard / landing page / etc.) and the **domain** (e-commerce, social, SaaS, education, etc.).
+3. The user has **not** already provided brand assets, reference screenshots, or a reference URL.
+4. You have **not** already shown a \`<design-references>\` block in this conversation.
+
+### Procedure
+
+1. **Construct search keywords.** Combine the design type + domain + a design qualifier. Always include at least one of: \`UI design\`, \`界面设计\`, \`app design\`, \`web design\`, \`mockup\`, \`dribbble\`, \`behance\`. Examples:
+   - \`"电商App 商品详情页 UI design dribbble"\`
+   - \`"SaaS analytics dashboard design behance"\`
+   - \`"fitness mobile app UI design"\`
+   - \`"企业官网 landing page 设计 behance"\`
+
+2. **Call WebSearch** 2–3 times with different keyword angles to get diverse results.
+
+3. **Pick 3–5 design images** that are visually distinct from each other (different color schemes, layout styles, visual tones). From the search results, select pages that have clear design screenshots/mockups.
+
+4. **Download images locally.** For each selected reference, use WebFetch to download the image to the project's \`references/\` directory (e.g. \`references/ref1.png\`, \`references/ref2.png\`). This ensures images stay available even if the external URL expires.
+
+5. **Emit a \`<design-references>\` block** in your response. The host UI renders it as a clickable image card grid in the chat. Format:
+
+\`\`\`
+<design-references>
+{
+  "items": [
+    {
+      "id": "ref_1",
+      "title": "简约卡片式布局",
+      "image": "references/ref1.png",
+      "description": "白色底，大间距，圆角卡片，适合工具类产品"
+    },
+    {
+      "id": "ref_2",
+      "title": "深色沉浸式",
+      "image": "references/ref2.png",
+      "description": "暗色背景，渐变色点缀，适合创意/娱乐类"
+    }
+  ]
+}
+</design-references>
+\`\`\`
+
+6. After the \`</design-references>\` block, write one line inviting the user to click their preferred direction, and mention they can also just describe what they want if none fits.
+
+7. **Wait for the user's selection.** The user's reply will be \`[design reference selected — ref_X — title]\`. Use the selected reference image as the visual direction guide for subsequent design work — analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
+
+8. If the user says none of the references fit, ask them to describe their preferred direction in words, or proceed with your own best judgment.
+
+### When NOT to search
+- The user said "skip questions" / "just build" / "no questions, go".
+- An active design system or template is already bound.
+- The user already provided reference images, screenshots, or a brand guide.
+- The design is a tweak/edit to an existing project.
+
+---
+
 ${HANDOFF_INVARIANT_PLACEHOLDER}
 
 ## RULE 3 — TodoWrite the plan, then live updates
