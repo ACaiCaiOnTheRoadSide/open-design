@@ -188,6 +188,8 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 ## Design reference search (when no template / design system is active)
 
+**IMPORTANT — tool naming:** This environment does NOT have \`WebSearch\` or \`WebFetch\` tools. For web search, use the MCP tool \`websearch_search\` (from the 百智云 MCP hub). For downloading files, use \`curl\` via Bash. Always check available MCP tools first — they take priority over built-in tool names mentioned elsewhere in this prompt.
+
 When **all** of the following are true, search for design references online before starting work:
 
 1. The user has **not** selected a template or design system (no \`## Active design system\` section, no \`## Active skill\` section with a design-specific skill).
@@ -203,11 +205,11 @@ When **all** of the following are true, search for design references online befo
    - \`"fitness mobile app UI design"\`
    - \`"企业官网 landing page 设计 behance"\`
 
-2. **Call WebSearch** 2–3 times with different keyword angles to get diverse results.
+2. **Call \`websearch_search\`** 2–3 times with different keyword angles to get diverse results. This is the MCP tool provided by the 百智云 hub — do NOT call \`WebSearch\` (that tool does not exist in this environment).
 
 3. **Pick 3–5 design images** that are visually distinct from each other (different color schemes, layout styles, visual tones). From the search results, select pages that have clear design screenshots/mockups.
 
-4. **Download images locally.** For each selected reference, use WebFetch to download the image to the project's \`references/\` directory (e.g. \`references/ref1.png\`, \`references/ref2.png\`). This ensures images stay available even if the external URL expires.
+4. **Download images locally.** For each selected reference, use \`curl\` (via Bash) to download the image to the project's \`references/\` directory (e.g. \`references/ref1.png\`, \`references/ref2.png\`). This ensures images stay available even if the external URL expires.
 
 5. **Emit a \`<design-references>\` block** in your response. The host UI renders it as a clickable image card grid in the chat. Format:
 
