@@ -68,10 +68,16 @@ if [ -z "$BROWSER" ] && [ -f /etc/alpine-release ]; then
         exit 1
       }
     else
-      BUNDLE_URL="https://github.com/ACaiCaiOnTheRoadSide/ai-design-ppt/releases/download/chromium-alpine3.20-x86_64/chromium-alpine3.20-x86_64.tar.gz"
+      BUNDLE_URL_GITHUB="https://github.com/ACaiCaiOnTheRoadSide/ai-design-ppt/releases/download/chromium-alpine3.20-x86_64/chromium-alpine3.20-x86_64.tar.gz"
       BUNDLE_SHA256="140e35183c490e21caeb239cff54ec2fbb4caf89a8310f31877b86161c5ccdb4"
+      # Prefer fetching from the daemon (internal network, no GitHub dependency).
+      # OD_DAEMON_URL is injected by the sandbox bootstrap; fall back to GitHub
+      # when the daemon endpoint is unavailable (local dev, non-sandboxed runs).
+      BUNDLE_URL="${OD_DAEMON_URL:+${OD_DAEMON_URL}/api/chromium-bundle.tar.gz}"
+      if [ -z "$BUNDLE_URL" ]; then BUNDLE_URL="$BUNDLE_URL_GITHUB"; fi
       # -C - resumes a partial file left by an interrupted earlier run.
-      curl -fsSL --retry 3 -C - -o "$WORKDIR/chromium-bundle.tar.gz" "$BUNDLE_URL"
+      curl -fsSL --retry 3 -C - -o "$WORKDIR/chromium-bundle.tar.gz" "$BUNDLE_URL" || \
+        curl -fsSL --retry 3 -C - -o "$WORKDIR/chromium-bundle.tar.gz" "$BUNDLE_URL_GITHUB"
       got="$(sha256sum "$WORKDIR/chromium-bundle.tar.gz" | cut -d' ' -f1)"
       [ "$got" = "$BUNDLE_SHA256" ] || {
         rm -f "$WORKDIR/chromium-bundle.tar.gz"

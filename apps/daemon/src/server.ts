@@ -4177,6 +4177,19 @@ export async function startServer({
     res.sendFile(bundlePath);
   });
 
+  // Chromium bundle for huskbox sandboxes: baked into the daemon image at
+  // build time; this endpoint serves it so sandboxes fetch from the daemon
+  // (internal network) instead of reaching GitHub at runtime.
+  app.get('/api/chromium-bundle.tar.gz', (_req, res) => {
+    const bundlePath = path.join(PROJECT_ROOT, 'data', 'chromium-bundle.tar.gz');
+    if (!fs.existsSync(bundlePath)) {
+      res.status(404).json({ error: 'chromium bundle not available' });
+      return;
+    }
+    res.type('application/gzip');
+    res.sendFile(bundlePath);
+  });
+
 
   // Manifest-based reconcile: pull remote manifest diffs into the daemon
   // disk. No presigned URL needed — the daemon reaches the backend blob
