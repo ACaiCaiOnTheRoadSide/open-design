@@ -557,9 +557,10 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
       if (memoryConfig.chatExtractionEnabled === false) {
         return res.json({ changed: [], attemptedLLM: false });
       }
+      const projectId = typeof body.projectId === 'string' ? body.projectId : undefined;
       const changed = hasAssistant
         ? []
-        : await extractFromMessage(RUNTIME_DATA_DIR, userMessage);
+        : await extractFromMessage(RUNTIME_DATA_DIR, userMessage, projectId);
       // BYOK chat config — only forwarded by the web app for API-mode
       // chats. We strip the surface to the five fields pickProvider()
       // actually consumes and validate the provider against the four
@@ -600,6 +601,7 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
                 projectRoot: PROJECT_ROOT,
                 chatAgentId: null,
                 chatProvider,
+                projectId: projectId ?? null,
               },
             ),
           )
@@ -621,9 +623,10 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
   // BYOK turn and passes the result into `composeSystemPrompt`'s
   // `memoryBody` field — without this, the Memory tab is a no-op for
   // BYOK users even though the UI saves model/index/entries for them.
-  app.get('/api/memory/system-prompt', async (_req, res) => {
+  app.get('/api/memory/system-prompt', async (req, res) => {
     try {
-      const body = await composeMemoryBody(RUNTIME_DATA_DIR);
+      const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+      const body = await composeMemoryBody(RUNTIME_DATA_DIR, projectId);
       res.json({ body });
     } catch (err) {
       res.status(500).json({ error: errorMessage(err) });

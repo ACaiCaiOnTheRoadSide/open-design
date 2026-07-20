@@ -94,7 +94,7 @@ A fact is NOT worth remembering when ANY of these is true:
 Output STRICT JSON in this exact shape — nothing else, no prose, no markdown fences:
 {
   "entries": [
-    { "type": "user|feedback|project|reference", "name": "short title (≤ 60 chars)", "description": "one-line summary (≤ 140 chars)", "body": "the actual remembered fact, 1-3 sentences" }
+    { "type": "user|feedback|project|reference", "name": "short title (≤ 60 chars)", "description": "one-line summary (≤ 140 chars)", "body": "the actual remembered fact, 1-3 sentences", "projectId": "string|null" }
   ]
 }
 
@@ -104,7 +104,12 @@ Type rules:
 - user: who they are, role, expertise, long-term goals
 - feedback: corrections / preferences about how to work ("don't add comments unless asked")
 - project: ongoing initiatives, deadlines, why-decisions; usually time-bounded
-- reference: pointers to external systems (Linear projects, Slack channels, dashboards)`;
+- reference: pointers to external systems (Linear projects, Slack channels, dashboards)
+
+Project scoping rules:
+- When a fact is specific to the user's current project (a project-specific design decision, client preference, or project deadline), set "projectId" to the project id provided in the context.
+- When a fact is about the user generally (their role, tools, global preferences), set "projectId" to null.
+- When no project id is provided in the context, always set "projectId" to null.`;
 
 // Specialised system prompt for the annotation distiller. The user just
 // reviewed a generated design artifact and left inline marks — comments,
@@ -608,8 +613,13 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider, cha
   return null;
 }
 
-function renderUserPayload({ userMessage, assistantMessage, currentMemory }) {
+function renderUserPayload({ userMessage, assistantMessage, currentMemory, projectId }) {
   const parts = [];
+  if (typeof projectId === 'string' && projectId) {
+    parts.push('## Current project');
+    parts.push(`Project ID: ${projectId}`);
+    parts.push('');
+  }
   parts.push('## Existing memory');
   parts.push(currentMemory && currentMemory.trim().length > 0
     ? currentMemory
@@ -1099,6 +1109,9 @@ function toMemoryDraft(candidate) {
     name: String(candidate.name).trim().slice(0, 80),
     description: String(candidate.description || '').trim().slice(0, 200),
     body: String(candidate.body).trim(),
+    projectId: typeof candidate.projectId === 'string' && candidate.projectId
+      ? candidate.projectId
+      : null,
   };
 }
 
@@ -1106,6 +1119,7 @@ async function collectProposedEntries(dataDir, input, options) {
   const projectRoot = options?.projectRoot ?? null;
   const chatAgentId = options?.chatAgentId ?? null;
   const chatModel = options?.chatModel ?? null;
+  const projectId = options?.projectId ?? null;
   const extractionKind = options?.kind ?? 'llm';
   const systemPrompt =
     typeof options?.systemPrompt === 'string' && options.systemPrompt.trim()
@@ -1158,7 +1172,7 @@ async function collectProposedEntries(dataDir, input, options) {
   let existingEntries = [];
   try {
     [currentMemory, existingEntries] = await Promise.all([
-      composeMemoryBody(dataDir),
+      composeMemoryBody(dataDir, projectId),
       listMemoryEntries(dataDir),
     ]);
   } catch {
@@ -1169,6 +1183,7 @@ async function collectProposedEntries(dataDir, input, options) {
     userMessage,
     assistantMessage: input?.assistantMessage,
     currentMemory,
+    projectId,
   });
 
   let raw = '';

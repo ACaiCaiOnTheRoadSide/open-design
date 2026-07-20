@@ -52,6 +52,9 @@ export interface MemoryEntrySummary {
   description: string;
   /** Category — drives the filename prefix and the system-prompt section it lands in. */
   type: MemoryType;
+  /** When set, this entry is scoped to the given project and only injected
+   *  into that project's conversations. `null`/`undefined` means global. */
+  projectId?: string | null;
   /** Unix milliseconds — file mtime. */
   updatedAt: number;
 }
@@ -68,6 +71,7 @@ export interface MemorySuggestion {
   description: string;
   type: MemoryType;
   body: string;
+  projectId?: string | null;
   source?: {
     kind: 'connector';
     connectorId?: string;
@@ -191,6 +195,7 @@ export interface UpsertMemoryRequest {
   description: string;
   type: MemoryType;
   body: string;
+  projectId?: string | null;
 }
 
 export interface UpsertMemoryResponse {
@@ -337,6 +342,7 @@ export interface MemoryChangeEvent {
   name?: string;
   description?: string;
   type?: MemoryType;
+  projectId?: string | null;
   /** Number of entries written in this pass — only on `kind: 'extract'`. */
   count?: number;
   /** Where the change came from. Useful for UX (e.g., suppress toasts on

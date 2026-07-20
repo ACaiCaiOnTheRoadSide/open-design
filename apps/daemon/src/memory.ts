@@ -309,12 +309,14 @@ export async function writeMemoryIndex(dataDir, body, options) {
 function summarize(id, raw, mtime) {
   const { data, body } = parseFrontmatter(raw);
   const type = isValidType(data?.type) ? data.type : 'user';
+  const projectId = typeof data?.projectId === 'string' && data.projectId ? data.projectId : null;
   return {
     summary: {
       id,
       name: typeof data?.name === 'string' && data.name ? data.name : id,
       description: typeof data?.description === 'string' ? data.description : '',
       type,
+      projectId,
       updatedAt: mtime,
     },
     body: typeof body === 'string' ? body.trimStart() : '',
@@ -361,7 +363,8 @@ function memoryTreeFolderId(type) {
   return `folder:${type}`;
 }
 
-function memoryTreeScopeForType(type) {
+function memoryTreeScope(type, projectId) {
+  if (typeof projectId === 'string' && projectId) return 'project';
   return type === 'project' ? 'project' : 'global';
 }
 
@@ -405,7 +408,7 @@ export async function buildMemoryTree(dataDir) {
       description: `${capitalize(type)} memory`,
       kind: 'folder',
       type,
-      scope: memoryTreeScopeForType(type),
+      scope: memoryTreeScope(type, null),
       sourcePacketIds: [],
       proposalIds: [],
       createdAt: toIsoTime(folderUpdatedAt),
@@ -423,7 +426,8 @@ export async function buildMemoryTree(dataDir) {
         description: entry.description,
         kind: 'entry',
         type: entry.type,
-        scope: memoryTreeScopeForType(entry.type),
+        projectId: entry.projectId,
+        scope: memoryTreeScope(entry.type, entry.projectId),
         sourcePacketIds: extractAutomationRefs(detailBody, 'Source packet'),
         proposalIds: extractAutomationRefs(detailBody, 'Proposal'),
         createdAt: toIsoTime(entry.updatedAt),
@@ -451,12 +455,13 @@ export async function readMemoryEntry(dataDir, id) {
   return { ...summary, body };
 }
 
-function renderEntryFile(name, description, type, body) {
+function renderEntryFile(name, description, type, body, projectId) {
   const safeName = String(name || 'Untitled').replace(/\r?\n/g, ' ').trim();
   const safeDesc = String(description || '').replace(/\r?\n/g, ' ').trim();
   const safeType = isValidType(type) ? type : 'user';
   const trimmedBody = String(body || '').replace(/^\s+/, '');
-  return `---\nname: ${safeName}\ndescription: ${safeDesc}\ntype: ${safeType}\n---\n\n${trimmedBody}\n`;
+  const projectLine = typeof projectId === 'string' && projectId ? `\nprojectId: ${projectId}` : '';
+  return `---\nname: ${safeName}\ndescription: ${safeDesc}\ntype: ${safeType}${projectLine}\n---\n\n${trimmedBody}\n`;
 }
 
 export async function updateMemoryTreeNode(dataDir, id, patch) {
@@ -478,6 +483,7 @@ export async function updateMemoryTreeNode(dataDir, id, patch) {
         : current.description,
     type: nextType,
     body: typeof patch?.body === 'string' ? patch.body : current.body,
+    projectId: patch?.projectId !== undefined ? patch.projectId : current.projectId,
   });
 }
 
@@ -486,13 +492,14 @@ export async function upsertMemoryEntry(dataDir, input, options) {
   if (!name || !isValidType(type)) {
     throw new Error('memory entry requires `name` and a valid `type`');
   }
+  const projectId = type === 'profile' ? null : (input?.projectId ?? null);
   const id = input?.id && /^[a-z0-9_]+$/.test(input.id)
     ? input.id
     : deriveMemoryId(type, name);
   await ensureDir(memoryDir(dataDir));
   await fsp.writeFile(
     entryPath(dataDir, id),
-    renderEntryFile(name, description, type, body),
+    renderEntryFile(name, description, type, body, projectId),
   );
   await ensureIndexHasEntry(dataDir, id, name, description);
   const entry = await readMemoryEntry(dataDir, id);
@@ -504,6 +511,7 @@ export async function upsertMemoryEntry(dataDir, input, options) {
       name: entry.name,
       description: entry.description,
       type: entry.type,
+      projectId: entry.projectId,
       source: options?.source ?? 'manual',
     });
   }
@@ -594,14 +602,17 @@ async function removeIndexLine(dataDir, id) {
 // disk (paste the line back in the settings panel to re-enable it).
 // Without this filter, deleted index lines had no effect — the daemon
 // kept reading every entry file and the index editor was cosmetic only.
-export async function composeMemoryBody(dataDir) {
+export async function composeMemoryBody(dataDir, projectId) {
   const cfg = await readMemoryConfig(dataDir);
   if (!cfg.enabled) return '';
   const allEntries = await listMemoryEntries(dataDir);
   if (allEntries.length === 0) return '';
   const indexBody = await readMemoryIndex(dataDir);
   const linkedIds = parseIndexLinkIds(indexBody);
-  const entries = allEntries.filter((e) => linkedIds.has(e.id));
+  let entries = allEntries.filter((e) => linkedIds.has(e.id));
+  if (typeof projectId === 'string' && projectId) {
+    entries = entries.filter((e) => !e.projectId || e.projectId === projectId);
+  }
   if (entries.length === 0) return '';
   const grouped = new Map();
   for (const e of entries) {
@@ -998,7 +1009,7 @@ async function captureProfileFromForm(dataDir, parsed) {
   };
 }
 
-export async function extractFromMessage(dataDir, userMessage) {
+export async function extractFromMessage(dataDir, userMessage, projectId) {
   // Mirror the LLM extractor's skip surface so the settings panel shows
   // both extractors for the same turn — even when there's nothing to
   // record. Without this, a turn with memory disabled or an empty
@@ -1070,6 +1081,7 @@ export async function extractFromMessage(dataDir, userMessage) {
           name: pattern.name,
           description,
           body,
+          projectId: pattern.type === 'project' ? (projectId ?? null) : null,
         },
         // Silence the per-entry upsert event so the batched 'extract'
         // emit below produces exactly one frontend toast.

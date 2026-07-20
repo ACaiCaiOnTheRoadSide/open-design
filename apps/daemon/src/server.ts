@@ -540,6 +540,7 @@ import {
   updatePreviewCommentStatus,
   incrementProjectDownloadCount,
   incrementProjectPublishCount,
+  incrementProjectMonkeycodeCount,
   updateProject,
   updateRoutine,
   updateRoutineRun,
@@ -4497,6 +4498,7 @@ export async function startServer({
     updateProject,
     incrementProjectDownloadCount,
     incrementProjectPublishCount,
+    incrementProjectMonkeycodeCount,
     dbDeleteProject,
     removeProjectDir,
     validateLinkedDirs,
@@ -5664,7 +5666,7 @@ export async function startServer({
     // empty; the composer drops the block on a falsy value.
     let memoryBody = '';
     try {
-      memoryBody = await composeMemoryBody(RUNTIME_DATA_DIR);
+      memoryBody = await composeMemoryBody(RUNTIME_DATA_DIR, projectId);
     } catch (err) {
       console.warn('[memory] composeMemoryBody failed', err);
     }
@@ -6218,7 +6220,7 @@ export async function startServer({
       message.trim().length > 0
     ) {
       try {
-        await extractFromMessage(RUNTIME_DATA_DIR, message);
+        await extractFromMessage(RUNTIME_DATA_DIR, message, run.projectId);
       } catch (err) {
         console.warn('[memory] extractFromMessage failed', err);
       }
@@ -8339,6 +8341,7 @@ export async function startServer({
         projectRoot: PROJECT_ROOT,
         chatAgentId: typeof agentId === 'string' ? agentId : null,
         chatModel: typeof safeModel === 'string' ? safeModel : null,
+        projectId: run.projectId ?? null,
       };
       void import('./memory-llm.js')
         .then(({ extractWithLLM, distillAnnotationsToMemory }) => {
