@@ -109,12 +109,14 @@
 
 .actions {
   display: flex;
+  align-items: center;
   gap: 10px;
   margin-top: 14px;
 }
 
 .confirmBtn,
-.rejectBtn {
+.rejectBtn,
+.pageBtn {
   padding: 8px 20px;
   border: none;
   border-radius: var(--radius);
@@ -149,4 +151,27 @@
 .rejectBtn:hover {
   background: var(--bg);
   color: var(--text-strong);
+}
+
+.pageBtn {
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.pageBtn:not(:disabled):hover {
+  background: var(--bg);
+  color: var(--text-strong);
+}
+
+.pageBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pageIndicator {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 40px;
+  text-align: center;
 }

@@ -24,6 +24,7 @@ export interface DesignReferenceItem {
 
 export interface DesignReferences {
   items: DesignReferenceItem[];
+  pageSize?: number;
 }
 
 export type DesignRefSegment =
@@ -124,7 +125,8 @@ function tryParseRefs(body: string): DesignReferences | null {
     items.push({ id, title, image, ...(description ? { description } : {}) });
   }
   if (items.length === 0) return null;
-  return { items };
+  const pageSize = typeof obj.pageSize === 'number' && obj.pageSize > 0 ? obj.pageSize : undefined;
+  return { items, ...(pageSize ? { pageSize } : {}) };
 }
 
 export function formatDesignReferenceSelection(item: DesignReferenceItem): string {

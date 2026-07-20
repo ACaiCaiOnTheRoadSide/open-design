@@ -204,8 +204,6 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 ## Design reference search (when no template / design system is active)
 
-**IMPORTANT — tool naming:** This environment does NOT have \`WebSearch\` or \`WebFetch\` tools. For web search, use the MCP tool \`websearch_search\` (from the 百智云 MCP hub). For downloading files, use \`curl\` via Bash. Always check available MCP tools first — they take priority over built-in tool names mentioned elsewhere in this prompt.
-
 **Trigger rule:** search for design references when the user answered \`designReferences: "yes"\` in the discovery form (or \`[form answers — task-type]\`). If the user answered \`"no"\`, or the question was dropped (active design system / template bound), skip this section entirely.
 
 Once triggered, also verify these sanity checks before searching:
@@ -214,65 +212,70 @@ Once triggered, also verify these sanity checks before searching:
 
 ### Procedure
 
-**Path A — search design websites:**
+**Step 1 — search Pinterest via \`od research search\`.**
 
-1. **Construct search keywords** targeting design community sites. Combine the design type + domain + site qualifier. Always include at least one of: \`site:dribbble.com\`, \`site:behance.net\`, \`site:pinterest.com\`, \`dribbble\`, \`behance\`, \`UI design\`, \`界面设计\`, \`mockup\`. Examples:
-   - \`"电商App UI design site:dribbble.com"\`
-   - \`"SaaS dashboard design site:behance.net"\`
-   - \`"fitness mobile app mockup site:pinterest.com"\`
-   - \`"landing page 设计 dribbble OR behance"\`
+Construct a search query combining design type + domain + design qualifier (e.g. \`"mobile app UI design e-commerce"\`, \`"SaaS dashboard mockup"\`, \`"landing page 界面设计"\`). Always include at least one of: \`UI design\`, \`界面设计\`, \`app design\`, \`web design\`, \`mockup\`.
 
-2. **Call \`websearch_search\`** 2–3 times with different keyword angles. This is the MCP tool provided by the 百智云 hub — do NOT call \`WebSearch\` (that tool does not exist in this environment). Target sources: Dribbble, Behance, Pinterest, Mobbin, Awwwards, Collect UI.
+Run exactly ONE search command via Bash:
+\`\`\`
+"$OD_NODE_BIN" "$OD_BIN" research search --query "<your query>" --max-sources 20 --providers pinterest
+\`\`\`
 
-3. **Pick 3–5 direct image URLs** (ending in \`.png\`, \`.jpg\`, \`.webp\`) that are visually distinct from each other (different color schemes, layout styles, visual tones). Prefer CDN links from the design sites above.
+The command returns JSON with a \`sources\` array. Each source has \`title\`, \`url\`, \`snippet\`, \`imageUrl\` (direct image link), and \`resolution\` ([width, height]).
 
-4. **Download images locally.** Use \`curl -fL -o <path> <url>\` (via Bash) to download each image to the project's \`references/\` directory (e.g. \`references/ref1.png\`).%%OPEN_DESIGN_PROXY_HINT%% After downloading, run \`file references/*\` (via Bash) to verify they are valid image formats — not HTML pages, empty files, or error responses.
+If the command **fails** (non-zero exit, empty sources, or no \`imageUrl\` entries), skip to **Step 1b (fallback)**.
 
-5. **Quality check.** Use the Read tool to view each downloaded image. Check: is it a real UI design mockup with good visual quality, matching the user's design type and domain? If **fewer than 3 images pass**, abandon all search results and switch to **Path B**.
+**Step 1b — fallback: generate via image tool.**
 
-**Path B — generate design references (fallback or direct):**
+If the Pinterest search failed, generate reference images directly:
+1. Call \`image_generate_text_to_image\` (百智云 MCP hub) 3 times with different style directions. Craft each prompt describing a distinct UI style for the user's design type and domain.
+2. Poll \`image_generate_query_task\` every 15 seconds for each task until \`completed\` or \`failed\`.
+3. Download completed images using \`curl -fL -o <path> <url>\` (via Bash) to \`references/\`.%%OPEN_DESIGN_PROXY_HINT%% Verify with \`file references/*\`. If fewer than 3 usable images, proceed with what you have and note the limitation.
+Then continue to **Step 3**.
 
-If Path A failed quality check, or if \`websearch_search\` is unavailable, generate reference images directly:
+**Step 2 — download images.**
 
-1. **Call \`image_generate_text_to_image\`** (百智云 MCP hub) 3 times with different style directions. Craft each prompt describing a distinct UI style for the user's design type and domain, e.g.:
-   - "A modern minimalist e-commerce mobile app, clean white layout, rounded cards, professional UI mockup"
-   - "A bold dark-themed e-commerce app, gradient accents, immersive product display, UI design"
-   - "A warm earthy-toned e-commerce app, organic shapes, handcrafted feel, friendly UI design"
+From the search results, take all sources that have a valid \`imageUrl\`. Download each using:
+\`\`\`
+curl -fL -o references/ref_<N>.jpg "<imageUrl>"
+\`\`\`
+%%OPEN_DESIGN_PROXY_HINT%%Run \`file references/*\` to verify they are valid images. Discard any invalid files.
 
-2. **Poll \`image_generate_query_task\`** every 15 seconds for each task until \`completed\` or \`failed\`.
+**Step 3 — emit \`<design-references>\` with pagination.**
 
-3. **Download completed images.** Use \`curl -fL -o <path> <url>\` (via Bash) to download each image to \`references/\`.%%OPEN_DESIGN_PROXY_HINT%% After downloading, run \`file references/*\` (via Bash) to verify they are valid image formats. Then Read each image to verify quality (real UI mockup, good visual quality, matches design type). If fewer than 3 images pass, retry \`image_generate_text_to_image\` with adjusted prompts for the failed slots. If still insufficient, proceed with however many valid images you have and note the limitation to the user.
-
-**After Path A or Path B produces valid images:**
-
-6. **Emit a \`<design-references>\` block** in your response. The host UI renders it as a clickable image card grid in the chat. Format:
+Build the full list of valid images (up to 30). The host UI will display them **3 at a time** with a "下一轮" (next batch) button. Emit ALL items in a single \`<design-references>\` block — the host handles pagination:
 
 \`\`\`
 <design-references>
 {
+  "pageSize": 3,
   "items": [
     {
       "id": "ref_1",
       "title": "简约卡片式布局",
-      "image": "references/ref1.png",
-      "description": "白色底，大间距，圆角卡片，适合工具类产品"
+      "image": "references/ref_1.jpg",
+      "description": "白色底，大间距，圆角卡片"
     },
     {
       "id": "ref_2",
       "title": "深色沉浸式",
-      "image": "references/ref2.png",
-      "description": "暗色背景，渐变色点缀，适合创意/娱乐类"
+      "image": "references/ref_2.jpg",
+      "description": "暗色背景，渐变色点缀"
     }
   ]
 }
 </design-references>
 \`\`\`
 
-7. After the \`</design-references>\` block, write one line inviting the user to pick their favourite and click "确认选择". The host UI renders two buttons below the grid: **确认选择** (confirm) and **都不喜欢** (reject all). Do NOT add these buttons yourself — the host renders them.
+Use the Pinterest source \`title\` as the card title, and \`snippet\` as the description (truncate to ~50 chars if long). The \`image\` field must point to the local downloaded path (\`references/ref_<N>.jpg\`).
 
-8. **Wait for the user's selection.** Two possible replies:
-   - \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
-   - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Ask them to briefly describe their preferred visual direction (color tone, layout style, overall feel). If the user declines or says "你来决定", pick the best-matching direction yourself from the Direction library below and proceed to RULE 3.
+After the block, write one line inviting the user to browse and pick their favourite. The host UI renders **确认选择** (confirm), **都不喜欢** (reject all), and **下一轮** (next batch) buttons. Do NOT add these buttons yourself.
+
+**Step 4 — wait for user selection.**
+
+Two possible replies:
+- \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
+- \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Ask them to briefly describe their preferred visual direction (color tone, layout style, overall feel). If the user declines or says "你来决定", pick the best-matching direction yourself from the Direction library below and proceed to RULE 3.
 
 ### When NOT to search
 - The user answered \`designReferences: "no"\` or the question was dropped.

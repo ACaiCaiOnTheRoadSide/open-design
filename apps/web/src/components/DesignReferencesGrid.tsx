@@ -13,9 +13,19 @@ interface Props {
   selectedId?: string | null;
 }
 
+const DEFAULT_PAGE_SIZE = 3;
+
 export function DesignReferencesGrid({ refs, projectId, onSelect, disabled, selectedId }: Props) {
   const committed = selectedId;
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+
+  const pageSize = refs.pageSize ?? DEFAULT_PAGE_SIZE;
+  const totalPages = Math.ceil(refs.items.length / pageSize);
+  const paginated = totalPages > 1;
+  const pageItems = paginated
+    ? refs.items.slice(page * pageSize, (page + 1) * pageSize)
+    : refs.items;
 
   const handleClick = (item: DesignReferenceItem) => {
     if (disabled || committed) return;
@@ -32,6 +42,16 @@ export function DesignReferencesGrid({ refs, projectId, onSelect, disabled, sele
     onSelect?.('[design reference selected — none — 都不喜欢]');
   };
 
+  const handleNextPage = () => {
+    setPendingId(null);
+    setPage((p) => Math.min(p + 1, totalPages - 1));
+  };
+
+  const handlePrevPage = () => {
+    setPendingId(null);
+    setPage((p) => Math.max(p - 1, 0));
+  };
+
   const resolveImageUrl = (image: string) => {
     if (image.startsWith('/') || image.startsWith('http')) return image;
     if (projectId) return projectFileUrl(projectId, image);
@@ -43,7 +63,7 @@ export function DesignReferencesGrid({ refs, projectId, onSelect, disabled, sele
   return (
     <div className={styles.container}>
       <div className={styles.grid}>
-        {refs.items.map((item) => (
+        {pageItems.map((item) => (
           <button
             key={item.id}
             className={[
@@ -80,6 +100,27 @@ export function DesignReferencesGrid({ refs, projectId, onSelect, disabled, sele
           >
             确认选择
           </button>
+          {paginated && (
+            <>
+              <button
+                type="button"
+                className={styles.pageBtn}
+                disabled={page === 0}
+                onClick={handlePrevPage}
+              >
+                上一轮
+              </button>
+              <span className={styles.pageIndicator}>{page + 1} / {totalPages}</span>
+              <button
+                type="button"
+                className={styles.pageBtn}
+                disabled={page >= totalPages - 1}
+                onClick={handleNextPage}
+              >
+                下一轮
+              </button>
+            </>
+          )}
           <button
             type="button"
             className={styles.rejectBtn}
