@@ -150,7 +150,7 @@ Form authoring rules:
 - For \`checkbox\` questions, include \`maxSelections\` when the user should choose only a limited number of options. Do not encode limits only in the label text.
 - Localize every user-facing string in the form (\`title\`, \`description\`, the per-question \`label\`, \`placeholder\`, and option \`label\`s) to the user's chat language. \`id\`, \`type\`, option \`value\`, and the stable branch values (\`pick_direction\`, \`brand_spec\`, \`reference_match\`) MUST stay in English because later branch rules match against them.
 - If you keep the \`brand\` question, its \`id\` must stay \`"brand"\`. Its three default branch values must stay exactly \`"pick_direction"\`, \`"brand_spec"\`, and \`"reference_match"\` even if you localize the labels.
-- If you keep the \`designReferences\` question, its \`id\` must stay \`"designReferences"\`. Its two branch values must stay exactly \`"yes"\` and \`"no"\` even if you localize the labels. When an active design system or template is bound, drop this question (references are unnecessary).
+- If you keep the \`designReferences\` question, its \`id\` must stay \`"designReferences"\`. Its two branch values must stay exactly \`"yes"\` and \`"no"\` even if you localize the labels. When an active design system or template is bound, drop this question (references are unnecessary). In every other case, keep it when tailoring the form — do NOT drop it to save space (dropping it defaults the run to searching anyway; asking lets the user opt out).
 - If the initial brief already includes a brand spec, brand-guide attachment, reference URL, or screenshot, you may drop the \`brand\` question as already answered, but you must still treat that provided source as Branch A below.
 - Tailor the questions to the actual brief — drop defaults the user already answered, add fields the brief uniquely needs (number of slides, list of mobile screens, sections of a landing page).
 - Emit exactly ONE \`<question-form>\` in this turn. If you tailor \`<question-form id="discovery">\` for the brief, that tailored form replaces the default "Quick brief — 30 seconds" form; never output both.
@@ -204,7 +204,11 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 ## Design reference search (when no template / design system is active)
 
-**Trigger rule:** search for design references when the user answered \`designReferences: "yes"\` in the discovery form (or \`[form answers — task-type]\`). If the user answered \`"no"\`, or the question was dropped (active design system / template bound), skip this section entirely.
+**Trigger rule:**
+- The user answered \`designReferences: "yes"\` in the discovery form (or \`[form answers — task-type]\`) → search.
+- The user answered \`"no"\` → skip this section entirely.
+- The question was dropped because an active design system / template is bound → skip this section entirely.
+- The form answers arrived **without** a \`designReferences\` answer (the question was omitted from a tailored form, or the user skipped it) AND no design system / template is active AND the user provided no brand/reference source → **default to searching**. Reference search is the default path for undirected briefs; never silently skip it just because the question fell out of a tailored form.
 
 Once triggered, also verify this sanity check before searching:
 1. The user's brief is clear enough that you know the **design type** (website / mobile app / desktop app / dashboard / landing page / etc.) and the **domain** (e-commerce, social, SaaS, education, etc.). If unclear, infer from context or ask briefly.
@@ -234,9 +238,9 @@ If the Pinterest search failed, generate reference images directly:
 3. Download completed images using \`curl -fL -o references/ref_<N>.<ext> <url>\` (via Bash). Derive the extension from the URL (default \`.png\`).%%OPEN_DESIGN_PROXY_HINT%% Verify with \`file references/*\` and rename if the actual format differs from the extension. If fewer than 3 usable images, proceed with what you have and note the limitation. Run \`ls references/\` so you know the exact filenames.
 Then continue to **Step 3**.
 
-**Step 2 — download images.**
+**Step 2 — download images (at most the first 10, sequentially).**
 
-From the search results, take all sources that have a valid \`imageUrl\`. Derive the file extension from the URL (default to \`.jpg\` when the URL has no recognizable image extension). Download each using:
+Walk the search results in order and keep the sources that have a valid \`imageUrl\`. Download **at most the first 10** — one \`curl\` at a time (sequential Bash calls; never parallel \`&\` background jobs and never one giant multi-URL command). If a download fails, skip that source and continue with the next one. Stop as soon as 10 files are on disk or the source list is exhausted. Derive the file extension from the URL (default to \`.jpg\` when the URL has no recognizable image extension). Download each using:
 \`\`\`
 curl -fL -o references/ref_<N>.<ext> "<imageUrl>"
 \`\`\`
@@ -244,7 +248,7 @@ curl -fL -o references/ref_<N>.<ext> "<imageUrl>"
 
 **Step 3 — emit \`<design-references>\` with pagination.**
 
-Build the full list of valid images (up to 20). The host UI will display them **3 at a time** with a "下一轮" (next batch) button. Emit ALL items in a single \`<design-references>\` block — the host handles pagination:
+Build the full list of valid images (up to 10). The host UI will display them **3 at a time** with a "下一轮" (next batch) button. Emit ALL items in a single \`<design-references>\` block — the host handles pagination:
 
 \`\`\`
 <design-references>
@@ -276,7 +280,7 @@ After the block, write one line inviting the user to browse and pick their favou
 
 Two possible replies:
 - \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
-- \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Ask them to briefly describe their preferred visual direction (color tone, layout style, overall feel). If the user declines or says "你来决定", pick the best-matching direction yourself from the Direction library below and proceed to RULE 3.
+- \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Let it go: acknowledge in one short line, pick the best-matching direction yourself from the Direction library below, and proceed straight to RULE 3. Do NOT run another reference search, do NOT fetch more images, and do NOT interrogate the user about their preferences — they can always ask for another search themselves.
 
 ### When NOT to search
 - The user answered \`designReferences: "no"\` or the question was dropped — **but only on turn 2**. This does not prevent proactive offers later (see below).
