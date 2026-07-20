@@ -153,6 +153,7 @@ const MCP_INSTALL_BOOLEAN_FLAGS = new Set([
 const RESEARCH_SEARCH_STRING_FLAGS = new Set([
   'query',
   'max-sources',
+  'providers',
   'daemon-url',
 ]);
 const RESEARCH_SEARCH_BOOLEAN_FLAGS = new Set([
@@ -608,8 +609,8 @@ function printRootHelp() {
   od mcp live-artifacts
       Start the MCP server exposing live-artifact and connector tools.
 
-  od research search --query <text> [--max-sources 5] [--daemon-url <url>]
-      Run agent-callable Tavily research through the local daemon.
+  od research search --query <text> [--max-sources 5] [--providers tavily] [--daemon-url <url>]
+      Run agent-callable research through the local daemon (tavily or pinterest).
 
   od plugin <list|info|install|uninstall|apply|doctor|replay|trust> [args]
       Discover, install, and apply plugins through the local daemon.
@@ -784,6 +785,10 @@ async function runResearchSearch(rawArgs) {
   const daemonUrl = await cliDaemonUrl(flags);
   const maxSources =
     flags['max-sources'] == null ? undefined : Number(flags['max-sources']);
+  const providers =
+    typeof flags.providers === 'string' && flags.providers.trim()
+      ? flags.providers.split(',').map((p) => p.trim()).filter(Boolean)
+      : undefined;
   const url = `${daemonUrl.replace(/\/$/, '')}/api/research/search`;
   let resp;
   try {
@@ -793,6 +798,7 @@ async function runResearchSearch(rawArgs) {
       body: JSON.stringify({
         query,
         ...(Number.isFinite(maxSources) ? { maxSources } : {}),
+        ...(providers ? { providers } : {}),
       }),
     });
   } catch (err) {
@@ -814,15 +820,16 @@ async function runArtifacts(args) {
 
 function printResearchHelp() {
   console.log(`Usage:
-  od research search --query <text> [--max-sources 5] [--daemon-url <url>]
+  od research search --query <text> [--max-sources 5] [--providers tavily] [--daemon-url <url>]
 
-Runs Tavily-backed shallow research through the local Open Design daemon.
+Runs research through the local Open Design daemon.
 Output is JSON only on stdout:
   { "query": "...", "summary": "...", "sources": [...], "provider": "tavily", "depth": "shallow", "fetchedAt": 0 }
 
 Flags:
   --query        Required search query.
-  --max-sources  Optional source cap. Defaults to 5, clamped to Tavily's max.
+  --max-sources  Optional source cap. Defaults to 5.
+  --providers    Comma-separated provider list. Supported: tavily (default), pinterest.
   --daemon-url   Local daemon URL. Defaults to OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456.`);
 }
 
