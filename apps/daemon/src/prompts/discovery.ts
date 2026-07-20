@@ -85,6 +85,15 @@ Default-router exception: when the Active plugin / Active skill is \`od-default\
       ]
     },
     {
+      "id": "designReferences",
+      "label": "Search for design references?",
+      "type": "radio",
+      "options": [
+        { "label": "Yes — find inspiring designs for me", "value": "yes" },
+        { "label": "No — I have my own direction", "value": "no" }
+      ]
+    },
+    {
       "id": "scale",
       "label": "Roughly how much?",
       "type": "text",
@@ -120,6 +129,11 @@ Default-router exception: when the Active plugin / Active skill is \`od-default\
         { "label": "I have a brand spec — I'll share it", "value": "brand_spec" },
         { "label": "Match a reference site / screenshot — I'll attach it", "value": "reference_match" }
       ] },
+    { "id": "designReferences", "label": "Search for design references?", "type": "radio",
+      "options": [
+        { "label": "Yes — find inspiring designs for me", "value": "yes" },
+        { "label": "No — I have my own direction", "value": "no" }
+      ] },
     { "id": "scale", "label": "Roughly how much?", "type": "text",
       "placeholder": "e.g. 8 slides, 1 landing + 3 sub-pages, 4 mobile screens" },
     { "id": "constraints", "label": "Anything else I should know?", "type": "textarea",
@@ -135,6 +149,7 @@ Form authoring rules:
 - For \`checkbox\` questions, include \`maxSelections\` when the user should choose only a limited number of options. Do not encode limits only in the label text.
 - Localize every user-facing string in the form (\`title\`, \`description\`, the per-question \`label\`, \`placeholder\`, and option \`label\`s) to the user's chat language. \`id\`, \`type\`, option \`value\`, and the stable branch values (\`pick_direction\`, \`brand_spec\`, \`reference_match\`) MUST stay in English because later branch rules match against them.
 - If you keep the \`brand\` question, its \`id\` must stay \`"brand"\`. Its three default branch values must stay exactly \`"pick_direction"\`, \`"brand_spec"\`, and \`"reference_match"\` even if you localize the labels.
+- If you keep the \`designReferences\` question, its \`id\` must stay \`"designReferences"\`. Its two branch values must stay exactly \`"yes"\` and \`"no"\` even if you localize the labels. When an active design system or template is bound, drop this question (references are unnecessary).
 - If the initial brief already includes a brand spec, brand-guide attachment, reference URL, or screenshot, you may drop the \`brand\` question as already answered, but you must still treat that provided source as Branch A below.
 - Tailor the questions to the actual brief — drop defaults the user already answered, add fields the brief uniquely needs (number of slides, list of mobile screens, sections of a landing page).
 - Emit exactly ONE \`<question-form>\` in this turn. If you tailor \`<question-form id="discovery">\` for the brief, that tailored form replaces the default "Quick brief — 30 seconds" form; never output both.
@@ -190,12 +205,11 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 **IMPORTANT — tool naming:** This environment does NOT have \`WebSearch\` or \`WebFetch\` tools. For web search, use the MCP tool \`websearch_search\` (from the 百智云 MCP hub). For downloading files, use \`curl\` via Bash. Always check available MCP tools first — they take priority over built-in tool names mentioned elsewhere in this prompt.
 
-When **all** of the following are true, search for design references online before starting work:
+**Trigger rule:** search for design references when the user answered \`designReferences: "yes"\` in the discovery form (or \`[form answers — task-type]\`). If the user answered \`"no"\`, or the question was dropped (active design system / template bound), skip this section entirely.
 
-1. The user has **not** selected a template or design system (no \`## Active design system\` section, no \`## Active skill\` section with a design-specific skill).
-2. The user's brief is clear enough that you know the **design type** (website / mobile app / desktop app / dashboard / landing page / etc.) and the **domain** (e-commerce, social, SaaS, education, etc.).
-3. The user has **not** already provided brand assets, reference screenshots, or a reference URL.
-4. You have **not** already shown a \`<design-references>\` block in this conversation.
+Once triggered, also verify these sanity checks before searching:
+1. You have **not** already shown a \`<design-references>\` block in this conversation.
+2. The user's brief is clear enough that you know the **design type** (website / mobile app / desktop app / dashboard / landing page / etc.) and the **domain** (e-commerce, social, SaaS, education, etc.). If unclear, infer from context or ask briefly.
 
 ### Procedure
 
@@ -241,10 +255,8 @@ When **all** of the following are true, search for design references online befo
 8. If the user says none of the references fit, ask them to describe their preferred direction in words, or proceed with your own best judgment.
 
 ### When NOT to search
-- The user said "skip questions" / "just build" / "no questions, go".
-- An active design system or template is already bound.
-- The user already provided reference images, screenshots, or a brand guide.
-- The design is a tweak/edit to an existing project.
+- The user answered \`designReferences: "no"\` or the question was dropped.
+- The discovery form was skipped entirely ("skip questions" / "just build" / tweak to existing project).
 
 ---
 
