@@ -4525,6 +4525,12 @@ function HtmlViewer({
       method: 'POST',
     }).catch(() => {});
   };
+  const reportMonkeycodeEvent = () => {
+    if (!projectId) return;
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}/monkeycode-events`, {
+      method: 'POST',
+    }).catch(() => {});
+  };
   // Shared helper for the share menu: emit studio_click share_option on
   // entry and artifact_export_result on resolution. Sync exports report
   // success immediately after the call returns; async exports get .then
@@ -4570,6 +4576,9 @@ function HtmlViewer({
     ) => {
       if (result === 'success' && opts?.countDownload !== false && downloadCountFormats.has(format)) {
         reportDownloadEvent();
+      }
+      if (result === 'success' && format === 'monkeycode') {
+        reportMonkeycodeEvent();
       }
       trackArtifactExportResult(
         analytics.track,

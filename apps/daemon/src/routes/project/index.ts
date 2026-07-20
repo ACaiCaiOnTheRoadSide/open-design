@@ -939,7 +939,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { sendApiError, createSseResponse } = ctx.http;
   const { DESIGN_SYSTEMS_DIR, PROJECTS_DIR, SKILLS_DIR, BRANDS_DIR } = ctx.paths;
   const { readAppConfig, writeAppConfig } = ctx.appConfig;
-  const { insertProject, validateLinkedDirs, getProject, getProjectOwnerUnscoped, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount, incrementProjectPublishCount } = ctx.projectStore;
+  const { insertProject, validateLinkedDirs, getProject, getProjectOwnerUnscoped, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount, incrementProjectPublishCount, incrementProjectMonkeycodeCount } = ctx.projectStore;
   const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
@@ -1584,6 +1584,19 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const existing = await getProject(db, req.params.id);
       if (!existing) return sendApiError(res, 404, 'NOT_FOUND', 'project not found');
       await incrementProjectPublishCount(db, req.params.id);
+      return res.json({ ok: true });
+    } catch (err) {
+      return sendApiError(res, 500, 'INTERNAL_ERROR', String(err));
+    }
+  });
+
+  // 项目跳转 MonkeyCode 计数 beacon:用户确认跳转到 MonkeyCode 时上报一次。
+  // 后台统计跨 schema 直读 projects.monkeycode_count 算开发率。
+  app.post('/api/projects/:id/monkeycode-events', async (req, res) => {
+    try {
+      const existing = await getProject(db, req.params.id);
+      if (!existing) return sendApiError(res, 404, 'NOT_FOUND', 'project not found');
+      await incrementProjectMonkeycodeCount(db, req.params.id);
       return res.json({ ok: true });
     } catch (err) {
       return sendApiError(res, 500, 'INTERNAL_ERROR', String(err));

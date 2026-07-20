@@ -548,6 +548,15 @@ export async function incrementProjectPublishCount(db: SqliteDb, id: string) {
   ).run(id, tenantId);
 }
 
+/** 项目跳转 MonkeyCode 计数自增(monkeycode_count 列由 20260720000001 迁移引入)。
+ *  用户确认跳转到 MonkeyCode 时 web 端 beacon 上报。同 download_count 不动 updated_at。 */
+export async function incrementProjectMonkeycodeCount(db: SqliteDb, id: string) {
+  const tenantId = currentTenantId();
+  await db.prepare(
+    `UPDATE projects SET monkeycode_count = monkeycode_count + 1 WHERE id = ? AND tenant_id = ?`,
+  ).run(id, tenantId);
+}
+
 // tombstone:false 仅供"创建失败回滚"路径使用:那种项目用户从未真正拥有过,
 // 不应计入"创建过的项目"统计。用户主动删除一律走默认路径写墓碑,
 // 后台的项目数统计(现存 projects + deleted_projects)才不随删除缩水。
@@ -556,8 +565,8 @@ export async function deleteProject(db: SqliteDb, id: string, opts?: { tombstone
   if (opts?.tombstone !== false) {
     await db
       .prepare(
-        `INSERT INTO deleted_projects (id, tenant_id, name, created_at, deleted_at, creator_id, download_count, published_count)
-           SELECT id, tenant_id, name, created_at, ?, creator_id, download_count, published_count FROM projects WHERE id = ? AND tenant_id = ?
+        `INSERT INTO deleted_projects (id, tenant_id, name, created_at, deleted_at, creator_id, download_count, published_count, monkeycode_count)
+           SELECT id, tenant_id, name, created_at, ?, creator_id, download_count, published_count, monkeycode_count FROM projects WHERE id = ? AND tenant_id = ?
            ON CONFLICT (id) DO NOTHING`,
       )
       .run(Date.now(), id, tenantId);
