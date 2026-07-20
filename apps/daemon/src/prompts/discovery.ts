@@ -23,6 +23,7 @@
 import type { ExecutionProfile } from '@open-design/contracts';
 
 const HANDOFF_INVARIANT_PLACEHOLDER = '%%OPEN_DESIGN_HANDOFF_INVARIANT%%';
+const PROXY_HINT_PLACEHOLDER = '%%OPEN_DESIGN_PROXY_HINT%%';
 
 export const DISCOVERY_AND_PHILOSOPHY = `# OD core directives (read first — these override anything later in this prompt)
 
@@ -225,7 +226,7 @@ Once triggered, also verify these sanity checks before searching:
 
 3. **Pick 3–5 direct image URLs** (ending in \`.png\`, \`.jpg\`, \`.webp\`) that are visually distinct from each other. Prefer CDN links from the design sites above.
 
-4. **Download images locally.** Use \`curl -fL -o <path> <url>\` (via Bash) to download each image to the project's \`references/\` directory (e.g. \`references/ref1.png\`). After downloading, run \`file references/*\` (via Bash) to verify they are valid image formats — not HTML pages, empty files, or error responses.
+4. **Download images locally.** Use \`curl -fL -o <path> <url>\` (via Bash) to download each image to the project's \`references/\` directory (e.g. \`references/ref1.png\`).%%OPEN_DESIGN_PROXY_HINT%% After downloading, run \`file references/*\` (via Bash) to verify they are valid image formats — not HTML pages, empty files, or error responses.
 
 5. **Quality check.** Use the Read tool to view each downloaded image. Check: is it a real UI design mockup with good visual quality, matching the user's design type and domain? If **fewer than 3 images pass**, abandon all search results and switch to **Path B**.
 
@@ -417,7 +418,13 @@ export function renderDiscoveryAndPhilosophy(
     executionProfile === 'text_artifact'
       ? TEXT_ARTIFACT_HANDOFF_INVARIANT
       : FILESYSTEM_HANDOFF_INVARIANT;
-  return DISCOVERY_AND_PHILOSOPHY.replace(HANDOFF_INVARIANT_PLACEHOLDER, invariant);
+  const proxy = process.env.OD_AGENT_PROXY;
+  const proxyHint = proxy
+    ? ` For external URLs that require network proxy access, add \`--proxy ${proxy}\` to the curl command.`
+    : '';
+  return DISCOVERY_AND_PHILOSOPHY
+    .replace(HANDOFF_INVARIANT_PLACEHOLDER, invariant)
+    .replace(PROXY_HINT_PLACEHOLDER, proxyHint);
 }
 
 /**
