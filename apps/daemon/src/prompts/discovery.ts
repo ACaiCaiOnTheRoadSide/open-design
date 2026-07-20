@@ -206,9 +206,10 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 **Trigger rule:** search for design references when the user answered \`designReferences: "yes"\` in the discovery form (or \`[form answers — task-type]\`). If the user answered \`"no"\`, or the question was dropped (active design system / template bound), skip this section entirely.
 
-Once triggered, also verify these sanity checks before searching:
-1. You have **not** already shown a \`<design-references>\` block in this conversation.
-2. The user's brief is clear enough that you know the **design type** (website / mobile app / desktop app / dashboard / landing page / etc.) and the **domain** (e-commerce, social, SaaS, education, etc.). If unclear, infer from context or ask briefly.
+Once triggered, also verify this sanity check before searching:
+1. The user's brief is clear enough that you know the **design type** (website / mobile app / desktop app / dashboard / landing page / etc.) and the **domain** (e-commerce, social, SaaS, education, etc.). If unclear, infer from context or ask briefly.
+
+Multiple searches per conversation are allowed. When searching again, increment the \`ref_<N>\` counter from where the previous batch left off so filenames never collide.
 
 ### Procedure
 
@@ -278,8 +279,48 @@ Two possible replies:
 - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Ask them to briefly describe their preferred visual direction (color tone, layout style, overall feel). If the user declines or says "你来决定", pick the best-matching direction yourself from the Direction library below and proceed to RULE 3.
 
 ### When NOT to search
-- The user answered \`designReferences: "no"\` or the question was dropped.
-- The discovery form was skipped entirely ("skip questions" / "just build" / tweak to existing project).
+- The user answered \`designReferences: "no"\` or the question was dropped — **but only on turn 2**. This does not prevent proactive offers later (see below).
+- The discovery form was skipped entirely ("skip questions" / "just build" / tweak to existing project) — same caveat.
+
+### Proactive design-reference offers (any turn after turn 2)
+
+You may — and should — proactively offer to search for design references at **any point** in the conversation when your judgment says the user could benefit. This is independent of the turn-1 discovery answer.
+
+**Signals that should trigger an offer** (non-exhaustive — use your judgment):
+- The user has not articulated a clear visual direction and you are about to pick one yourself.
+- The user expresses dissatisfaction with the current visual direction ("不好看", "太丑了", "换个风格", "不是我想要的").
+- The user is going back and forth on style, colors, or layout without converging.
+- The user explicitly asks to see other designs, look for inspiration, or find references.
+- You have just delivered a first version and the user has not reacted positively.
+
+**How to offer:** emit a lightweight \`<question-form>\` (NOT a markdown list):
+
+\`\`\`
+<question-form id="design-ref-offer" title="设计参考">
+{
+  "description": "需要我搜索一些设计参考图来找找方向吗？",
+  "questions": [
+    {
+      "id": "wantRef",
+      "label": "搜索设计参考？",
+      "type": "radio",
+      "options": [
+        { "label": "好 — 帮我找找灵感", "value": "yes" },
+        { "label": "不用 — 继续当前方向", "value": "no" }
+      ]
+    }
+  ]
+}
+</question-form>
+\`\`\`
+
+Localize the labels to the user's chat language. The \`id\` and \`value\` fields stay English.
+
+If the user answers \`yes\`, run the full **Procedure** above (Step 1–4). Adjust the Pinterest query to reflect the current context — e.g. if the user said "太暗了", search for lighter / brighter design styles.
+
+If the user answers \`no\`, continue without searching.
+
+**Do NOT** spam the offer. If you offered once and the user declined, wait for a new signal before offering again. Trust your judgment — this is a soft offer, not a mandatory checkpoint.
 
 ---
 

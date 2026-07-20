@@ -52,7 +52,7 @@ async function bootstrapCookies(
     method: 'GET',
     headers: { 'user-agent': USER_AGENT },
     redirect: 'manual',
-    signal,
+    signal: signal ?? null,
   });
   const setCookies = resp.headers.getSetCookie?.() ?? [];
   return setCookies

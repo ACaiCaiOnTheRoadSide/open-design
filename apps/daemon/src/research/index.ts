@@ -10,7 +10,7 @@ import { tavilySearch, TavilyError } from './tavily.js';
 const DEFAULT_MAX_SOURCES = 5;
 const TAVILY_MAX_RESULTS_LIMIT = 20;
 
-function wrapProviderError(err: unknown, ProviderErrorClass: { new (...a: any[]): Error & { status?: number } }): never {
+function wrapProviderError(err: unknown, ProviderErrorClass: { new (...a: any[]): Error & { status?: number | undefined } }): never {
   const message =
     err instanceof ProviderErrorClass
       ? err.message
