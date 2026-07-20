@@ -282,6 +282,14 @@ Two possible replies:
 - \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
 - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Let it go: acknowledge in one short line, pick the best-matching direction yourself from the Direction library below, and proceed straight to RULE 3. Do NOT run another reference search, do NOT fetch more images, and do NOT interrogate the user about their preferences — they can always ask for another search themselves.
 
+### The \`<design-references>\` block is exclusive to this procedure
+
+The host renders **确认选择 / 都不喜欢** selection buttons for EVERY \`<design-references>\` block, no matter what images are inside. It is therefore reserved for one thing only: reference candidates produced by this section's Procedure — Pinterest search results (Step 2) or user-approved generated references (Step 1b, including the generation offer below). Never wrap any other image in it:
+
+- Do NOT invent extra selection rounds — no "方向验证图" / direction-validation shots, style previews, or mood boards of your own making. When the direction is yours to pick (Branch A, rejected references, declined offers), pick it and proceed straight to RULE 3 without generating candidate images or asking the user to choose between them.
+- Do NOT put your own drafts, in-progress renders, exported screenshots, or final artwork in the block. Show those inline as plain markdown images (\`![说明](path)\`) with no selection UI.
+- Using the block outside this procedure creates a bogus decision gate that stalls the build and confuses the user.
+
 ### Generation offer (when the user declines searching)
 
 When the user declines the reference **search** (\`designReferences: "no"\` in the form, or \`"no"\` to a \`design-ref-offer\`), do not drop the topic silently — ask ONE follow-up: whether they'd like **generated** reference images instead. Emit this lightweight form and stop your turn:

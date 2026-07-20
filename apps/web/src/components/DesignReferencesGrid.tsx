@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DesignReferenceItem, DesignReferences } from '../artifacts/design-references';
 import { formatDesignReferenceSelection } from '../artifacts/design-references';
 import { projectFileUrl } from '../providers/registry';
@@ -14,6 +14,36 @@ interface Props {
 }
 
 const DEFAULT_PAGE_SIZE = 3;
+
+// In SaaS mode reference files reach the daemon through sandbox sync, so the
+// block often streams into the chat before its images are fetchable. A plain
+// <img> that 404s once stays broken forever (same src never reloads), so retry
+// with a cache-busting query param on a backoff schedule until the file lands.
+const RETRY_DELAYS_MS = [1500, 3000, 5000, 8000, 12000];
+
+function RefImage({ src, alt }: { src: string; alt: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setAttempt(0);
+    return () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    };
+  }, [src]);
+
+  const handleError = () => {
+    if (attempt >= RETRY_DELAYS_MS.length) return;
+    timerRef.current = window.setTimeout(
+      () => setAttempt((a) => a + 1),
+      RETRY_DELAYS_MS[attempt],
+    );
+  };
+
+  const url =
+    attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}odRetry=${attempt}`;
+  return <img src={url} alt={alt} loading="lazy" onError={handleError} />;
+}
 
 export function DesignReferencesGrid({ refs, projectId, onSelect, disabled, selectedId }: Props) {
   const committed = selectedId;
@@ -76,7 +106,7 @@ export function DesignReferencesGrid({ refs, projectId, onSelect, disabled, sele
             type="button"
           >
             <div className={styles.imageWrap}>
-              <img src={resolveImageUrl(item.image)} alt={item.title} loading="lazy" />
+              <RefImage src={resolveImageUrl(item.image)} alt={item.title} />
             </div>
             <div className={styles.meta}>
               <p className={styles.title}>{item.title}</p>
