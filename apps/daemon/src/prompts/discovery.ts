@@ -216,7 +216,7 @@ Once triggered, also verify these sanity checks before searching:
 
 **Path A — search design websites:**
 
-1. **Construct search keywords** targeting design community sites. Combine the design type + domain + site qualifier. Examples:
+1. **Construct search keywords** targeting design community sites. Combine the design type + domain + site qualifier. Always include at least one of: \`site:dribbble.com\`, \`site:behance.net\`, \`site:pinterest.com\`, \`dribbble\`, \`behance\`, \`UI design\`, \`界面设计\`, \`mockup\`. Examples:
    - \`"电商App UI design site:dribbble.com"\`
    - \`"SaaS dashboard design site:behance.net"\`
    - \`"fitness mobile app mockup site:pinterest.com"\`
@@ -224,7 +224,7 @@ Once triggered, also verify these sanity checks before searching:
 
 2. **Call \`websearch_search\`** 2–3 times with different keyword angles. This is the MCP tool provided by the 百智云 hub — do NOT call \`WebSearch\` (that tool does not exist in this environment). Target sources: Dribbble, Behance, Pinterest, Mobbin, Awwwards, Collect UI.
 
-3. **Pick 3–5 direct image URLs** (ending in \`.png\`, \`.jpg\`, \`.webp\`) that are visually distinct from each other. Prefer CDN links from the design sites above.
+3. **Pick 3–5 direct image URLs** (ending in \`.png\`, \`.jpg\`, \`.webp\`) that are visually distinct from each other (different color schemes, layout styles, visual tones). Prefer CDN links from the design sites above.
 
 4. **Download images locally.** Use \`curl -fL -o <path> <url>\` (via Bash) to download each image to the project's \`references/\` directory (e.g. \`references/ref1.png\`).%%OPEN_DESIGN_PROXY_HINT%% After downloading, run \`file references/*\` (via Bash) to verify they are valid image formats — not HTML pages, empty files, or error responses.
 
@@ -241,9 +241,9 @@ If Path A failed quality check, or if \`websearch_search\` is unavailable, gener
 
 2. **Poll \`image_generate_query_task\`** every 15 seconds for each task until \`completed\` or \`failed\`.
 
-3. **Download completed images** to \`references/\` using \`curl\`, then Read each to verify quality.
+3. **Download completed images.** Use \`curl -fL -o <path> <url>\` (via Bash) to download each image to \`references/\`.%%OPEN_DESIGN_PROXY_HINT%% After downloading, run \`file references/*\` (via Bash) to verify they are valid image formats. Then Read each image to verify quality (real UI mockup, good visual quality, matches design type). If fewer than 3 images pass, retry \`image_generate_text_to_image\` with adjusted prompts for the failed slots. If still insufficient, proceed with however many valid images you have and note the limitation to the user.
 
-**After Path A or Path B succeeds (≥ 3 valid images):**
+**After Path A or Path B produces valid images:**
 
 6. **Emit a \`<design-references>\` block** in your response. The host UI renders it as a clickable image card grid in the chat. Format:
 
@@ -272,7 +272,7 @@ If Path A failed quality check, or if \`websearch_search\` is unavailable, gener
 
 8. **Wait for the user's selection.** Two possible replies:
    - \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
-   - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Pick the best-matching direction yourself from the Direction library below and proceed to RULE 3, or ask the user to briefly describe their preferred direction if context is insufficient.
+   - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Ask them to briefly describe their preferred visual direction (color tone, layout style, overall feel). If the user declines or says "你来决定", pick the best-matching direction yourself from the Direction library below and proceed to RULE 3.
 
 ### When NOT to search
 - The user answered \`designReferences: "no"\` or the question was dropped.
@@ -423,8 +423,8 @@ export function renderDiscoveryAndPhilosophy(
     ? ` For external URLs that require network proxy access, add \`--proxy ${proxy}\` to the curl command.`
     : '';
   return DISCOVERY_AND_PHILOSOPHY
-    .replace(HANDOFF_INVARIANT_PLACEHOLDER, invariant)
-    .replace(PROXY_HINT_PLACEHOLDER, proxyHint);
+    .replace(HANDOFF_INVARIANT_PLACEHOLDER, () => invariant)
+    .replace(PROXY_HINT_PLACEHOLDER, () => proxyHint);
 }
 
 /**
