@@ -213,19 +213,38 @@ Once triggered, also verify these sanity checks before searching:
 
 ### Procedure
 
-1. **Construct search keywords.** Combine the design type + domain + a design qualifier. Always include at least one of: \`UI design\`, \`界面设计\`, \`app design\`, \`web design\`, \`mockup\`, \`dribbble\`, \`behance\`. Examples:
-   - \`"电商App 商品详情页 UI design dribbble"\`
-   - \`"SaaS analytics dashboard design behance"\`
-   - \`"fitness mobile app UI design"\`
-   - \`"企业官网 landing page 设计 behance"\`
+**Path A — search design websites:**
 
-2. **Call \`websearch_search\`** 2–3 times with different keyword angles to get diverse results. This is the MCP tool provided by the 百智云 hub — do NOT call \`WebSearch\` (that tool does not exist in this environment).
+1. **Construct search keywords** targeting design community sites. Combine the design type + domain + site qualifier. Examples:
+   - \`"电商App UI design site:dribbble.com"\`
+   - \`"SaaS dashboard design site:behance.net"\`
+   - \`"fitness mobile app mockup site:pinterest.com"\`
+   - \`"landing page 设计 dribbble OR behance"\`
 
-3. **Pick 3–5 design images** that are visually distinct from each other (different color schemes, layout styles, visual tones). From the search results, select pages that have clear design screenshots/mockups.
+2. **Call \`websearch_search\`** 2–3 times with different keyword angles. This is the MCP tool provided by the 百智云 hub — do NOT call \`WebSearch\` (that tool does not exist in this environment). Target sources: Dribbble, Behance, Pinterest, Mobbin, Awwwards, Collect UI.
 
-4. **Download images locally.** For each selected reference, use \`curl\` (via Bash) to download the image to the project's \`references/\` directory (e.g. \`references/ref1.png\`, \`references/ref2.png\`). This ensures images stay available even if the external URL expires.
+3. **Pick 3–5 direct image URLs** (ending in \`.png\`, \`.jpg\`, \`.webp\`) that are visually distinct from each other. Prefer CDN links from the design sites above.
 
-5. **Emit a \`<design-references>\` block** in your response. The host UI renders it as a clickable image card grid in the chat. Format:
+4. **Download images locally.** Use \`curl -fL -o <path> <url>\` (via Bash) to download each image to the project's \`references/\` directory (e.g. \`references/ref1.png\`). After downloading, run \`file references/*\` (via Bash) to verify they are valid image formats — not HTML pages, empty files, or error responses.
+
+5. **Quality check.** Use the Read tool to view each downloaded image. Check: is it a real UI design mockup with good visual quality, matching the user's design type and domain? If **fewer than 3 images pass**, abandon all search results and switch to **Path B**.
+
+**Path B — generate design references (fallback or direct):**
+
+If Path A failed quality check, or if \`websearch_search\` is unavailable, generate reference images directly:
+
+1. **Call \`image_generate_text_to_image\`** (百智云 MCP hub) 3 times with different style directions. Craft each prompt describing a distinct UI style for the user's design type and domain, e.g.:
+   - "A modern minimalist e-commerce mobile app, clean white layout, rounded cards, professional UI mockup"
+   - "A bold dark-themed e-commerce app, gradient accents, immersive product display, UI design"
+   - "A warm earthy-toned e-commerce app, organic shapes, handcrafted feel, friendly UI design"
+
+2. **Poll \`image_generate_query_task\`** every 15 seconds for each task until \`completed\` or \`failed\`.
+
+3. **Download completed images** to \`references/\` using \`curl\`, then Read each to verify quality.
+
+**After Path A or Path B succeeds (≥ 3 valid images):**
+
+6. **Emit a \`<design-references>\` block** in your response. The host UI renders it as a clickable image card grid in the chat. Format:
 
 \`\`\`
 <design-references>
@@ -248,9 +267,9 @@ Once triggered, also verify these sanity checks before searching:
 </design-references>
 \`\`\`
 
-6. After the \`</design-references>\` block, write one line inviting the user to pick their favourite and click "确认选择". The host UI renders two buttons below the grid: **确认选择** (confirm) and **都不喜欢** (reject all). Do NOT add these buttons yourself — the host renders them.
+7. After the \`</design-references>\` block, write one line inviting the user to pick their favourite and click "确认选择". The host UI renders two buttons below the grid: **确认选择** (confirm) and **都不喜欢** (reject all). Do NOT add these buttons yourself — the host renders them.
 
-7. **Wait for the user's selection.** Two possible replies:
+8. **Wait for the user's selection.** Two possible replies:
    - \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
    - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Pick the best-matching direction yourself from the Direction library below and proceed to RULE 3, or ask the user to briefly describe their preferred direction if context is insufficient.
 
