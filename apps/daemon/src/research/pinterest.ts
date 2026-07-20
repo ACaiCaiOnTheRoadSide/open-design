@@ -1,4 +1,5 @@
 import type { ResearchSource } from '@open-design/contracts/api/research';
+import type { FetchLike } from './net.js';
 
 const SEARCH_ENDPOINT = 'https://www.pinterest.com/resource/BaseSearchResource/get/';
 const HOME_URL = 'https://www.pinterest.com';
@@ -23,7 +24,9 @@ export class PinterestError extends Error {
 export interface PinterestSearchInput {
   query: string;
   maxResults?: number;
-  requestInit?: Pick<RequestInit, 'dispatcher'>;
+  /** Injected fetch. Owns proxy routing (direct-first + fallback); defaults to
+   *  the global direct fetch. */
+  fetchImpl?: FetchLike;
   signal?: AbortSignal;
 }
 
@@ -44,11 +47,10 @@ interface PinterestRawResponse {
 }
 
 async function bootstrapCookies(
-  requestInit?: Pick<RequestInit, 'dispatcher'>,
+  doFetch: FetchLike,
   signal?: AbortSignal,
 ): Promise<string> {
-  const resp = await fetch(HOME_URL, {
-    ...requestInit,
+  const resp = await doFetch(HOME_URL, {
     method: 'GET',
     headers: { 'user-agent': USER_AGENT },
     redirect: 'manual',
@@ -130,6 +132,7 @@ export async function pinterestSearch(
   }
   const query = input.query.trim();
   const maxResults = Math.max(1, Math.min(input.maxResults ?? 10, PINTEREST_MAX_PAGE_SIZE));
+  const doFetch: FetchLike = input.fetchImpl ?? ((url, init) => fetch(url, init));
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
@@ -139,11 +142,10 @@ export async function pinterestSearch(
   }
   let resp: Response;
   try {
-    const cookies = await bootstrapCookies(input.requestInit, ctrl.signal);
+    const cookies = await bootstrapCookies(doFetch, ctrl.signal);
 
     const searchUrl = buildSearchUrl(query, maxResults);
-    resp = await fetch(searchUrl, {
-      ...input.requestInit,
+    resp = await doFetch(searchUrl, {
       method: 'GET',
       headers: {
         'user-agent': USER_AGENT,

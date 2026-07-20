@@ -4,6 +4,7 @@ import type {
   ResearchSource,
 } from '@open-design/contracts/api/research';
 import { resolveProviderConfig } from '../media/config.js';
+import type { FetchLike } from './net.js';
 import { pinterestSearch, PinterestError } from './pinterest.js';
 import { tavilySearch, TavilyError } from './tavily.js';
 
@@ -35,7 +36,9 @@ export interface SearchResearchInput {
   projectRoot: string;
   maxSources?: number;
   providers?: string[];
-  requestInit?: Pick<RequestInit, 'dispatcher'>;
+  /** Injected fetch for provider egress. Owns proxy routing (direct-first +
+   *  fallback); defaults to the global direct fetch inside each provider. */
+  fetchImpl?: FetchLike;
   signal?: AbortSignal;
 }
 
@@ -62,7 +65,7 @@ export async function searchResearch(
       const out = await pinterestSearch({
         query,
         maxResults: maxSources,
-        ...(input.requestInit ? { requestInit: input.requestInit } : {}),
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
       sources = out.sources;
@@ -87,7 +90,7 @@ export async function searchResearch(
         maxResults: maxSources,
         includeAnswer: true,
         ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
-        ...(input.requestInit ? { requestInit: input.requestInit } : {}),
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
       answer = out.answer;

@@ -4,6 +4,7 @@ import type { MediaExecutionPolicy } from '@open-design/contracts';
 import { defaultMediaExecutionPolicy, mediaPolicyDenial } from '../media/policy.js';
 import type { RouteDeps } from '../server-context.js';
 import { proxyDispatcherRequestInit } from '../connectionTest.js';
+import { directFirstFetch, researchProxyRequestInit } from '../research/net.js';
 import {
   aihubmixCatalogUrl,
   parseAIHubMixCatalog,
@@ -766,7 +767,10 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
 
   async function handleResearchSearch(req: any, res: any) {
     try {
-      const proxyDispatcher = proxyDispatcherRequestInit(process.env);
+      // Research egress is direct-first and falls back to the *agent's* proxy
+      // (OD_AGENT_PROXY), not the ambient HTTP(S)_PROXY undici would otherwise
+      // force every request through. See research/net.ts.
+      const proxyDispatcher = researchProxyRequestInit(process.env);
       try {
         const result = await searchResearch({
           projectRoot: PROJECT_ROOT,
@@ -778,7 +782,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
           providers: Array.isArray(req.body?.providers)
             ? req.body.providers
             : undefined,
-          requestInit: proxyDispatcher.requestInit,
+          fetchImpl: directFirstFetch(proxyDispatcher.requestInit),
         });
         res.json(result);
       } finally {
