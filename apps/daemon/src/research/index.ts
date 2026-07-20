@@ -10,6 +10,15 @@ import { tavilySearch, TavilyError } from './tavily.js';
 const DEFAULT_MAX_SOURCES = 5;
 const TAVILY_MAX_RESULTS_LIMIT = 20;
 
+function wrapProviderError(err: unknown, ProviderErrorClass: { new (...a: any[]): Error & { status?: number } }): never {
+  const message =
+    err instanceof ProviderErrorClass
+      ? err.message
+      : `research failed: ${(err as Error).message || String(err)}`;
+  const status = err instanceof ProviderErrorClass && (err as any).status ? (err as any).status : 502;
+  throw new ResearchError(message, status, 'RESEARCH_PROVIDER_FAILED');
+}
+
 export class ResearchError extends Error {
   constructor(
     message: string,
@@ -58,12 +67,7 @@ export async function searchResearch(
       });
       sources = out.sources;
     } catch (err) {
-      const message =
-        err instanceof PinterestError
-          ? err.message
-          : `research failed: ${(err as Error).message || String(err)}`;
-      const status = err instanceof PinterestError && err.status ? err.status : 502;
-      throw new ResearchError(message, status, 'RESEARCH_PROVIDER_FAILED');
+      wrapProviderError(err, PinterestError);
     }
   } else if (provider === 'tavily') {
     const cfg = await resolveProviderConfig(input.projectRoot, 'tavily');
@@ -89,11 +93,7 @@ export async function searchResearch(
       answer = out.answer;
       sources = out.sources;
     } catch (err) {
-      const message =
-        err instanceof TavilyError
-          ? err.message
-          : `research failed: ${(err as Error).message || String(err)}`;
-      throw new ResearchError(message, 502, 'RESEARCH_PROVIDER_FAILED');
+      wrapProviderError(err, TavilyError);
     }
   } else {
     throw new ResearchError(

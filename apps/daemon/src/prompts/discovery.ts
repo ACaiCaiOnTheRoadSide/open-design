@@ -243,7 +243,7 @@ curl -fL -o references/ref_<N>.jpg "<imageUrl>"
 
 **Step 3 — emit \`<design-references>\` with pagination.**
 
-Build the full list of valid images (up to 30). The host UI will display them **3 at a time** with a "下一轮" (next batch) button. Emit ALL items in a single \`<design-references>\` block — the host handles pagination:
+Build the full list of valid images (up to 20). The host UI will display them **3 at a time** with a "下一轮" (next batch) button. Emit ALL items in a single \`<design-references>\` block — the host handles pagination:
 
 \`\`\`
 <design-references>
@@ -427,7 +427,7 @@ export function renderDiscoveryAndPhilosophy(
     : '';
   return DISCOVERY_AND_PHILOSOPHY
     .replace(HANDOFF_INVARIANT_PLACEHOLDER, () => invariant)
-    .replace(PROXY_HINT_PLACEHOLDER, () => proxyHint);
+    .replaceAll(PROXY_HINT_PLACEHOLDER, proxyHint);
 }
 
 /**

@@ -47,27 +47,18 @@ async function bootstrapCookies(
   requestInit?: Pick<RequestInit, 'dispatcher'>,
   signal?: AbortSignal,
 ): Promise<string> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
-  if (signal) {
-    signal.addEventListener('abort', () => ctrl.abort(), { once: true });
-  }
-  try {
-    const resp = await fetch(HOME_URL, {
-      ...requestInit,
-      method: 'GET',
-      headers: { 'user-agent': USER_AGENT },
-      redirect: 'manual',
-      signal: ctrl.signal,
-    });
-    const setCookies = resp.headers.getSetCookie?.() ?? [];
-    return setCookies
-      .map((c) => c.split(';')[0]!)
-      .filter(Boolean)
-      .join('; ');
-  } finally {
-    clearTimeout(timer);
-  }
+  const resp = await fetch(HOME_URL, {
+    ...requestInit,
+    method: 'GET',
+    headers: { 'user-agent': USER_AGENT },
+    redirect: 'manual',
+    signal,
+  });
+  const setCookies = resp.headers.getSetCookie?.() ?? [];
+  return setCookies
+    .map((c) => c.split(';')[0]!)
+    .filter(Boolean)
+    .join('; ');
 }
 
 function buildSearchUrl(query: string, pageSize: number): string {
@@ -134,24 +125,23 @@ export async function pinterestSearch(
       429,
     );
   }
-  lastCallMs = now;
-
   if (!input.query?.trim()) {
     throw new PinterestError('query is required');
   }
   const query = input.query.trim();
   const maxResults = Math.max(1, Math.min(input.maxResults ?? 10, PINTEREST_MAX_PAGE_SIZE));
 
-  const cookies = await bootstrapCookies(input.requestInit, input.signal);
-
-  const searchUrl = buildSearchUrl(query, maxResults);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+  const onCallerAbort = () => ctrl.abort();
   if (input.signal) {
-    input.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+    input.signal.addEventListener('abort', onCallerAbort, { once: true });
   }
   let resp: Response;
   try {
+    const cookies = await bootstrapCookies(input.requestInit, ctrl.signal);
+
+    const searchUrl = buildSearchUrl(query, maxResults);
     resp = await fetch(searchUrl, {
       ...input.requestInit,
       method: 'GET',
@@ -168,6 +158,7 @@ export async function pinterestSearch(
     );
   } finally {
     clearTimeout(timer);
+    input.signal?.removeEventListener('abort', onCallerAbort);
   }
 
   if (!resp.ok) {
@@ -180,5 +171,6 @@ export async function pinterestSearch(
 
   const json = (await resp.json()) as PinterestRawResponse;
   const sources = parsePins(json, maxResults);
+  lastCallMs = Date.now();
   return { sources };
 }
