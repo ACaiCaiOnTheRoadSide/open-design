@@ -231,16 +231,16 @@ If the command **fails** (non-zero exit, empty sources, or no \`imageUrl\` entri
 If the Pinterest search failed, generate reference images directly:
 1. Call \`image_generate_text_to_image\` (百智云 MCP hub) 3 times with different style directions. Craft each prompt describing a distinct UI style for the user's design type and domain.
 2. Poll \`image_generate_query_task\` every 15 seconds for each task until \`completed\` or \`failed\`.
-3. Download completed images using \`curl -fL -o <path> <url>\` (via Bash) to \`references/\`.%%OPEN_DESIGN_PROXY_HINT%% Verify with \`file references/*\`. If fewer than 3 usable images, proceed with what you have and note the limitation.
+3. Download completed images using \`curl -fL -o references/ref_<N>.<ext> <url>\` (via Bash). Derive the extension from the URL (default \`.png\`).%%OPEN_DESIGN_PROXY_HINT%% Verify with \`file references/*\` and rename if the actual format differs from the extension. If fewer than 3 usable images, proceed with what you have and note the limitation. Run \`ls references/\` so you know the exact filenames.
 Then continue to **Step 3**.
 
 **Step 2 — download images.**
 
-From the search results, take all sources that have a valid \`imageUrl\`. Download each using:
+From the search results, take all sources that have a valid \`imageUrl\`. Derive the file extension from the URL (default to \`.jpg\` when the URL has no recognizable image extension). Download each using:
 \`\`\`
-curl -fL -o references/ref_<N>.jpg "<imageUrl>"
+curl -fL -o references/ref_<N>.<ext> "<imageUrl>"
 \`\`\`
-%%OPEN_DESIGN_PROXY_HINT%%Run \`file references/*\` to verify they are valid images. Discard any invalid files.
+%%OPEN_DESIGN_PROXY_HINT%%Run \`file references/*\` to verify they are valid images. If \`file\` reports a format that differs from the extension (e.g. file is PNG but saved as \`.jpg\`), rename the file to match its actual format. Discard any invalid files. After cleanup, run \`ls references/\` so you know the exact filenames on disk.
 
 **Step 3 — emit \`<design-references>\` with pagination.**
 
@@ -260,7 +260,7 @@ Build the full list of valid images (up to 20). The host UI will display them **
     {
       "id": "ref_2",
       "title": "深色沉浸式",
-      "image": "references/ref_2.jpg",
+      "image": "references/ref_2.png",
       "description": "暗色背景，渐变色点缀"
     }
   ]
@@ -268,7 +268,7 @@ Build the full list of valid images (up to 20). The host UI will display them **
 </design-references>
 \`\`\`
 
-Use the Pinterest source \`title\` as the card title, and \`snippet\` as the description (truncate to ~50 chars if long). The \`image\` field must point to the local downloaded path (\`references/ref_<N>.jpg\`).
+Use the Pinterest source \`title\` as the card title, and \`snippet\` as the description (truncate to ~50 chars if long). **Critical:** the \`image\` field must be the EXACT filename on disk (from \`ls references/\`), including the correct extension. A mismatch causes a 404 in the UI.
 
 After the block, write one line inviting the user to browse and pick their favourite. The host UI renders **确认选择** (confirm), **都不喜欢** (reject all), and **下一轮** (next batch) buttons. Do NOT add these buttons yourself.
 
