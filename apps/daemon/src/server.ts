@@ -519,6 +519,7 @@ import {
   listConversations,
   listDeployments,
   listLatestProjectRunStatuses,
+  listProjectRunIds,
   listMessages,
   listPreviewComments,
   listProjects,
@@ -4500,6 +4501,7 @@ export async function startServer({
     incrementProjectPublishCount,
     incrementProjectMonkeycodeCount,
     dbDeleteProject,
+    listProjectRunIds,
     removeProjectDir,
     validateLinkedDirs,
   };

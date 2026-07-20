@@ -20,7 +20,8 @@ import {
   resolvePluginSnapshot,
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
-import { markDirty, hydrate as hydrateProject } from '../../sync/engine.js';
+import { markDirty, hydrate as hydrateProject, dropState as dropProjectSyncState } from '../../sync/engine.js';
+import { deleteMemoryEntriesByProject } from '../../memory.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
@@ -939,7 +940,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { sendApiError, createSseResponse } = ctx.http;
   const { DESIGN_SYSTEMS_DIR, PROJECTS_DIR, SKILLS_DIR, BRANDS_DIR } = ctx.paths;
   const { readAppConfig, writeAppConfig } = ctx.appConfig;
-  const { insertProject, validateLinkedDirs, getProject, getProjectOwnerUnscoped, updateProject, dbDeleteProject, removeProjectDir, incrementProjectDownloadCount, incrementProjectPublishCount, incrementProjectMonkeycodeCount } = ctx.projectStore;
+  const { insertProject, validateLinkedDirs, getProject, getProjectOwnerUnscoped, updateProject, dbDeleteProject, listProjectRunIds, removeProjectDir, incrementProjectDownloadCount, incrementProjectPublishCount, incrementProjectMonkeycodeCount } = ctx.projectStore;
   const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
@@ -1756,8 +1757,47 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     }
   });
 
+  // 项目删除的盘面级联:PROJECTS_DIR/<id> 之外还有四类按项目维度落盘的数据,
+  // removeProjectDir 与 DB 级联都碰不到,不清就永久泄漏:
+  //   artifacts/<projectId>/<runId>/   critique 转写(server.ts 写入)
+  //   runs/<runId>/                    run 事件日志 events.jsonl(runtimes/runs.ts)
+  //   sync/<projectId>.json            sync 引擎状态(冷淘汰只回收已同步项目)
+  //   memory/<tenant>/<id>.md          frontmatter projectId 匹配的项目级记忆
+  // 全部尽力而为:此时项目行和文件已删,任何一项失败都不该把删除整体报错
+  // (那会让 UI 以为项目还在);失败仅记日志。
+  async function cleanupProjectResiduals(projectId: string, runIds: string[]) {
+    const { ARTIFACTS_DIR, RUNTIME_DATA_DIR } = ctx.paths;
+    const tasks: Array<{ label: string; run: () => Promise<unknown> }> = [
+      {
+        label: 'artifacts',
+        run: () => rm(path.join(ARTIFACTS_DIR, projectId), { recursive: true, force: true }),
+      },
+      ...runIds.filter(isSafeId).map((runId) => ({
+        label: `runs/${runId}`,
+        run: () => rm(path.join(RUNTIME_DATA_DIR, 'runs', runId), { recursive: true, force: true }),
+      })),
+      { label: 'sync-state', run: () => dropProjectSyncState(projectId) },
+      { label: 'memory', run: () => deleteMemoryEntriesByProject(RUNTIME_DATA_DIR, projectId) },
+    ];
+    const results = await Promise.allSettled(tasks.map((t) => t.run()));
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        const reason = (r.reason as any)?.message || r.reason;
+        console.warn(`[project-delete] residual cleanup failed (${tasks[i]?.label}) for ${projectId}: ${reason}`);
+      }
+    });
+  }
+
   app.delete('/api/projects/:id', async (req, res) => {
     try {
+      // Snapshot the project's run ids BEFORE the DB delete — the cascade
+      // wipes messages, after which runs/<runId>/ log dirs become unfindable.
+      let runIds: string[] = [];
+      try {
+        runIds = await listProjectRunIds(db, req.params.id);
+      } catch {
+        // Best-effort: a failed lookup must not block the delete.
+      }
       // Remove the project's files BEFORE the DB row. removeProjectDir uses
       // rm(..., { force: true }) so a missing dir is a no-op; a genuine failure
       // (permission / busy) now aborts the whole delete instead of being
@@ -1766,9 +1806,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // disk with no project row left to ever clean them up. Files-first means a
       // failure keeps both the row and the files, so the project stays listed
       // and the user can retry. DB deletion cascades to conversations/messages/
-      // media_tasks via PG ON DELETE CASCADE.
+      // media_tasks via PG ON DELETE CASCADE. removeProjectDir also validates
+      // the id (isSafeId throws), so the residual cleanup below never sees a
+      // path-traversal id.
       await removeProjectDir(PROJECTS_DIR, req.params.id);
       await dbDeleteProject(db, req.params.id);
+      await cleanupProjectResiduals(req.params.id, runIds);
       /** @type {import('@open-design/contracts').OkResponse} */
       const body = { ok: true };
       res.json(body);

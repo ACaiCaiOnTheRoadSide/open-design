@@ -557,6 +557,24 @@ export async function incrementProjectMonkeycodeCount(db: SqliteDb, id: string) 
   ).run(id, tenantId);
 }
 
+/** 项目删除级联用:项目名下所有 run id(messages.run_id 去重)。必须在
+ *  deleteProject 之前调用——DB 级联删掉 messages 后就再也查不到这些 id,
+ *  runs/<runId>/ 下的事件日志目录会成为无主孤儿。 */
+export async function listProjectRunIds(db: SqliteDb, projectId: string): Promise<string[]> {
+  const tenantId = currentTenantId();
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT m.run_id AS runId
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.project_id = ?
+          AND c.tenant_id = ?
+          AND m.run_id IS NOT NULL`,
+    )
+    .all(projectId, tenantId) as DbRow[];
+  return rows.map((row) => String(row.runId)).filter(Boolean);
+}
+
 // tombstone:false 仅供"创建失败回滚"路径使用:那种项目用户从未真正拥有过,
 // 不应计入"创建过的项目"统计。用户主动删除一律走默认路径写墓碑,
 // 后台的项目数统计(现存 projects + deleted_projects)才不随删除缩水。

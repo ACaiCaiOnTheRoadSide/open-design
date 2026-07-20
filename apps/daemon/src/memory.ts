@@ -528,6 +528,26 @@ export async function deleteMemoryEntry(dataDir, id) {
   emitChange({ kind: 'delete', id });
 }
 
+/**
+ * Project-delete cascade: remove every memory entry scoped to the given
+ * project (frontmatter `projectId`). Memory lives per-tenant under
+ * <dataDir>/memory/<tenant>/ — a sibling of the projects tree — so
+ * removeProjectDir never touches it; without this, project-scoped entries
+ * would outlive their project forever. Global entries (no projectId) and
+ * other projects' entries are untouched. Returns the number deleted.
+ */
+export async function deleteMemoryEntriesByProject(dataDir, projectId) {
+  if (typeof projectId !== 'string' || !projectId) return 0;
+  const entries = await listMemoryEntries(dataDir);
+  let deleted = 0;
+  for (const entry of entries) {
+    if (entry.projectId !== projectId) continue;
+    await deleteMemoryEntry(dataDir, entry.id);
+    deleted += 1;
+  }
+  return deleted;
+}
+
 // ----- Index maintenance --------------------------------------------------
 
 const INDEX_LINK_RE = /^\s*-\s+\[([^\]]+)\]\(([^)]+)\)(\s+—\s+(.*))?$/;

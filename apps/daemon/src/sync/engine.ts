@@ -337,6 +337,33 @@ export async function flush(projectId: string): Promise<FlushResult> {
 }
 
 /**
+ * Explicit project delete: discard the per-project sync state file and any
+ * pending background push. The project dir itself is removed by the delete
+ * handler; without this, sync/<projectId>.json would outlive the project —
+ * cold eviction never reclaims it because eviction requires a synced base
+ * state, which a deleted project no longer accumulates.
+ */
+export async function dropState(projectId: string): Promise<void> {
+  if (!stateDir) return;
+  if (!projectId || !isValidManifestPath(projectId)) return;
+  const rt = runtimes.get(projectId);
+  if (rt?.debounce) {
+    clearTimeout(rt.debounce);
+    rt.debounce = null;
+  }
+  // Serialize on the project's chain so an in-flight push can't recreate the
+  // state file after we remove it.
+  await enqueue(projectId, async () => {
+    await rm(stateFileOf(projectId), { force: true }).catch(() => {});
+    const cur = runtimes.get(projectId);
+    if (cur) {
+      cur.state = null;
+      cur.dirty = false;
+    }
+  });
+}
+
+/**
  * Reconcile the local directory with the remote manifest, downloading only
  * changed/missing files and deleting files the manifest no longer contains.
  * Local dirty changes are pushed first (implicit flush), so after this the
