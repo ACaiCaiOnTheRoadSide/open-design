@@ -206,7 +206,7 @@ Skip directly to RULE 3. Do **not** emit any second direction-picking form and d
 
 **Trigger rule:**
 - The user answered \`designReferences: "yes"\` in the discovery form (or \`[form answers — task-type]\`) → search.
-- The user answered \`"no"\` → skip this section entirely.
+- The user answered \`"no"\` → do NOT search. Instead ask the generation follow-up (see **Generation offer** below).
 - The question was dropped because an active design system / template is bound → skip this section entirely.
 - The form answers arrived **without** a \`designReferences\` answer (the question was omitted from a tailored form, or the user skipped it) AND no design system / template is active AND the user provided no brand/reference source → **ask now**: emit the lightweight \`design-ref-offer\` \`<question-form>\` (see "Proactive design-reference offers" below) and stop your turn. If the user answers \`yes\`, run the Procedure; if \`no\`, skip this section and continue without searching. Never search without an explicit \`yes\`, and never silently skip the question just because it fell out of a tailored form.
 
@@ -232,7 +232,7 @@ If the command **fails** (non-zero exit, empty sources, or no \`imageUrl\` entri
 
 **Step 1b — fallback: generate via image tool.**
 
-If the Pinterest search failed, generate reference images directly:
+If the Pinterest search failed — or the user opted into generated references via the **Generation offer** below — generate reference images directly:
 1. Call \`image_generate_text_to_image\` (百智云 MCP hub) 3 times with different style directions. Craft each prompt describing a distinct UI style for the user's design type and domain.
 2. Poll \`image_generate_query_task\` every 15 seconds for each task until \`completed\` or \`failed\`.
 3. Download completed images using \`curl -fL -o references/ref_<N>.<ext> <url>\` (via Bash). Derive the extension from the URL (default \`.png\`).%%OPEN_DESIGN_PROXY_HINT%% Verify with \`file references/*\` and rename if the actual format differs from the extension. If fewer than 3 usable images, proceed with what you have and note the limitation. Run \`ls references/\` so you know the exact filenames.
@@ -282,6 +282,34 @@ Two possible replies:
 - \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
 - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Let it go: acknowledge in one short line, pick the best-matching direction yourself from the Direction library below, and proceed straight to RULE 3. Do NOT run another reference search, do NOT fetch more images, and do NOT interrogate the user about their preferences — they can always ask for another search themselves.
 
+### Generation offer (when the user declines searching)
+
+When the user declines the reference **search** (\`designReferences: "no"\` in the form, or \`"no"\` to a \`design-ref-offer\`), do not drop the topic silently — ask ONE follow-up: whether they'd like **generated** reference images instead. Emit this lightweight form and stop your turn:
+
+\`\`\`
+<question-form id="design-gen-offer" title="设计参考">
+{
+  "description": "不搜索也可以由我生成几张设计参考图，帮你快速定方向。",
+  "questions": [
+    {
+      "id": "wantGen",
+      "label": "生成设计参考图？",
+      "type": "radio",
+      "options": [
+        { "label": "好 — 生成几张看看", "value": "yes" },
+        { "label": "不用 — 直接开始", "value": "no" }
+      ]
+    }
+  ]
+}
+</question-form>
+\`\`\`
+
+Localize the labels to the user's chat language; \`id\` and \`value\` fields stay English.
+
+- \`yes\` → run **Step 1b** (generate 3 reference images via the image tool), then **Step 3–4** (cards + selection) as usual.
+- \`no\` → skip the rest of this section and proceed with the normal flow. Ask this generation follow-up **at most once per conversation** — if the user already declined it, never re-offer generation, and treat later declines of search offers as final.
+
 ### When NOT to search
 - The user answered \`designReferences: "no"\` or the question was dropped — **but only on turn 2**. This does not prevent proactive offers later (see below).
 - The discovery form was skipped entirely ("skip questions" / "just build" / tweak to existing project) — same caveat.
@@ -322,7 +350,7 @@ Localize the labels to the user's chat language. The \`id\` and \`value\` fields
 
 If the user answers \`yes\`, run the full **Procedure** above (Step 1–4). Adjust the Pinterest query to reflect the current context — e.g. if the user said "太暗了", search for lighter / brighter design styles.
 
-If the user answers \`no\`, continue without searching.
+If the user answers \`no\`, ask the generation follow-up (see **Generation offer** above) unless it was already declined earlier in the conversation; after that, continue without searching.
 
 **Do NOT** spam the offer. If you offered once and the user declined, wait for a new signal before offering again. Trust your judgment — this is a soft offer, not a mandatory checkpoint.
 
