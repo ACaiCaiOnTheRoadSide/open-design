@@ -764,14 +764,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     await handleUpload(res, grant.projectId, req.body);
   });
 
-  app.post('/api/research/search', async (req, res) => {
-    if (!isLocalSameOrigin(req, getResolvedPort())) {
-      return res.status(403).json({
-        error:
-          'cross-origin request rejected: research search is restricted to the local UI / CLI',
-      });
-    }
-
+  async function handleResearchSearch(req: any, res: any) {
     try {
       const proxyDispatcher = proxyDispatcherRequestInit(process.env);
       try {
@@ -804,6 +797,22 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         },
       });
     }
+  }
+
+  app.post('/api/research/search', async (req, res) => {
+    if (!isLocalSameOrigin(req, getResolvedPort())) {
+      return res.status(403).json({
+        error:
+          'cross-origin request rejected: research search is restricted to the local UI / CLI',
+      });
+    }
+    await handleResearchSearch(req, res);
+  });
+
+  app.post('/api/tools/research/search', async (req, res) => {
+    const grant = authorizeToolRequest(req, res, 'research:search');
+    if (!grant) return;
+    await handleResearchSearch(req, res);
   });
 
   app.post('/api/media/tasks/:id/wait', async (req, res) => {

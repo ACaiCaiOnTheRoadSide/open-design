@@ -783,18 +783,25 @@ async function runResearchSearch(rawArgs) {
     process.exit(2);
   }
   const daemonUrl = await cliDaemonUrl(flags);
+  const token = process.env.OD_TOOL_TOKEN;
   const maxSources =
     flags['max-sources'] == null ? undefined : Number(flags['max-sources']);
   const providers =
     typeof flags.providers === 'string' && flags.providers.trim()
       ? flags.providers.split(',').map((p) => p.trim()).filter(Boolean)
       : undefined;
-  const url = `${daemonUrl.replace(/\/$/, '')}/api/research/search`;
+  const base = daemonUrl.replace(/\/$/, '');
+  const url = token
+    ? `${base}/api/tools/research/search`
+    : `${base}/api/research/search`;
   let resp;
   try {
     resp = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({
         query,
         ...(Number.isFinite(maxSources) ? { maxSources } : {}),
