@@ -305,6 +305,9 @@ function retainAccountableBase(
 export function markDirty(projectId: string, metadata?: unknown): void {
   if (!syncEnabled()) return;
   if (!projectId || !isValidManifestPath(projectId)) return;
+  // A write landing after dropState (in-flight request racing the delete)
+  // must not resurrect the state file / push a scan of the deleted dir.
+  if (isRecentlyDropped(projectId)) return;
   const meta = metadata as { baseDir?: unknown } | null | undefined;
   if (meta && typeof meta.baseDir === 'string' && meta.baseDir) return;
   const rt = runtimeOf(projectId);
@@ -336,6 +339,25 @@ export async function flush(projectId: string): Promise<FlushResult> {
   return { enabled: true, manifest };
 }
 
+// Recently-dropped project ids. Blocks markDirty/hydrate stragglers (an
+// in-flight request that read the project row just before deletion, a
+// debounced push scheduled pre-delete, a late watcher callback) from
+// resurrecting sync/<projectId>.json or re-downloading the project dir right
+// after an explicit delete. TTL rather than permanent so a project recreated
+// under the same id later syncs normally.
+const droppedAt = new Map<string, number>();
+const DROP_TOMBSTONE_MS = 60_000;
+
+function isRecentlyDropped(projectId: string): boolean {
+  const at = droppedAt.get(projectId);
+  if (at == null) return false;
+  if (Date.now() - at > DROP_TOMBSTONE_MS) {
+    droppedAt.delete(projectId);
+    return false;
+  }
+  return true;
+}
+
 /**
  * Explicit project delete: discard the per-project sync state file and any
  * pending background push. The project dir itself is removed by the delete
@@ -346,21 +368,24 @@ export async function flush(projectId: string): Promise<FlushResult> {
 export async function dropState(projectId: string): Promise<void> {
   if (!stateDir) return;
   if (!projectId || !isValidManifestPath(projectId)) return;
+  droppedAt.set(projectId, Date.now());
   const rt = runtimes.get(projectId);
   if (rt?.debounce) {
     clearTimeout(rt.debounce);
     rt.debounce = null;
   }
   // Serialize on the project's chain so an in-flight push can't recreate the
-  // state file after we remove it.
+  // state file after we remove it. force:true makes a missing file a no-op;
+  // a real failure (EACCES/EBUSY) propagates to the caller, which owns the
+  // logging — swallowing it here would leave the leak with zero diagnostics.
   await enqueue(projectId, async () => {
-    await rm(stateFileOf(projectId), { force: true }).catch(() => {});
-    const cur = runtimes.get(projectId);
-    if (cur) {
-      cur.state = null;
-      cur.dirty = false;
-    }
+    await rm(stateFileOf(projectId), { force: true });
   });
+  // Remove the runtime entry so deleted projects don't accumulate forever in
+  // the module-level map (the chain closure keeps its own reference, so
+  // serialization is unaffected). A straggler can mint at most one fresh
+  // entry, which the tombstone above keeps inert.
+  runtimes.delete(projectId);
 }
 
 /**
@@ -381,6 +406,13 @@ export async function hydrate(projectId: string, opts?: { ifMissing?: boolean })
   if (!syncEnabled()) return { updated: false, version: 0, reason: 'sync disabled' };
   if (!projectId || !isValidManifestPath(projectId)) {
     return { updated: false, version: 0, reason: 'invalid project id' };
+  }
+  // A hydrate racing an explicit delete (e.g. the web UI still polling
+  // project files) would re-download the whole project dir from the remote
+  // manifest after removeProjectDir already ran — resurrecting the project
+  // as an unevictable baseVersion-0 orphan. Tombstoned ids short-circuit.
+  if (isRecentlyDropped(projectId)) {
+    return { updated: false, version: 0, reason: 'project deleted' };
   }
   const ifMissing = opts?.ifMissing === true;
   return enqueue(projectId, async () => {

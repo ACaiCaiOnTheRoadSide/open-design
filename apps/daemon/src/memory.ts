@@ -521,8 +521,11 @@ export async function upsertMemoryEntry(dataDir, input, options) {
 export async function deleteMemoryEntry(dataDir, id) {
   try {
     await fsp.unlink(entryPath(dataDir, id));
-  } catch {
-    // Already gone — fine. Caller doesn't care.
+  } catch (err: any) {
+    // Already gone is fine. A real failure (EPERM, EBUSY) must surface —
+    // stripping the index line anyway would hide the leaked file forever
+    // while reporting success.
+    if (err?.code !== 'ENOENT') throw err;
   }
   await removeIndexLine(dataDir, id);
   emitChange({ kind: 'delete', id });
@@ -533,17 +536,79 @@ export async function deleteMemoryEntry(dataDir, id) {
  * project (frontmatter `projectId`). Memory lives per-tenant under
  * <dataDir>/memory/<tenant>/ — a sibling of the projects tree — so
  * removeProjectDir never touches it; without this, project-scoped entries
- * would outlive their project forever. Global entries (no projectId) and
- * other projects' entries are untouched. Returns the number deleted.
+ * would outlive their project forever.
+ *
+ * Sweeps EVERY tenant dir, not just the caller's: entries are written under
+ * whatever tenant was active when they were extracted (per-member dirs for
+ * team tenants, `__legacy__` for tenantless background runs), which need not
+ * match the tenant issuing the delete. Project ids are globally unique
+ * (creation checks ownership unscoped), so a projectId match is
+ * unambiguous. Global entries (no projectId) and other projects' entries
+ * are untouched. Returns the number deleted; throws after the sweep if any
+ * entry could not be removed, so callers can log the leak.
  */
 export async function deleteMemoryEntriesByProject(dataDir, projectId) {
   if (typeof projectId !== 'string' || !projectId) return 0;
-  const entries = await listMemoryEntries(dataDir);
+  const memoryRoot = path.join(dataDir, 'memory');
+  let tenantDirs = [];
+  try {
+    tenantDirs = (await fsp.readdir(memoryRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(memoryRoot, entry.name));
+  } catch {
+    return 0; // no memory root yet — nothing to clean
+  }
   let deleted = 0;
-  for (const entry of entries) {
-    if (entry.projectId !== projectId) continue;
-    await deleteMemoryEntry(dataDir, entry.id);
-    deleted += 1;
+  const failures = [];
+  for (const dir of tenantDirs) {
+    let names = [];
+    try {
+      names = await fsp.readdir(dir);
+    } catch {
+      continue;
+    }
+    const removedIds = [];
+    for (const name of names) {
+      if (!name.endsWith('.md') || name === INDEX_FILE) continue;
+      const id = name.slice(0, -3);
+      if (!/^[a-z0-9_]+$/.test(id)) continue;
+      const filePath = path.join(dir, name);
+      try {
+        const raw = await fsp.readFile(filePath, 'utf8');
+        const { data } = parseFrontmatter(raw);
+        if (data?.projectId !== projectId) continue;
+        await fsp.unlink(filePath);
+        removedIds.push(id);
+        deleted += 1;
+      } catch (err: any) {
+        if (err?.code === 'ENOENT') continue; // raced away — fine
+        failures.push(`${filePath}: ${err?.message || err}`);
+      }
+    }
+    if (removedIds.length > 0) {
+      // One index rewrite per tenant dir (not one per entry): strip every
+      // removed id's bullet in a single read+write.
+      try {
+        const indexFile = path.join(dir, INDEX_FILE);
+        const current = await fsp.readFile(indexFile, 'utf8').catch(() => '');
+        if (current) {
+          const links = new Set(removedIds.map((id) => `${id}.md`));
+          const lines = current.split(/\r?\n/).filter((line) => {
+            const m = INDEX_LINK_RE.exec(line);
+            return !m || !links.has(m[2]);
+          });
+          await fsp.writeFile(indexFile, lines.join('\n'));
+        }
+      } catch (err: any) {
+        failures.push(`index ${dir}: ${err?.message || err}`);
+      }
+      for (const id of removedIds) emitChange({ kind: 'delete', id });
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `memory cleanup incomplete for project ${projectId} (${deleted} deleted): ${failures.join('; ')}`,
+    );
   }
   return deleted;
 }

@@ -479,6 +479,7 @@ import {
   writeProjectFile,
   reconcileHtmlArtifactManifest,
 } from './projects.js';
+import { cleanupProjectResiduals } from './project-residuals.js';
 import { validateArtifactManifestInput } from './artifacts/manifest.js';
 import { ArtifactPublicationBlockedError } from './artifacts/publication-guard.js';
 import {
@@ -10213,7 +10214,29 @@ export async function startServer({
       }
       if (createdProjectId) {
         // 创建失败的回滚删除:项目从未真正交付给用户,不写 deleted_projects 墓碑。
+        // 盘面残留同样要清:失败前 run 可能已写项目目录、runs/<runId> 日志、
+        // sync 状态与项目级记忆——与 HTTP 删除路径共用 cleanupProjectResiduals,
+        // 避免这条路径把泄漏类偷偷带回来。run id 必须在 DB 级联前快照。
+        let rollbackRunIds: string[] = [];
+        try {
+          rollbackRunIds = await listProjectRunIds(db, createdProjectId);
+        } catch {
+          // Best-effort: a failed lookup must not block the rollback.
+        }
         await dbDeleteProject(db, createdProjectId, { tombstone: false });
+        try {
+          await removeProjectDir(PROJECTS_DIR, createdProjectId);
+        } catch (err: any) {
+          console.warn(
+            `[routine] rollback removeProjectDir failed for ${createdProjectId}: ${err?.message || err}`,
+          );
+        }
+        await cleanupProjectResiduals({
+          projectId: createdProjectId,
+          runIds: rollbackRunIds,
+          artifactsDir: ARTIFACTS_DIR,
+          runtimeDataDir: RUNTIME_DATA_DIR,
+        });
       }
     };
 

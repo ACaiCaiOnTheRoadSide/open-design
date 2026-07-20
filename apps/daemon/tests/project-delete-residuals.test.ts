@@ -44,7 +44,31 @@ describe('deleteMemoryEntriesByProject', () => {
 
     expect(deleted).toBe(1);
     const remaining = await listMemoryEntries(dataDir);
-    expect(remaining.map((e) => e.projectId).sort()).toEqual([null, 'p2'].sort());
+    expect(new Set(remaining.map((e) => e.projectId))).toEqual(new Set([null, 'p2']));
+  });
+
+  it('sweeps every tenant dir, not just the active tenant', async () => {
+    // Entries can be written under a different tenant than the one deleting
+    // (per-member team dirs, __legacy__ background runs). Simulate a foreign
+    // tenant dir with a p1-scoped entry the active-tenant helpers can't see.
+    const foreignDir = path.join(dataDir, 'memory', 'team--other');
+    await fsp.mkdir(foreignDir, { recursive: true });
+    const entryFile = path.join(foreignDir, 'project_foreign_fact.md');
+    await fsp.writeFile(
+      entryFile,
+      '---\nname: Foreign fact\ndescription: \ntype: project\nprojectId: p1\n---\n\n- body\n',
+    );
+    await fsp.writeFile(
+      path.join(foreignDir, 'MEMORY.md'),
+      '# Memory\n\n- [Foreign fact](project_foreign_fact.md) — desc\n',
+    );
+
+    const deleted = await deleteMemoryEntriesByProject(dataDir, 'p1');
+
+    expect(deleted).toBe(1);
+    await expect(fsp.access(entryFile)).rejects.toThrow();
+    const index = await fsp.readFile(path.join(foreignDir, 'MEMORY.md'), 'utf8');
+    expect(index).not.toContain('project_foreign_fact.md');
   });
 
   it('is a no-op for blank project ids (never nukes global memory)', async () => {

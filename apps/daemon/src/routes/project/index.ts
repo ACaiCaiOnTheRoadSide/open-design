@@ -20,8 +20,8 @@ import {
   resolvePluginSnapshot,
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
-import { markDirty, hydrate as hydrateProject, dropState as dropProjectSyncState } from '../../sync/engine.js';
-import { deleteMemoryEntriesByProject } from '../../memory.js';
+import { markDirty, hydrate as hydrateProject } from '../../sync/engine.js';
+import { cleanupProjectResiduals } from '../../project-residuals.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
@@ -1757,39 +1757,28 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     }
   });
 
-  // 项目删除的盘面级联:PROJECTS_DIR/<id> 之外还有四类按项目维度落盘的数据,
-  // removeProjectDir 与 DB 级联都碰不到,不清就永久泄漏:
-  //   artifacts/<projectId>/<runId>/   critique 转写(server.ts 写入)
-  //   runs/<runId>/                    run 事件日志 events.jsonl(runtimes/runs.ts)
-  //   sync/<projectId>.json            sync 引擎状态(冷淘汰只回收已同步项目)
-  //   memory/<tenant>/<id>.md          frontmatter projectId 匹配的项目级记忆
-  // 全部尽力而为:此时项目行和文件已删,任何一项失败都不该把删除整体报错
-  // (那会让 UI 以为项目还在);失败仅记日志。
-  async function cleanupProjectResiduals(projectId: string, runIds: string[]) {
-    const { ARTIFACTS_DIR, RUNTIME_DATA_DIR } = ctx.paths;
-    const tasks: Array<{ label: string; run: () => Promise<unknown> }> = [
-      {
-        label: 'artifacts',
-        run: () => rm(path.join(ARTIFACTS_DIR, projectId), { recursive: true, force: true }),
-      },
-      ...runIds.filter(isSafeId).map((runId) => ({
-        label: `runs/${runId}`,
-        run: () => rm(path.join(RUNTIME_DATA_DIR, 'runs', runId), { recursive: true, force: true }),
-      })),
-      { label: 'sync-state', run: () => dropProjectSyncState(projectId) },
-      { label: 'memory', run: () => deleteMemoryEntriesByProject(RUNTIME_DATA_DIR, projectId) },
-    ];
-    const results = await Promise.allSettled(tasks.map((t) => t.run()));
-    results.forEach((r, i) => {
-      if (r.status === 'rejected') {
-        const reason = (r.reason as any)?.message || r.reason;
-        console.warn(`[project-delete] residual cleanup failed (${tasks[i]?.label}) for ${projectId}: ${reason}`);
-      }
-    });
-  }
-
   app.delete('/api/projects/:id', async (req, res) => {
     try {
+      // Tenant-scoped ownership check BEFORE any destructive work. Without
+      // it, the filesystem cleanup below (removeProjectDir, artifacts, sync
+      // state — all tenant-blind global paths) would execute for another
+      // tenant's project id while their tenant-filtered DB row survived:
+      // cross-tenant data destruction answering ok:true.
+      if (!(await getProject(db, req.params.id))) {
+        return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+      }
+      // Cancel active runs before touching their on-disk logs: a live run's
+      // lazy log-stream re-open (runtimes/runs.ts ensureLogStream) would
+      // recreate runs/<runId>/ right after we rm it — and Windows would
+      // EBUSY on the open handle. cancel() closes the stream via finish()
+      // and sets eventsLogClosed, so late events can no longer re-open it.
+      for (const run of design.runs.list({ projectId: req.params.id, status: 'active' })) {
+        try {
+          await design.runs.cancel(run);
+        } catch {
+          // Best-effort: an uncancellable run must not block the delete.
+        }
+      }
       // Snapshot the project's run ids BEFORE the DB delete — the cascade
       // wipes messages, after which runs/<runId>/ log dirs become unfindable.
       let runIds: string[] = [];
@@ -1806,12 +1795,17 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // disk with no project row left to ever clean them up. Files-first means a
       // failure keeps both the row and the files, so the project stays listed
       // and the user can retry. DB deletion cascades to conversations/messages/
-      // media_tasks via PG ON DELETE CASCADE. removeProjectDir also validates
-      // the id (isSafeId throws), so the residual cleanup below never sees a
-      // path-traversal id.
+      // media_tasks via PG ON DELETE CASCADE; the residual sweep for data
+      // outside both (artifacts, run logs, sync state, memory) is shared with
+      // the creation-rollback path in project-residuals.ts.
       await removeProjectDir(PROJECTS_DIR, req.params.id);
       await dbDeleteProject(db, req.params.id);
-      await cleanupProjectResiduals(req.params.id, runIds);
+      await cleanupProjectResiduals({
+        projectId: req.params.id,
+        runIds,
+        artifactsDir: ctx.paths.ARTIFACTS_DIR,
+        runtimeDataDir: ctx.paths.RUNTIME_DATA_DIR,
+      });
       /** @type {import('@open-design/contracts').OkResponse} */
       const body = { ok: true };
       res.json(body);
