@@ -248,11 +248,11 @@ Once triggered, also verify these sanity checks before searching:
 </design-references>
 \`\`\`
 
-6. After the \`</design-references>\` block, write one line inviting the user to click their preferred direction, and mention they can also just describe what they want if none fits.
+6. After the \`</design-references>\` block, write one line inviting the user to pick their favourite and click "确认选择". The host UI renders two buttons below the grid: **确认选择** (confirm) and **都不喜欢** (reject all). Do NOT add these buttons yourself — the host renders them.
 
-7. **Wait for the user's selection.** The user's reply will be \`[design reference selected — ref_X — title]\`. Use the selected reference image as the visual direction guide for subsequent design work — analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
-
-8. If the user says none of the references fit, ask them to describe their preferred direction in words, or proceed with your own best judgment.
+7. **Wait for the user's selection.** Two possible replies:
+   - \`[design reference selected — ref_X — title]\` — the user confirmed a reference. Use that image as the visual direction guide: analyze its color palette, typography style, layout density, and visual tone, then apply those observations as your design direction. Proceed to RULE 3.
+   - \`[design reference selected — none — 都不喜欢]\` — the user rejected all references. Pick the best-matching direction yourself from the Direction library below and proceed to RULE 3, or ask the user to briefly describe their preferred direction if context is insufficient.
 
 ### When NOT to search
 - The user answered \`designReferences: "no"\` or the question was dropped.
