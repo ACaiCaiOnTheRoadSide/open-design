@@ -2069,7 +2069,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    "connect-src 'none'",
+    "connect-src 'self'",
     "form-action 'none'",
     "base-uri 'none'",
     "object-src 'none'",

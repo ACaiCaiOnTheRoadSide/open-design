@@ -78,7 +78,7 @@ describe('project preview containment routes', () => {
     expect(body.iframeSandbox).toBe('allow-scripts allow-forms');
     expect(body.iframeSandbox).not.toContain('allow-same-origin');
     expect(body.csp).toContain('sandbox allow-scripts allow-forms');
-    expect(body.csp).toContain("connect-src 'none'");
+    expect(body.csp).toContain("connect-src 'self'");
     expect(body.csp).not.toContain('allow-same-origin');
     expect(body.opaqueOrigin).toBe(true);
 
@@ -91,7 +91,7 @@ describe('project preview containment routes', () => {
     expect(previewResponse.headers.get('x-content-type-options')).toBe('nosniff');
     const csp = previewResponse.headers.get('content-security-policy') ?? '';
     expect(csp).toContain('sandbox allow-scripts allow-forms');
-    expect(csp).toContain("connect-src 'none'");
+    expect(csp).toContain("connect-src 'self'");
     expect(csp).not.toContain('allow-same-origin');
     expect(await previewResponse.text()).toContain('<title>Preview</title>');
 
