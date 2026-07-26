@@ -4299,10 +4299,6 @@ export function ProjectView({
           void (async () => {
             try {
               let nextFiles = await refreshProjectFiles();
-              // daemon hydrates files after the run completion event; take a second
-              // snapshot so files produced by sync pull are visible in this turn.
-              await new Promise((resolve) => window.setTimeout(resolve, 750));
-              nextFiles = await refreshProjectFiles();
               const finalText = streamedText || fullText;
               const artifactToPersist = parsedArtifact?.html
                 ? parsedArtifact
@@ -4596,7 +4592,6 @@ export function ProjectView({
             if (isTerminalRunStatus(runStatus)) {
               clearCurrentRunStreamingMarker(runConversationId, controller, cancelController);
               scheduleConversationMessageRefresh(runConversationId);
-              void refreshWorkspaceItems();
               if (runStatus !== 'succeeded') clearTraceTouchedFilePaths();
             }
           },
