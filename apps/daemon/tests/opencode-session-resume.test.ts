@@ -7,21 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { startServer } from '../src/server.js';
 
-// End-to-end coverage for OpenCode native (capture-style) session resume.
-//
-// OpenCode mints its own session id and stamps it on every stream event as
-// `sessionID` (e.g. `ses_...`). The daemon must:
-//   1. capture that id from the stream and persist it (NOT the daemon-minted
-//      `newSessionId`, which OpenCode ignores),
-//   2. continue it next turn with `opencode run -s <id>` and send ONLY the new
-//      turn (no flattened-history resend), and
-//   3. when the session store is gone (`Session not found`), clear the stale
-//      handle, surface a retryable error, and let the next turn start fresh
-//      re-seeded with the full transcript.
-//
-// On origin/main OpenCode is not `resumesSessionViaCli`, so it always runs
-// plain `run` and re-pays the whole transcript — turn-2 here would carry no
-// `-s` and would include the prior reply, going red.
+// OpenCode runs each turn as a fresh process without CLI session resume. The
+// daemon re-sends the flattened conversation transcript so this remains valid
+// when each turn runs in a new container with no shared OpenCode session store.
 
 type StartedServer = {
   url: string;
@@ -39,12 +27,11 @@ type RunStatus = {
 };
 
 type RunInvocation = { argv: string[]; stdin: string; cwd: string };
-type RunEvent = { event: string; data: unknown };
 
 const SESSION = 'ses_e2e0000resume0000';
 const FIRST_REPLY_SENTINEL = 'FIRST_TURN_REPLY_SENTINEL_0c7d2';
 
-describe('opencode native session resume', () => {
+describe('opencode stateless turns', () => {
   const originalEnv = snapshotEnv();
   let started: StartedServer | null = null;
   let binDir: string | null = null;
@@ -60,7 +47,7 @@ describe('opencode native session resume', () => {
     restoreEnv(originalEnv);
   });
 
-  it('captures the session id on turn 1 and resumes it (without resending history) on turn 2', async () => {
+  it('starts every turn fresh and re-sends conversation history', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-opencode-resume-bin-'));
     const { bin, logPath } = await writeCapturingOpencode(binDir, 'opencode-capture');
 
@@ -83,68 +70,17 @@ describe('opencode native session resume', () => {
 
     const runs = await readChatTurnRuns(logPath, conversationId);
     expect(runs).toHaveLength(2);
-    const [create, resume] = runs as [RunInvocation, RunInvocation];
+    const [turn1Run, turn2Run] = runs as [RunInvocation, RunInvocation];
 
-    // Turn 1 is a fresh `run` — no `-s`, no leaked id.
-    expect(create.argv[0]).toBe('run');
-    expect(create.argv).not.toContain('-s');
-    expect(create.argv).not.toContain(SESSION);
+    expect(turn1Run.argv[0]).toBe('run');
+    expect(turn1Run.argv).not.toContain('-s');
+    expect(turn1Run.argv).not.toContain(SESSION);
 
-    // Turn 2 continues the captured session id.
-    expect(resume.argv).toContain('-s');
-    expect(resume.argv[resume.argv.indexOf('-s') + 1]).toBe(SESSION);
-
-    // The turn-2 prompt must NOT re-send turn-1's assistant reply (history is
-    // carried by the resumed session), but must carry the new user message.
-    expect(resume.stdin).not.toContain(FIRST_REPLY_SENTINEL);
-    expect(resume.stdin).toContain('second user request please');
-  });
-
-  it('transparently auto-reseeds within the same turn on `Session not found`', async () => {
-    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-opencode-fallback-bin-'));
-    const { bin, logPath } = await writeMissingSessionOpencode(binDir, 'opencode-fallback');
-
-    clearTelemetryEnv();
-    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
-    await putConfig(started.url, {
-      agentId: 'opencode',
-      agentCliEnv: { opencode: { OPENCODE_BIN: bin } },
-      telemetry: { metrics: true, content: false, artifactManifest: false },
-      privacyDecisionAt: Date.now(),
-    });
-
-    const conversationId = await createConversation(started.url);
-
-    const turn1 = await sendRunAndWait(started.url, conversationId, 'first request');
-    expect(turn1.status).toBe('succeeded');
-
-    // Turn 2 resumes, but the session store is gone (OpenCode prints "Session
-    // not found" and exits 0, exercising the exit-0 resume-failure path). The
-    // daemon must NOT surface an error: it clears the dead handle and
-    // TRANSPARENTLY re-runs the same turn as a fresh `run` (full transcript),
-    // within this one run. The user sees a succeeded turn — no turn 3.
-    const turn2 = await sendRunAndWait(started.url, conversationId, 'second request');
-    expect(turn2.status).toBe('succeeded');
-
-    const events = await readRunEvents(turn2.eventsLogPath);
-    expect(events.filter((e) => e.event === 'error')).toEqual([]);
-    expect(hasDiagnostic(events, {
-      type: 'agent_resume_auto_reseed',
-      reason: 'resume_failed',
-      stale_session_cleared: true,
-    })).toBe(true);
-
-    // The create, then turn 2's dead resume (`-s`), then the in-turn fresh reseed.
-    const runs = await readChatTurnRuns(logPath, conversationId);
-    expect(runs).toHaveLength(3);
-    const [create, deadResume, fresh] = runs as [
-      RunInvocation,
-      RunInvocation,
-      RunInvocation,
-    ];
-    expect(create.argv).not.toContain('-s');
-    expect(deadResume.argv).toContain('-s');
-    expect(fresh.argv).not.toContain('-s');
+    expect(turn2Run.argv[0]).toBe('run');
+    expect(turn2Run.argv).not.toContain('-s');
+    expect(turn2Run.argv).not.toContain(SESSION);
+    expect(turn2Run.stdin).toContain(FIRST_REPLY_SENTINEL);
+    expect(turn2Run.stdin).toContain('second user request please');
   });
 
   it('starts fresh on turn 2 when turn 1 succeeds without a captured session id', async () => {
@@ -176,8 +112,8 @@ describe('opencode native session resume', () => {
   });
 });
 
-// Fake opencode CLI: stamps a FIXED session id on a create turn and echoes it
-// on a resume turn. Logs `{argv, stdin}` per invocation.
+// Fake opencode CLI: stamps a fixed session id on every stream event. The
+// daemon must ignore it for subsequent invocations.
 async function writeCapturingOpencode(
   dir: string,
   name: string,
@@ -189,41 +125,9 @@ async function writeCapturingOpencode(
     fakeOpencodeSource({
       logPath,
       body: `
-  const isResume = argv.includes('-s');
-  const text = isResume ? 'Resumed reply.' : ${JSON.stringify(FIRST_REPLY_SENTINEL)};
   console.log(JSON.stringify({ type: 'step_start', sessionID: SESSION, part: { type: 'step-start' } }));
-  console.log(JSON.stringify({ type: 'text', sessionID: SESSION, part: { type: 'text', text } }));
+  console.log(JSON.stringify({ type: 'text', sessionID: SESSION, part: { type: 'text', text: ${JSON.stringify(FIRST_REPLY_SENTINEL)} } }));
   console.log(JSON.stringify({ type: 'step_finish', sessionID: SESSION, part: { type: 'step-finish', tokens: { input: 11, output: 7, reasoning: 0, cache: { read: 5, write: 2 } }, cost: 0 } }));
-  setTimeout(() => process.exit(0), 10);`,
-    }),
-    'utf8',
-  );
-  await chmod(bin, 0o755);
-  return { bin, logPath };
-}
-
-// Fake opencode CLI: succeeds on a create turn (persisting the session), but a
-// resume turn (`-s`) prints "Session not found" to stderr and exits 0 — the
-// real OpenCode behavior for a missing session.
-async function writeMissingSessionOpencode(
-  dir: string,
-  name: string,
-): Promise<{ bin: string; logPath: string }> {
-  const bin = path.join(dir, name);
-  const logPath = path.join(dir, `${name}-log.jsonl`);
-  await writeFile(
-    bin,
-    fakeOpencodeSource({
-      logPath,
-      body: `
-  if (argv.includes('-s')) {
-    process.stderr.write('Error: Session not found\\n');
-    setTimeout(() => process.exit(0), 10);
-    return;
-  }
-  console.log(JSON.stringify({ type: 'step_start', sessionID: SESSION, part: { type: 'step-start' } }));
-  console.log(JSON.stringify({ type: 'text', sessionID: SESSION, part: { type: 'text', text: 'Created reply.' } }));
-  console.log(JSON.stringify({ type: 'step_finish', sessionID: SESSION, part: { type: 'step-finish', tokens: { input: 8, output: 2, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 } }));
   setTimeout(() => process.exit(0), 10);`,
     }),
     'utf8',
