@@ -12,6 +12,7 @@ import type {
   DesktopRenderSlidesResult,
 } from '@open-design/sidecar-proto';
 import { startServer } from '../src/server.js';
+import { createHuskboxDesktopSlideRenderer } from '../src/integrations/huskbox/desktop-renderer.js';
 
 // ---------------------------------------------------------------------------
 // Screenshot export — desktop renderer file handoff.
@@ -272,6 +273,78 @@ describe('screenshot export desktop renderer file handoff', () => {
     } finally {
       await new Promise<void>((resolve) => srv.server.close(() => resolve()));
     }
+  });
+
+  it('maps remote Huskbox renderer outcomes without changing desktop or business-error semantics', async () => {
+    const config = {
+      baseUrl: 'https://huskbox.example',
+      daemonPublicUrl: 'https://daemon.example',
+      apiKey: 'key',
+      tenantId: 'tenant',
+      resourceTier: 'standard',
+      timeoutSeconds: 30,
+    };
+    const workerResult = (result: DesktopRenderSlidesResult, status = 200) =>
+      async () => new Response(
+        status === 200
+          ? `event: stdout\ndata: ${JSON.stringify({ stdout: `${JSON.stringify(result)}\n` })}\n\n`
+          : 'capacity exceeded',
+        { status },
+      );
+    const request = async (
+      renderer: ReturnType<typeof createHuskboxDesktopSlideRenderer> | typeof stubRenderer,
+      endpoint: 'image' | 'pdf-image' | 'pptx',
+      body: Record<string, unknown> = {},
+    ) => {
+      const srv = (await startServer({ port: 0, returnServer: true, desktopSlideRenderer: renderer })) as {
+        url: string;
+        server: http.Server;
+      };
+      try {
+        const response = await fetch(`${srv.url}/api/projects/${projectId}/export/${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName: 'index.html', ...body }),
+        });
+        return { status: response.status, text: await response.text() };
+      } finally {
+        await new Promise<void>((resolve) => srv.server.close(() => resolve()));
+      }
+    };
+
+    const successfulRemote = createHuskboxDesktopSlideRenderer(config, {
+      daemonToken: 'token',
+      fetch: workerResult({ ok: true, mode: 'page', width: 1, height: 1, slides: [`data:image/png;base64,${PNG.toString('base64')}`] }) as typeof fetch,
+    });
+    expect((await request(successfulRemote, 'image')).status).toBe(200);
+
+    for (const endpoint of ['image', 'pdf-image'] as const) {
+      const unavailableRemote = createHuskboxDesktopSlideRenderer(config, {
+        daemonToken: 'token',
+        fetch: workerResult({ ok: false }, 429) as typeof fetch,
+      });
+      const unavailable = await request(unavailableRemote, endpoint);
+      expect(unavailable.status).toBe(501);
+      expect(JSON.parse(unavailable.text).error.code).toBe('UPSTREAM_UNAVAILABLE');
+    }
+
+    const businessErrorRemote = createHuskboxDesktopSlideRenderer(config, {
+      daemonToken: 'token',
+      fetch: workerResult({ ok: false, error: 'slide index is out of range', errorCode: 'SLIDE_INDEX_OUT_OF_RANGE' }) as typeof fetch,
+    });
+    expect((await request(businessErrorRemote, 'image', { index: 4 })).status).toBe(422);
+
+    const throwingDesktop = async () => { throw new Error('desktop IPC failed'); };
+    expect((await request(throwingDesktop, 'image')).status).toBe(502);
+
+    let pptxRemoteCalls = 0;
+    const remoteForPptx = createHuskboxDesktopSlideRenderer(config, {
+      daemonToken: 'token',
+      fetch: (async () => { pptxRemoteCalls += 1; throw new Error('must not run'); }) as typeof fetch,
+    });
+    expect((await request(remoteForPptx, 'pptx')).status).toBe(501);
+    expect((await request(remoteForPptx, 'pptx', { editable: true })).status).toBe(501);
+    expect(pptxRemoteCalls).toBe(0);
   });
 
   it('returns 422 for semantic renderer request errors', async () => {

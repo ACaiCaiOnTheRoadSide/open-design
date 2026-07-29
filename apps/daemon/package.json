@@ -26,8 +26,9 @@
     "package.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && pnpm run build:od-cli",
+    "build": "tsc -p tsconfig.json && pnpm run build:od-cli && pnpm run build:desktop-render-worker",
     "build:od-cli": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node20 --external:./server.js --external:./browser-open.js --outfile=dist/od-cli.mjs",
+    "build:desktop-render-worker": "esbuild src/integrations/huskbox/desktop-render-worker.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/desktop-render-worker.mjs",
     "daemon": "pnpm run build && node dist/cli.js --no-open",
     "dev": "pnpm run build && node dist/cli.js --no-open",
     "start": "pnpm run build && node dist/cli.js",

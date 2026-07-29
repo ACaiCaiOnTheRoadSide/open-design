@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolveOnPath } from "../runtimes/executables.js";
+import { hasHuskboxBrandBrowserContext, huskboxBrandDumpDom, huskboxBrandScreenshot } from "../integrations/huskbox/brand-browser.js";
 
 /**
  * Optional system-Chrome fallback for the prefetch pipeline.
@@ -78,9 +79,11 @@ function runChrome(args: string[], timeoutMs: number): Promise<{ stdout: string;
     const child = spawn(bin, args, { stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
     let done = false;
+    let timer: NodeJS.Timeout | undefined;
     const finish = (code: number | null) => {
       if (done) return;
       done = true;
+      if (timer) clearTimeout(timer);
       resolve({ stdout: out, code });
     };
     child.stdout.setEncoding("utf8");
@@ -91,7 +94,7 @@ function runChrome(args: string[], timeoutMs: number): Promise<{ stdout: string;
     });
     child.on("error", () => finish(null));
     child.on("close", (code) => finish(code));
-    setTimeout(() => {
+    timer = setTimeout(() => {
       try {
         child.kill("SIGKILL");
       } catch {}
@@ -100,8 +103,17 @@ function runChrome(args: string[], timeoutMs: number): Promise<{ stdout: string;
   });
 }
 
-/** JS-rendered DOM of the page, or null when Chrome is unavailable/fails. */
+/** True when either the remote renderer or the opt-in local browser is usable. */
+export function hasBrandBrowser(): boolean {
+  return hasHuskboxBrandBrowserContext() || Boolean(findChrome());
+}
+
+/** JS-rendered DOM of the page, or null when no browser is available/fails. */
 export async function chromeDumpDom(url: string): Promise<string | null> {
+  try {
+    const remote = await huskboxBrandDumpDom(url);
+    if (remote) return remote;
+  } catch { /* preserve explicit local diagnostics fallback */ }
   const { stdout } = await runChrome([...COMMON_FLAGS, "--dump-dom", url], 20_000);
   const html = stdout.trim();
   // A real render produces a full document; tiny output means an error page.
@@ -110,6 +122,9 @@ export async function chromeDumpDom(url: string): Promise<string | null> {
 
 /** Full-page-ish screenshot written to outPath. Returns success. */
 export async function chromeScreenshot(url: string, outPath: string): Promise<boolean> {
+  try {
+    if (await huskboxBrandScreenshot(url, outPath)) return true;
+  } catch { /* preserve explicit local diagnostics fallback */ }
   const { code } = await runChrome(
     [...COMMON_FLAGS, `--screenshot=${outPath}`, "--window-size=1280,2000", url],
     20_000,

@@ -21,6 +21,8 @@ import {
 import { authorizeReasoningEgress, sendReasoningEgressDenial } from './reasoning-egress.js';
 import { sandboxImportedProjectRootUnavailableReason } from './sandbox-mode.js';
 import { parseOrchestratorWorkspace } from './workspace-contract.js';
+import { canRenderSlideExport, slideRendererSource } from './integrations/huskbox/desktop-renderer.js';
+import { HuskboxInfrastructureError } from './integrations/huskbox/client.js';
 
 export interface RegisterImportRoutesDeps extends RouteDeps<'db' | 'http' | 'uploads' | 'node' | 'ids' | 'paths' | 'imports' | 'auth' | 'projectStore' | 'conversations' | 'projectFiles' | 'validation'> {}
 
@@ -479,7 +481,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       if (height != null && (typeof height !== 'number' || !Number.isFinite(height) || height <= 0)) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'height must be a positive number');
       }
-      if (typeof desktopSlideRenderer !== 'function') {
+      if (!canRenderSlideExport(desktopSlideRenderer, format)) {
         if (format === 'image' && typeof desktopArtifactExporter === 'function') {
           const input = await buildDesktopArtifactExportInput({
             daemonUrl: daemonUrlRef.current,
@@ -596,18 +598,21 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         await buildDeckRenderInput(renderOptions);
       // The renderer call is a cross-process IPC (requestJsonIpc, 600s). A
       // missing desktop process, broken socket, or timeout is an upstream
-      // renderer outage — surface it as 502 UPSTREAM_UNAVAILABLE (matching the
-      // `!rendered.ok` branch below), not the outer 400 BAD_REQUEST which is for
-      // genuine request-validation / assembly errors.
+      // renderer outage — desktop keeps 502, while typed remote Huskbox
+      // infrastructure failures restore the web fallback's 501 contract. Neither
+      // should fall through to the outer 400 used for request/assembly errors.
+      const rendererSource = slideRendererSource(desktopSlideRenderer);
       let rendered;
       try {
         rendered = await desktopSlideRenderer(input);
       } catch (err: any) {
+        const remoteInfrastructureFailure =
+          rendererSource === 'remote-huskbox' && err instanceof HuskboxInfrastructureError;
         return sendApiError(
           res,
-          502,
+          remoteInfrastructureFailure ? 501 : 502,
           'UPSTREAM_UNAVAILABLE',
-          `desktop renderer unavailable: ${err?.message || String(err)}`,
+          `${rendererSource === 'remote-huskbox' ? 'remote' : 'desktop'} renderer unavailable: ${err?.message || String(err)}`,
         );
       }
       const tRendered = Date.now();

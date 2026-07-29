@@ -1,7 +1,7 @@
 // @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
-import { chromeDumpDom, chromeScreenshot, findChrome } from "./chrome.js";
+import { chromeDumpDom, chromeScreenshot, hasBrandBrowser } from "./chrome.js";
 import { harvestFonts, type FontFile } from "./fonts.js";
 import { brandFetch } from "./net.js";
 
@@ -824,7 +824,7 @@ async function harvestFromHtml(
     // CSS-in-JS rescue: a thin static harvest usually means styles are injected
     // at runtime. Render once with headless Chrome — the dumped DOM carries the
     // injected <style> tags and inline styles — and re-extract.
-    if (colors.filter((c) => !c.extreme).length < 3 && !renderedDom && allowChrome && findChrome()) {
+    if (colors.filter((c) => !c.extreme).length < 3 && !renderedDom && allowChrome && hasBrandBrowser()) {
       onProgress("chrome", "thin static CSS — re-harvesting from the rendered DOM");
       renderedDom = await chromeDumpDom(baseUrl);
       if (renderedDom) {
@@ -915,7 +915,7 @@ async function harvestFromHtml(
   const prefetchDir = path.join(brandDir, "prefetch");
   fs.mkdirSync(prefetchDir, { recursive: true });
   let screenshot: string | null = null;
-  if (logos.length === 0 && !blocked && allowChrome && findChrome()) {
+  if (logos.length === 0 && !blocked && allowChrome && hasBrandBrowser()) {
     onProgress("chrome", "no logo downloadable — capturing a page screenshot");
     const shotPath = path.join(prefetchDir, "screenshot.png");
     if (await chromeScreenshot(baseUrl, shotPath)) screenshot = "prefetch/screenshot.png";

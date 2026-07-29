@@ -25,7 +25,7 @@ RUN corepack enable
 
 # native 模块的编译工具链
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 make g++ \
+      python3 make g++ curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -56,6 +56,14 @@ RUN n=0; until pnpm install --frozen-lockfile; do \
 #  diagnostics / plugin-runtime / agui-adapter),按拓扑序构建。
 # 不构建 web / desktop —— SaaS 容器里用不到,省时省体积。
 RUN pnpm --filter "@open-design/daemon..." run build
+
+# Remote desktop renderer assets served by daemon to isolated Huskbox workers.
+# Keep the checksum pinned to the same bundle used by skills/*/setup-env.sh.
+ARG CHROMIUM_BUNDLE_URL=https://github.com/ACaiCaiOnTheRoadSide/ai-design-ppt/releases/download/chromium-alpine3.20-x86_64/chromium-alpine3.20-x86_64.tar.gz
+ARG CHROMIUM_BUNDLE_SHA256=140e35183c490e21caeb239cff54ec2fbb4caf89a8310f31877b86161c5ccdb4
+RUN mkdir -p /app/data \
+ && curl -fsSL --retry 5 "$CHROMIUM_BUNDLE_URL" -o /app/data/chromium-bundle.tar.gz \
+ && echo "$CHROMIUM_BUNDLE_SHA256  /app/data/chromium-bundle.tar.gz" | sha256sum -c -
 
 # 瘦身:用 pnpm deploy 提取「daemon + 生产依赖」的自包含子集(~150MB,替代原
 # 1.4GB 全量 node_modules —— 去掉 devDeps 与 web/desktop/tools/e2e 的依赖)。

@@ -594,6 +594,10 @@ import { registerMediaRoutes } from './routes/media.js';
 import { registerProjectRoutes, registerProjectArtifactRoutes, registerProjectFileRoutes, registerProjectUploadRoutes } from './routes/project/index.js';
 import { registerVelaRoutes } from './routes/vela.js';
 import { registerFinalizeRoutes, registerImportRoutes, registerProjectExportRoutes } from './import-export-routes.js';
+import {
+  readHuskboxDesktopRendererConfig,
+  selectDesktopSlideRenderer,
+} from './integrations/huskbox/desktop-renderer.js';
 import { registerHandoffRoutes } from './routes/handoff.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
 import { TranscriptExportLockedError } from './transcript-export.js';
@@ -4180,6 +4184,18 @@ export async function startServer({
     res.sendFile(bundlePath);
   });
 
+  app.get('/api/desktop-render-worker.mjs', (_req, res) => {
+    const bundlePath = fileURLToPath(new URL('./desktop-render-worker.mjs', import.meta.url));
+    if (!fs.existsSync(bundlePath)) {
+      res.status(404).json({
+        error: 'desktop render worker bundle not built; run `pnpm --filter @open-design/daemon build`',
+      });
+      return;
+    }
+    res.type('text/javascript');
+    res.sendFile(bundlePath);
+  });
+
   // Chromium bundle for huskbox sandboxes: baked into the daemon image at
   // build time; this endpoint serves it so sandboxes fetch from the daemon
   // (internal network) instead of reaching GitHub at runtime.
@@ -4548,13 +4564,18 @@ export async function startServer({
   };
   const projectEventDeps = { subscribeFileEvents, activeProjectEventSinks };
   const importDeps = { importClaudeDesignZip, projectDir, detectEntryFile };
+  const selectedDesktopSlideRenderer = selectDesktopSlideRenderer(
+    desktopSlideRenderer,
+    readHuskboxDesktopRendererConfig(),
+    { daemonToken: apiToken },
+  );
   const projectExportDeps = {
     buildProjectArchive,
     buildBatchArchive,
     buildDesktopPdfExportInput,
     buildDesktopArtifactExportInput,
     desktopPdfExporter,
-    desktopSlideRenderer,
+    desktopSlideRenderer: selectedDesktopSlideRenderer,
     desktopArtifactExporter,
     daemonUrlRef,
     sanitizeArchiveFilename,

@@ -1,7 +1,18 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const browserMocks = vi.hoisted(() => ({
+  dumpDom: vi.fn(),
+  screenshot: vi.fn(),
+  available: vi.fn(() => true),
+}));
+vi.mock('../src/brands/chrome.js', () => ({
+  chromeDumpDom: browserMocks.dumpDom,
+  chromeScreenshot: browserMocks.screenshot,
+  hasBrandBrowser: browserMocks.available,
+}));
 
 import { extractFonts, prefetchFromHtml, previewablePrefetchHtml } from '../src/brands/prefetch.js';
 
@@ -88,11 +99,14 @@ describe('prefetchFromHtml (extract from already-rendered DOM)', () => {
       '<!doctype html><html><head><title>Just a moment...</title></head>' +
       '<body><h1>Checking your browser</h1></body></html>';
 
-    const result = await prefetchFromHtml(html, '', 'https://walled.test/', tmpBrandDir());
+    const result = await prefetchFromHtml(html, '', 'not-a-network-url', tmpBrandDir());
 
     expect(result).not.toBeNull();
     expect(result?.blocked).toBe(true);
     expect(result?.thin).toBe(true);
+    expect(browserMocks.available).not.toHaveBeenCalled();
+    expect(browserMocks.dumpDom).not.toHaveBeenCalled();
+    expect(browserMocks.screenshot).not.toHaveBeenCalled();
   });
 
   it('returns null for empty HTML', async () => {
