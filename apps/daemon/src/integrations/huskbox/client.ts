@@ -24,7 +24,6 @@ export interface HuskboxConfig {
   baseUrl: string;
   daemonPublicUrl: string;
   resourceTier: string;
-  tenantId: string;
   timeoutSeconds: number;
 }
 
@@ -47,11 +46,10 @@ export function readHuskboxConfig(env: NodeJS.ProcessEnv | Record<string, string
   const baseUrl = httpUrl(env.OD_HUSKBOX_BASE_URL);
   const daemonPublicUrl = httpUrl(env.OD_HUSKBOX_DAEMON_PUBLIC_URL);
   const apiKey = env.OD_HUSKBOX_API_KEY?.trim();
-  const tenantId = env.OD_HUSKBOX_TENANT_ID?.trim();
-  if (!baseUrl || !daemonPublicUrl || !apiKey || !tenantId) return null;
+  if (!baseUrl || !daemonPublicUrl || !apiKey) return null;
   const timeout = Number(env.OD_HUSKBOX_TIMEOUT_SECONDS);
   return {
-    baseUrl, daemonPublicUrl, apiKey, tenantId,
+    baseUrl, daemonPublicUrl, apiKey,
     resourceTier: env.OD_HUSKBOX_RESOURCE_TIER?.trim() || 'standard',
     timeoutSeconds: Number.isFinite(timeout) && timeout > 0 ? Math.floor(timeout) : 300,
   };
@@ -130,7 +128,6 @@ export async function executeHuskboxWorker<T>(config: HuskboxConfig, options: {
         },
         resource_tier: config.resourceTier,
         stdin,
-        tenant_id: config.tenantId,
         timeout_seconds: config.timeoutSeconds,
       }),
       signal: controller.signal,

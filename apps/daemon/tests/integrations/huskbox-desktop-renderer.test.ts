@@ -19,21 +19,20 @@ describe('Huskbox desktop slide renderer', () => {
       OD_HUSKBOX_BASE_URL: 'https://huskbox.example/',
       OD_HUSKBOX_API_KEY: 'key',
       OD_HUSKBOX_DAEMON_PUBLIC_URL: 'https://daemon.public/',
-      OD_HUSKBOX_TENANT_ID: 'tenant',
       OD_HUSKBOX_RESOURCE_TIER: 'large',
       OD_HUSKBOX_TIMEOUT_SECONDS: '42',
     })).toEqual({
-      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.public', apiKey: 'key', tenantId: 'tenant',
+      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.public', apiKey: 'key',
       resourceTier: 'large', timeoutSeconds: 42,
     });
     expect(readHuskboxDesktopRendererConfig({ OD_HUSKBOX_BASE_URL: 'https://x' })).toBeNull();
-    expect(readHuskboxDesktopRendererConfig({ OD_HUSKBOX_BASE_URL: 'https://x', OD_HUSKBOX_API_KEY: 'k', OD_HUSKBOX_TENANT_ID: 't' })).toBeNull();
-    expect(readHuskboxDesktopRendererConfig({ OD_HUSKBOX_BASE_URL: 'file:///tmp/x', OD_HUSKBOX_API_KEY: 'k', OD_HUSKBOX_TENANT_ID: 't' })).toBeNull();
+    expect(readHuskboxDesktopRendererConfig({ OD_HUSKBOX_BASE_URL: 'https://x', OD_HUSKBOX_API_KEY: 'k' })).toBeNull();
+    expect(readHuskboxDesktopRendererConfig({ OD_HUSKBOX_BASE_URL: 'file:///tmp/x', OD_HUSKBOX_API_KEY: 'k' })).toBeNull();
   });
 
   it('preserves a desktop renderer and only selects remote with complete SaaS auth', () => {
     const desktop = vi.fn();
-    const config = { baseUrl: 'https://huskbox', daemonPublicUrl: 'https://daemon', apiKey: 'k', tenantId: 't', resourceTier: 'standard', timeoutSeconds: 30 };
+    const config = { baseUrl: 'https://huskbox', daemonPublicUrl: 'https://daemon', apiKey: 'k', resourceTier: 'standard', timeoutSeconds: 30 };
     expect(selectDesktopSlideRenderer(desktop, config, { daemonToken: 'token' })).toBe(desktop);
     expect(selectDesktopSlideRenderer(null, config, { daemonToken: '' })).toBeNull();
     expect(selectDesktopSlideRenderer(null, null, { daemonToken: 'token' })).toBeNull();
@@ -41,7 +40,7 @@ describe('Huskbox desktop slide renderer', () => {
   });
 
   it('limits a remote renderer to image and raster PDF without changing desktop capabilities', () => {
-    const config = { baseUrl: 'https://huskbox', daemonPublicUrl: 'https://daemon', apiKey: 'k', tenantId: 't', resourceTier: 'standard', timeoutSeconds: 30 };
+    const config = { baseUrl: 'https://huskbox', daemonPublicUrl: 'https://daemon', apiKey: 'k', resourceTier: 'standard', timeoutSeconds: 30 };
     const remote = selectDesktopSlideRenderer(null, config, { daemonToken: 'token' });
     const desktop = vi.fn();
     expect(canRenderSlideExport(remote, 'image')).toBe(true);
@@ -56,7 +55,7 @@ describe('Huskbox desktop slide renderer', () => {
       { status: 200 },
     ));
     const renderer = createHuskboxDesktopSlideRenderer({
-      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.internal', apiKey: 'secret', tenantId: 'tenant-1',
+      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.internal', apiKey: 'secret',
       resourceTier: 'medium', timeoutSeconds: 60,
     }, { daemonToken: 'daemon-secret', fetch: fetch as typeof globalThis.fetch });
     const result = await renderer({ html: '<section class="slide">A</section>', deck: true, outputDir: '/must/not/escape' });
@@ -71,7 +70,7 @@ describe('Huskbox desktop slide renderer', () => {
         OD_DAEMON_TOKEN: 'daemon-secret', OD_DAEMON_URL: 'https://daemon.internal',
         OD_STDIN_LEN: String(Buffer.byteLength(payload.stdin, 'utf8')),
       },
-      resource_tier: 'medium', tenant_id: 'tenant-1', timeout_seconds: 60,
+      resource_tier: 'medium', timeout_seconds: 60,
     });
     expect(JSON.parse(payload.stdin)).toEqual({ html: '<section class="slide">A</section>', deck: true });
     expect(payload.command).toBeUndefined();
@@ -102,7 +101,7 @@ describe('Huskbox desktop slide renderer', () => {
       { status: 200 },
     );
     const config = {
-      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.internal', apiKey: 'k', tenantId: 't', resourceTier: 'standard', timeoutSeconds: 1,
+      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.internal', apiKey: 'k', resourceTier: 'standard', timeoutSeconds: 1,
     };
     const businessRenderer = createHuskboxDesktopSlideRenderer(config, {
       daemonToken: 'token',
@@ -126,7 +125,7 @@ describe('Huskbox desktop slide renderer', () => {
   it('surfaces HTTP errors', async () => {
     const failedFetch = vi.fn(async () => new Response('capacity exceeded', { status: 429 }));
     const renderer = createHuskboxDesktopSlideRenderer({
-      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.internal', apiKey: 'k', tenantId: 't', resourceTier: 'standard', timeoutSeconds: 1,
+      baseUrl: 'https://huskbox.example', daemonPublicUrl: 'https://daemon.internal', apiKey: 'k', resourceTier: 'standard', timeoutSeconds: 1,
     }, { daemonToken: 'token', fetch: failedFetch as typeof globalThis.fetch });
     await expect(renderer({ html: 'x' })).rejects.toThrow(/HTTP 429.*capacity exceeded/);
     expect(failedFetch).toHaveBeenCalledTimes(1);
