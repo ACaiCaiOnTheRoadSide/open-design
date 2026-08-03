@@ -787,6 +787,36 @@ describe('FileViewer SVG artifacts', () => {
     expect(markup).toContain('sandbox="allow-scripts allow-downloads"');
   });
 
+  it('keeps hash navigation on the current file in srcDoc previews', () => {
+    const file = baseFile({
+      name: 'screens/index.html',
+      path: 'screens/index.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Page',
+        entry: 'screens/index.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml={'<html><body><script>document.body.focus(); location.replace("#/reading");</script></body></html>'}
+      />,
+    );
+
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+    expect(frame.srcdoc).toContain('<base href="/api/projects/project-1/raw/screens/index.html">');
+  });
+
   it('does not treat slide-prefixed helper classes as deck slides', () => {
     const file = baseFile({
       name: 'page.html',
