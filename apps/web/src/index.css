@@ -1,4 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
+@import '@fontsource/cairo/400.css';
+@import '@fontsource/cairo/500.css';
+@import '@fontsource/cairo/600.css';
+@import '@fontsource/cairo/700.css';
 @import './styles/remixicon/remixicon.css';
 @import './styles/design-system-flow.css';
 @import './styles/tokens.css';
