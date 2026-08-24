@@ -101,6 +101,26 @@ function classify(
 }
 
 describe('classifyRunFailure', () => {
+  it('treats Huskbox tenant concurrency 429 as transient rather than exhausted quota', () => {
+    const result = classify(
+      'AGENT_EXIT_127',
+      'od-agent huskbox: tenant concurrency limit reached (HTTP 429)',
+    );
+    expect(result?.failure_category).toBe('rate_limit');
+    expect(result?.failure_detail).toBe('rate_limit_429');
+    expect(result?.retryable).toBe(true);
+    expect(result?.user_action).toBe('retry');
+  });
+
+  it('continues to classify a real usage limit as hard quota', () => {
+    const result = classify(
+      'AGENT_EXECUTION_FAILED',
+      'You have reached your usage limit for this billing period.',
+    );
+    expect(result?.failure_detail).toBe('hard_quota');
+    expect(result?.retryable).toBe(false);
+  });
+
   it('does not classify successful runs as failures', () => {
     expect(
       classifyRunFailure({

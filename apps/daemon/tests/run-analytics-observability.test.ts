@@ -1491,6 +1491,18 @@ describe('summarizeToolAnalytics', () => {
     expect(result.tool_names_csv).toBe('other');
   });
 
+  it('keeps provider-reported cost and duration from an earlier usage frame', () => {
+    const result = scanRunEventsForUsageAnalytics([
+      { event: 'agent', data: { type: 'usage', costUsd: 0.42, durationMs: 1234 } },
+      { event: 'agent', data: { type: 'usage', usage: {
+        input_tokens: 10, output_tokens: 2,
+        cache_read_input_tokens: 1, cache_creation_input_tokens: 0,
+      } } },
+    ], 'model', 0);
+    expect(result.cost_usd).toBe(0.42);
+    expect(result.duration_ms).toBe(1234);
+  });
+
   it('aliases case-insensitive known families including Tool', () => {
     const result = summarizeToolAnalytics([
       { event: 'agent', data: { type: 'tool_use', id: '1', name: 'WRITE' } },

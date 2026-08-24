@@ -82,11 +82,13 @@ import {
   designToolboxActionTitle,
   findDesignToolboxSkill,
   getDesignToolboxAction,
+  isNativeVisualGenerationSkill,
   skillMatchesQuery,
   type DesignToolboxAction,
   type DesignToolboxActionId,
 } from '../runtime/design-toolbox';
 import { ComposerPluginPreview } from './ComposerPluginPreview';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 import { computeToolboxDetailPosition } from './composer-detail-position';
 import { PluginDetailsModal } from "./PluginDetailsModal";
 import { SkillDetailsModal } from './SkillDetailsModal';
@@ -162,6 +164,22 @@ function trackedWorkspaceLinkedDirsForContexts(
 type ToolsTab = 'plugins' | 'skills' | 'mcp' | 'import';
 
 type MentionTab = 'all' | 'tabs' | 'files' | 'plugins' | 'skills' | 'mcp' | 'connectors';
+
+const NATIVE_VISUAL_PLUGIN_IDS = new Set([
+  'od-media-generation',
+  'example-hyperframes',
+]);
+
+export function isNativeVisualComposerPlugin(plugin: InstalledPluginRecord): boolean {
+  if (USER_PLUGIN_SOURCE_KINDS.has(plugin.sourceKind)) return false;
+  if (NATIVE_VISUAL_PLUGIN_IDS.has(plugin.id)) return true;
+  const tags = new Set(plugin.manifest?.tags ?? []);
+  const mode = plugin.manifest?.od?.mode ?? '';
+  const visual = mode === 'image' || mode === 'video'
+    || tags.has('image-generation') || tags.has('video-generation');
+  const audioCapable = mode === 'audio' || tags.has('audio');
+  return visual && !audioCapable;
+}
 
 const USER_PLUGIN_SOURCE_KINDS = new Set<PluginSourceKind>([
   'user',
@@ -792,6 +810,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // (e.g. after deleting it in Finder), and when the picker is opened.
     const [workingDirMissing, setWorkingDirMissing] = useState(false);
     const checkWorkingDir = useCallback(async () => {
+      if (WHITE_LABEL_SAAS) return;
       if (!workingDir) {
         setWorkingDirMissing(false);
         return;
@@ -800,6 +819,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       setWorkingDirMissing(!ok);
     }, [workingDir]);
     useEffect(() => {
+      if (WHITE_LABEL_SAAS) return;
       void checkWorkingDir();
       const onFocus = () => void checkWorkingDir();
       const onVisible = () => {
@@ -931,9 +951,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // context from the tools menu and @ picker.
     const pluginsForComposer = useMemo<InstalledPluginRecord[]>(() => {
       const allowedKinds = new Set(['skill', 'scenario', 'bundle']);
-      return installedPlugins.filter((p) => {
-        const k = p.manifest?.od?.kind;
-        return !k || allowedKinds.has(k);
+      return installedPlugins.filter((plugin) => {
+        if (isNativeVisualComposerPlugin(plugin)) return false;
+        const kind = plugin.manifest?.od?.kind;
+        return !kind || allowedKinds.has(kind);
       });
     }, [installedPlugins]);
 
@@ -2789,6 +2810,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       if (!mention) return [];
       const stagedSkillIds = new Set(stagedSkills.map((s) => s.id));
       return skills
+        .filter((skill) => !isNativeVisualGenerationSkill(skill))
         .filter((s) => !stagedSkillIds.has(s.id))
         .filter((s) => skillMatchesQuery(s, mentionQuery))
         .sort((a, b) => skillMentionRank(a, mentionQuery) - skillMentionRank(b, mentionQuery));
@@ -3246,21 +3268,21 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 });
                 setProjectReferenceOpen(true);
               }}
-              onLinkLocalCode={() => {
+              onLinkLocalCode={WHITE_LABEL_SAAS ? undefined : () => {
                 trackComposerBar({ element: 'plus_pick', resource_kind: 'workspace', resource_id: 'local-code' });
                 void handleLinkLocalCodeContext();
               }}
               workingDir={workingDir}
               recentWorkingDirs={recentDirs}
-              onPickWorkingDir={() => {
+              onPickWorkingDir={WHITE_LABEL_SAAS ? undefined : () => {
                 trackComposerBar({ element: 'plus_pick', resource_kind: 'workspace', resource_id: 'working-dir' });
                 void handlePickWorkingDir();
               }}
-              onSelectRecentWorkingDir={(dir) => {
+              onSelectRecentWorkingDir={WHITE_LABEL_SAAS ? undefined : (dir) => {
                 trackComposerBar({ element: 'plus_pick', resource_kind: 'workspace', resource_id: 'working-dir-recent' });
                 void setWorkingDirFolder(dir);
               }}
-              onClearWorkingDir={() => {
+              onClearWorkingDir={WHITE_LABEL_SAAS ? undefined : () => {
                 trackComposerBar({ element: 'plus_pick', resource_kind: 'workspace', resource_id: 'working-dir-clear' });
                 void clearWorkingDir();
               }}
@@ -4762,7 +4784,10 @@ function ToolsSkillsPanel({
   const [query, setQuery] = useState('');
   const [pendingId, setPendingId] = useState<string | null>(null);
   const visibleSkills = useMemo(
-    () => skills.filter((s) => skillMatchesQuery(s, query)).slice(0, 24),
+    () => skills
+      .filter((skill) => !isNativeVisualGenerationSkill(skill))
+      .filter((skill) => skillMatchesQuery(skill, query))
+      .slice(0, 24),
     [skills, query],
   );
   return (
@@ -4852,6 +4877,7 @@ function buildDesignToolboxResources({
   const resources: DesignToolboxResource[] = [];
 
   for (const skill of skills) {
+    if (isNativeVisualGenerationSkill(skill)) continue;
     const title = localizeSkillName(locale, skill);
     const subtitle = localizeSkillDescription(locale, skill);
     resources.push({

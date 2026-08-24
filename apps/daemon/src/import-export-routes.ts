@@ -7,9 +7,93 @@ import {
 import nodePath from 'node:path';
 import os from 'node:os';
 import { readFile, rm } from 'node:fs/promises';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 import { isBlocked as isBlockedSystemDir } from './linked-dirs.js';
 import type { RouteDeps } from './server-context.js';
+
+export const MONKEYCODE_ARCHIVE_MAX_BYTES = 100 * 1024 * 1024;
+
+export function isArchiveTooLargeError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    if (
+      typeof current === 'object'
+      && 'code' in current
+      && (current as { code?: unknown }).code === 'ARCHIVE_TOO_LARGE'
+    ) return true;
+    current = typeof current === 'object' && 'cause' in current
+      ? (current as { cause?: unknown }).cause
+      : undefined;
+  }
+  return false;
+}
+
+interface ArchiveDisconnectEmitter {
+  once(event: string, listener: () => void): unknown;
+  removeListener(event: string, listener: () => void): unknown;
+}
+
+export function monitorArchiveUploadDisconnect(
+  req: ArchiveDisconnectEmitter,
+  res: ArchiveDisconnectEmitter & { writableFinished: boolean },
+  outbound: AbortController,
+  streams: () => Readable[],
+): () => void {
+  let responseFinished = false;
+  const abortUpload = () => {
+    if (!outbound.signal.aborted) outbound.abort(new Error('archive upload client disconnected'));
+    for (const stream of streams()) {
+      if (!stream.destroyed) stream.destroy();
+    }
+  };
+  const onRequestAborted = () => abortUpload();
+  const onResponseFinish = () => { responseFinished = true; };
+  const onResponseClose = () => {
+    if (!responseFinished && !res.writableFinished) abortUpload();
+  };
+  req.once('aborted', onRequestAborted);
+  res.once('finish', onResponseFinish);
+  res.once('close', onResponseClose);
+  return () => {
+    req.removeListener('aborted', onRequestAborted);
+    res.removeListener('finish', onResponseFinish);
+    res.removeListener('close', onResponseClose);
+  };
+}
+
+export function createCappedArchiveMultipartBody(
+  archive: Readable,
+  projectId: string,
+  boundary: string,
+  maxArchiveBytes = MONKEYCODE_ARCHIVE_MAX_BYTES,
+): Readable {
+  async function* parts() {
+    yield Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="projectId"\r\n\r\n${projectId}\r\n` +
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="archive.zip"\r\n` +
+      'Content-Type: application/zip\r\n\r\n',
+    );
+    let total = 0;
+    try {
+      for await (const value of archive) {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        total += chunk.length;
+        if (total > maxArchiveBytes) {
+          const error = new Error(`archive compressed size exceeds ${maxArchiveBytes} bytes`);
+          (error as Error & { code: string }).code = 'ARCHIVE_TOO_LARGE';
+          throw error;
+        }
+        yield chunk;
+      }
+      yield Buffer.from(`\r\n--${boundary}--\r\n`);
+    } finally {
+      if (!archive.destroyed) archive.destroy();
+    }
+  }
+  return Readable.from(parts());
+}
 import type {
   AuthorizedProjectToolRequest,
   AuthorizeProjectRequest,
@@ -1288,6 +1372,84 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         status === 404 ? 'FILE_NOT_FOUND' : 'BAD_REQUEST',
         String(err?.message || err),
       );
+    }
+  });
+
+  // Hosted handoff only: upload the authoritative project archive to the SaaS
+  // backend and return its short-lived OSS URL. No analytics/beacon is emitted.
+  app.post('/api/projects/:id/archive/upload-oss', async (req, res) => {
+    const backendUrl = process.env.OD_BACKEND_URL;
+    const daemonToken = process.env.OD_API_TOKEN;
+    if (!backendUrl || !daemonToken) {
+      sendApiError(res, 503, 'NOT_CONFIGURED', 'backend URL or daemon token not configured');
+      return;
+    }
+    // Tie compression and the outbound upload to the browser request. A peer
+    // disconnect aborts fetch and destroys both streams instead of producing an
+    // orphaned OSS archive.
+    const outbound = new AbortController();
+    let archive: Readable | undefined;
+    let body: Readable | undefined;
+    const removeDisconnectListeners = monitorArchiveUploadDisconnect(
+      req,
+      res,
+      outbound,
+      () => [body, archive].filter((stream): stream is Readable => stream != null),
+    );
+    try {
+      const root = typeof req.query?.root === 'string' ? req.query.root : '';
+      if (!await authorizeExportRead(req, res, { allowNavigationQuery: true })) return;
+      const project = getProject(db, req.params.id);
+      const archiveResult = await createProjectArchiveStream(
+        PROJECTS_DIR,
+        req.params.id,
+        root,
+        project?.metadata,
+        { maxUncompressedBytes: MONKEYCODE_ARCHIVE_MAX_BYTES },
+      );
+      const archiveStream = archiveResult.stream;
+      archive = archiveStream;
+      if (outbound.signal.aborted) {
+        archiveStream.destroy();
+        return;
+      }
+      const boundary = `open-design-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      body = createCappedArchiveMultipartBody(archiveStream, req.params.id, boundary);
+      const response = await fetch(
+        `${backendUrl.replace(/\/$/, '')}/api/internal/archive/upload`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${daemonToken}`,
+            'content-type': `multipart/form-data; boundary=${boundary}`,
+          },
+          body,
+          signal: outbound.signal,
+          duplex: 'half',
+        } as RequestInit & { duplex: 'half' },
+      );
+      if (!response.ok) {
+        throw new Error(`backend archive upload ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      }
+      const payload = await response.json();
+      if (!outbound.signal.aborted && !res.destroyed && !res.writableEnded) res.json(payload);
+    } catch (error) {
+      // Never write an error response to a socket whose peer has gone away.
+      if (outbound.signal.aborted || req.aborted || res.destroyed) return;
+      // Node/undici wraps an async request-body failure in a TypeError whose
+      // `cause` is the stream error. Preserve the intended 413 response rather
+      // than turning an early size-limit abort into a generic 500.
+      const tooLarge = isArchiveTooLargeError(error);
+      sendApiError(
+        res,
+        tooLarge ? 413 : 500,
+        tooLarge ? 'PAYLOAD_TOO_LARGE' : 'UPLOAD_FAILED',
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      removeDisconnectListeners();
+      if (body && !body.destroyed) body.destroy();
+      if (archive && !archive.destroyed) archive.destroy();
     }
   });
 

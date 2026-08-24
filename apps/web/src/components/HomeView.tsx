@@ -92,7 +92,16 @@ import {
   pluginInputsAreValid,
   requiredInputsAreUserFillable,
 } from '../utils/pluginRequiredInputs';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 import { HomeHero, type ExamplePromptInfo, type HomeHeroHandle } from './HomeHero';
+import { TemplateRecommendCard } from './TemplateRecommendCard';
+import { TemplateRecommendTrigger } from './TemplateRecommendTrigger';
+import {
+  recommendTemplates,
+  templateRecommendUnavailable,
+  type TemplateRecommendResponse,
+  type TemplateRecommendation,
+} from '../state/templateRecommend';
 import { AppWashKineticGrid } from './AppWashKineticGrid';
 import { findChip, HOME_HERO_CHIPS, type HomeHeroChip } from './home-hero/chips';
 import {
@@ -319,6 +328,33 @@ const EMPTY_DESIGN_SYSTEMS: DesignSystemSummary[] = [];
 const EMPTY_SKILLS: SkillSummary[] = [];
 const EMPTY_CONNECTORS: ConnectorDetail[] = [];
 const EMPTY_PROMPT_TEMPLATES: PromptTemplateSummary[] = [];
+const HIDDEN_NATIVE_VISUAL_CHIP_IDS = ['image', 'video', 'hyperframes'] as const;
+const HIDDEN_NATIVE_VISUAL_PLUGIN_IDS = new Set(['od-media-generation', 'example-hyperframes']);
+
+function isHiddenNativeVisualPluginSelection(
+  pluginId: string,
+  chipId: string | null | undefined,
+  projectKind: ProjectKind | null | undefined,
+  mediaKind?: string | null,
+): boolean {
+  if (!HIDDEN_NATIVE_VISUAL_PLUGIN_IDS.has(pluginId)) return false;
+  if (pluginId === 'example-hyperframes') return true;
+  if (HIDDEN_NATIVE_VISUAL_CHIP_IDS.some((id) => id === chipId)) return true;
+  if (projectKind === 'image' || projectKind === 'video') return true;
+  if (chipId === 'audio' || projectKind === 'audio') return mediaKind != null && mediaKind !== 'audio';
+  return mediaKind !== 'audio';
+}
+
+function defaultDesignChipDraft(): HomeComposerChipDraft | null {
+  const chip = findChip('prototype');
+  if (!chip || chip.action.kind !== 'apply-scenario') return null;
+  return {
+    chipId: chip.id,
+    pluginId: chip.action.pluginId,
+    projectKind: chip.action.projectKind,
+    prototypeSubtypeId: null,
+  };
+}
 
 // The Home composer lives inside EntryView, which App.tsx fully UNMOUNTS the
 // moment the user opens a project tab (the single `appMain` slot swaps
@@ -421,12 +457,15 @@ function readHomeComposerChipDraft(): HomeComposerChipDraft | null {
       typeof parsed.prototypeSubtypeId === 'string'
         ? prototypeSubChipForSlug(parsed.prototypeSubtypeId)
         : null;
-    return {
+    const draft: HomeComposerChipDraft = {
       chipId: legacyPrototypeSubtype ? 'prototype' : parsedChipId,
       pluginId: parsed.pluginId,
       projectKind: typeof parsed.projectKind === 'string' ? (parsed.projectKind as ProjectKind) : null,
       prototypeSubtypeId: parsedPrototypeSubtype?.slug ?? legacyPrototypeSubtype?.slug ?? null,
     };
+    return isHiddenNativeVisualPluginSelection(draft.pluginId, draft.chipId, draft.projectKind)
+      ? defaultDesignChipDraft()
+      : draft;
   } catch {
     return null;
   }
@@ -680,6 +719,12 @@ export function HomeView({
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
   const [prompt, setPrompt] = useState(() => restoredDraft.prompt);
+  const [templateRecommendations, setTemplateRecommendations] = useState<TemplateRecommendResponse | null>(null);
+  const [templateRecommendLoading, setTemplateRecommendLoading] = useState(false);
+  const [templateRecommendAvailable, setTemplateRecommendAvailable] = useState(
+    () => !templateRecommendUnavailable(),
+  );
+  const templateRecommendationSeenRef = useRef<Set<string>>(new Set());
   // Treat a restored non-empty prompt as user-edited so the plugin/skill
   // replacement guard still asks before clobbering it.
   const [promptEditedByUser, setPromptEditedByUser] = useState(
@@ -1065,13 +1110,31 @@ export function HomeView({
     consumedHandoffIdRef.current = promptHandoff.id;
     setError(null);
     if (promptHandoff.source === 'plugin-use') {
-      setPendingPluginUseHandoff({
-        pluginId: promptHandoff.pluginId,
-        action: promptHandoff.action ?? 'use',
-        ...(promptHandoff.inputs ? { inputs: promptHandoff.inputs } : {}),
-        ...(promptHandoff.chipId ? { chipId: promptHandoff.chipId } : {}),
-        ...(promptHandoff.projectKind ? { projectKind: promptHandoff.projectKind } : {}),
-      });
+      const handoffMediaKind = typeof promptHandoff.inputs?.mediaKind === 'string'
+        ? promptHandoff.inputs.mediaKind
+        : null;
+      const fallbackDraft = isHiddenNativeVisualPluginSelection(
+        promptHandoff.pluginId,
+        promptHandoff.chipId,
+        promptHandoff.projectKind,
+        handoffMediaKind,
+      )
+        ? defaultDesignChipDraft()
+        : null;
+      setPendingPluginUseHandoff(fallbackDraft
+        ? {
+            pluginId: fallbackDraft.pluginId,
+            action: 'use',
+            chipId: fallbackDraft.chipId ?? undefined,
+            projectKind: fallbackDraft.projectKind ?? undefined,
+          }
+        : {
+            pluginId: promptHandoff.pluginId,
+            action: promptHandoff.action ?? 'use',
+            ...(promptHandoff.inputs ? { inputs: promptHandoff.inputs } : {}),
+            ...(promptHandoff.chipId ? { chipId: promptHandoff.chipId } : {}),
+            ...(promptHandoff.projectKind ? { projectKind: promptHandoff.projectKind } : {}),
+          });
       if (promptHandoff.focus) {
         focusPromptAtEnd();
       }
@@ -2890,6 +2953,43 @@ export function HomeView({
     }
   }
 
+  async function requestTemplateRecommendations() {
+    const requestPrompt = prompt.trim();
+    if (!requestPrompt || templateRecommendLoading) return;
+    setTemplateRecommendLoading(true);
+    const result = await recommendTemplates({
+      prompt: requestPrompt,
+      surface: 'home',
+      excludeIds: [...templateRecommendationSeenRef.current],
+      topN: 5,
+    });
+    setTemplateRecommendLoading(false);
+    if (!result) {
+      if (templateRecommendUnavailable()) setTemplateRecommendAvailable(false);
+      return;
+    }
+    for (const recommendation of result.recommendations) {
+      templateRecommendationSeenRef.current.add(recommendation.id);
+    }
+    setTemplateRecommendations(result);
+  }
+
+  function useTemplateRecommendation(recommendation: TemplateRecommendation) {
+    if (recommendation.kind === 'design-system') {
+      const system = designSystems.find((candidate) => candidate.id === recommendation.id);
+      if (system) handleDesignSystemChange(system.id);
+    } else {
+      const normalizedId = recommendation.id.replace(/^example-/, '');
+      const skill = skills.find((candidate) => (
+        candidate.id === recommendation.id
+        || candidate.id === normalizedId
+        || candidate.name === recommendation.name
+      ));
+      if (skill) useSkill(skill, prompt);
+    }
+    setTemplateRecommendations(null);
+  }
+
   // #5517: with no recent projects the home (logo + heading + composer)
   // centers vertically instead of hugging the top, and the strip is skipped.
   const recentProjectsEmpty = !projectsLoading && projects.length === 0;
@@ -2944,6 +3044,7 @@ export function HomeView({
         activeSkillTitle={activeSkill ? localizeSkillName(locale, activeSkill) : null}
         activeSkillRecord={activeSkill}
         activeChipId={active?.chipId ?? null}
+        hiddenTemplateChipIds={HIDDEN_NATIVE_VISUAL_CHIP_IDS}
         activePrototypeSubtypeId={active?.prototypeSubtypeId ?? null}
         showActivePluginChip={showActivePluginChip}
         onClearActivePlugin={clearActivePlugin}
@@ -2980,6 +3081,15 @@ export function HomeView({
         designSystems={designSystemPickerSystems}
         selectedDesignSystemId={designSystemId}
         onDesignSystemChange={handleDesignSystemChange}
+        stagedRowAccessory={templateRecommendAvailable ? (
+          <TemplateRecommendTrigger
+            enabled={prompt.trim().length > 0 && templateRecommendations === null}
+            loading={templateRecommendLoading}
+            disabledHint={templateRecommendations ? t('templateRec.entryOpen') : undefined}
+            onClick={() => { void requestTemplateRecommendations(); }}
+            data-testid="home-template-recommend"
+          />
+        ) : null}
         stagedFiles={stagedFiles}
         onAddFiles={stageFiles}
         onRemoveFile={removeStagedFile}
@@ -3019,16 +3129,16 @@ export function HomeView({
         error={error}
         workingDir={workingDir}
         recentDirs={recentDirs}
-        onPickWorkingDir={handlePickWorkingDir}
-        onPickLocalCodeDir={handlePickLocalCodeDir}
-        onSelectRecentWorkingDir={(dir) => {
+        onPickWorkingDir={WHITE_LABEL_SAAS ? undefined : handlePickWorkingDir}
+        onPickLocalCodeDir={WHITE_LABEL_SAAS ? undefined : handlePickLocalCodeDir}
+        onSelectRecentWorkingDir={WHITE_LABEL_SAAS ? undefined : (dir) => {
           setWorkingDir(dir);
           // Recents come from the browser-side picker only; they carry no
           // desktop trust token (and linkedDirs don't need one).
           setWorkingDirToken(null);
           void rememberRecentDir(dir);
         }}
-        onClearWorkingDir={() => {
+        onClearWorkingDir={WHITE_LABEL_SAAS ? undefined : () => {
           setWorkingDir(null);
           setWorkingDirToken(null);
         }}
@@ -3047,6 +3157,16 @@ export function HomeView({
         // only this mount point is gone.
         recommendationSlot={artifactUpgradeSlot}
       />
+      {templateRecommendations ? (
+        <TemplateRecommendCard
+          recommendations={templateRecommendations.recommendations}
+          degraded={templateRecommendations.degraded}
+          busy={templateRecommendLoading}
+          onUse={(recommendation) => useTemplateRecommendation(recommendation)}
+          onExhausted={() => { void requestTemplateRecommendations(); }}
+          onDismiss={() => setTemplateRecommendations(null)}
+        />
+      ) : null}
 
       {recentProjectsEmpty ? null : (
       <RecentProjectsStrip

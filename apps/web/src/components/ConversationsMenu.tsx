@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { conversationMetaLabel } from './ChatPane';
 import type { Conversation } from '../types';
+import { confirm as confirmDialog } from './confirm-dialog-host';
 
 interface Props {
   conversations: Conversation[];
@@ -198,15 +199,12 @@ function ConversationsDropdown({
                 title={t('conv.delete')}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (
-                    confirm(
-                      t('conv.deleteConfirm', {
-                        title: c.title || t('conv.untitled'),
-                      }),
-                    )
-                  ) {
-                    onDelete(c.id);
-                  }
+                  void confirmDialog({
+                    message: t('conv.deleteConfirm', { title: c.title || t('conv.untitled') }),
+                    confirmLabel: t('common.delete'),
+                    cancelLabel: t('common.cancel'),
+                    danger: true,
+                  }).then((ok) => { if (ok) onDelete(c.id); });
                 }}
               >
                 ×

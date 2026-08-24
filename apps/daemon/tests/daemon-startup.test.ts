@@ -1,6 +1,84 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { parseDaemonCliStartupArgs } from '../src/daemon-startup.js';
+import type { Server } from 'node:http';
+import {
+  createDaemonRuntimeStop,
+  createDaemonSignalStop,
+  parseDaemonCliStartupArgs,
+} from '../src/daemon-startup.js';
+
+describe('daemon runtime shutdown ordering', () => {
+  it('drains accepted HTTP work before service/pool shutdown and is idempotent', async () => {
+    const events: string[] = [];
+    let finishDrain: (() => void) | undefined;
+    const server = {
+      listening: true,
+      close(callback: (error?: Error) => void) {
+        events.push('http-drain-start');
+        finishDrain = () => {
+          events.push('http-drain-complete');
+          callback();
+        };
+      },
+      closeIdleConnections() {},
+    } as unknown as Server;
+    const stop = createDaemonRuntimeStop({
+      server,
+      url: 'http://127.0.0.1:0',
+      shutdown: async () => { events.push('services-and-pool-shutdown'); },
+    });
+
+    const first = stop();
+    const second = stop();
+    expect(second).toBe(first);
+    await Promise.resolve();
+    expect(events).toEqual(['http-drain-start']);
+
+    finishDrain?.();
+    await first;
+    expect(events).toEqual([
+      'http-drain-start',
+      'http-drain-complete',
+      'services-and-pool-shutdown',
+    ]);
+  });
+
+  it('a second termination signal waits for the same graceful stop', async () => {
+    let finishStop!: () => void;
+    const pendingStop = new Promise<void>((resolve) => { finishStop = resolve; });
+    const stop = vi.fn(() => pendingStop);
+    const exit = vi.fn();
+    const onSignal = createDaemonSignalStop({ stop }, { exit });
+
+    const first = onSignal();
+    const second = onSignal();
+
+    expect(second).toBe(first);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+
+    finishStop();
+    await first;
+    await Promise.resolve();
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('propagates a graceful service barrier failure after HTTP drain', async () => {
+    const server = {
+      listening: true,
+      close(callback: (error?: Error) => void) { callback(); },
+      closeIdleConnections() {},
+    } as unknown as Server;
+    const stop = createDaemonRuntimeStop({
+      server,
+      url: 'http://127.0.0.1:0',
+      shutdown: async () => { throw new Error('project sync flush failed'); },
+    });
+
+    await expect(stop()).rejects.toThrow('project sync flush failed');
+  });
+});
 
 describe('daemon startup CLI parsing', () => {
   it('parses the documented daemon startup flags', () => {

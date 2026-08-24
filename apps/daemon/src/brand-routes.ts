@@ -46,6 +46,8 @@ import {
 } from './brands/index.js';
 import { patchMeta } from './brands/store.js';
 import type { BrandDetailResponse, BrandMeta, BrandSummary } from '@open-design/contracts';
+import { captureVerifiedPrincipal, type BrandDesignSystemRegistry } from './storage/brand-design-system-registry.js';
+import type { SyncResourceNamespace } from './sync/engine.js';
 
 export interface BrandRoutesDeps {
   /** `<dataDir>/brands` — root of all brand directories. */
@@ -119,6 +121,12 @@ export interface BrandRoutesDeps {
   };
   /** Optional id factory; defaults inside the brand engine when omitted. */
   randomId?: () => string;
+  registry?: BrandDesignSystemRegistry;
+  resourceSync?: {
+    hydrate: (namespace: SyncResourceNamespace, id: string, options?: { ifMissing?: boolean }) => Promise<unknown>;
+    markDirty: (namespace: SyncResourceNamespace, id: string) => void;
+    dropState: (namespace: SyncResourceNamespace, id: string) => Promise<void>;
+  };
   /** Optional extraction overrides used by deterministic harnesses. */
   prefetch?: Parameters<typeof startBrandExtraction>[0]['prefetch'];
   logoFallback?: Parameters<typeof startBrandExtraction>[0]['logoFallback'];
@@ -142,6 +150,34 @@ type ProgrammaticExtractionAbortResult = 'none' | 'settled' | 'timeout';
 export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): void {
   const { brandsRoot, userDesignSystemsRoot, projectsRoot, skillsRoot, dataDir, db, randomId } = deps;
   const activeProgrammaticBrandExtractions = new Map<string, ActiveProgrammaticBrandExtraction>();
+  const registry = deps.registry;
+  const sync = deps.resourceSync;
+  const admittedPrincipal = () => registry?.enabled ? captureVerifiedPrincipal() : undefined;
+  const brandDirId = (id: string) => id;
+  const designSystemDirId = (id: string) => id.replace(/^user:/u, '');
+  const recordFinalizedMutation = async (result: { id: string; designSystemId: string; brand?: { name?: string } }) => {
+    const principal = admittedPrincipal();
+    await registry?.register({
+      resourceType: 'design_system', resourceId: result.designSystemId,
+      slug: designSystemDirId(result.designSystemId), name: result.brand?.name ?? result.id,
+    }, principal);
+    sync?.markDirty('design-system', designSystemDirId(result.designSystemId));
+    sync?.markDirty('brand', brandDirId(result.id));
+  };
+
+  // One tenant gate covers every detail/lifecycle endpoint registered below.
+  app.use('/api/brands/:id', async (req: Request, res: Response, next) => {
+    try {
+      const principal = admittedPrincipal();
+      if (registry?.enabled && !(await registry.owns('brand', String(req.params.id), principal))) {
+        return res.status(404).json({ error: 'brand not found' });
+      }
+      await sync?.hydrate('brand', brandDirId(String(req.params.id)), { ifMissing: true });
+      return next();
+    } catch (error) {
+      return res.status(500).json({ error: String(error) });
+    }
+  });
   const sendWorkspaceScopeError = (res: Response, error: unknown): boolean => {
     if (
       !error
@@ -311,13 +347,20 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   }
 
   // GET /api/brands — list every stored brand as a summary.
-  app.get('/api/brands', (_req: Request, res: Response) => {
+  app.get('/api/brands', async (_req: Request, res: Response) => {
     try {
       const statusContext = createBrandStatusContext(deps);
+      const ownedRows = registry?.enabled
+        ? await registry.listOwned('brand', admittedPrincipal())
+        : null;
+      if (ownedRows && sync) {
+        await Promise.all(ownedRows.map((row) => sync.hydrate('brand', brandDirId(row.resourceId), { ifMissing: true })));
+      }
+      const owned = ownedRows ? new Set(ownedRows.map((row) => row.resourceId)) : null;
       res.json({
-        brands: listBrandSummaries(brandsRoot).map((summary) =>
-          reconcileBrandSummaryStatus(brandsRoot, summary, statusContext),
-        ),
+        brands: listBrandSummaries(brandsRoot)
+          .filter((summary) => !owned || owned.has(summary.meta.id))
+          .map((summary) => reconcileBrandSummaryStatus(brandsRoot, summary, statusContext)),
       });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -328,6 +371,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   // project (target site open in a browser tab + a seeded prompt that drives an
   // agent through the extraction chain). Returns the ids to navigate into.
   app.post('/api/brands', async (req: Request, res: Response) => {
+    const principal = admittedPrincipal();
     const url = typeof req.body?.url === 'string' ? req.body.url : '';
     const description = typeof req.body?.description === 'string' ? req.body.description : '';
     const designMd = typeof req.body?.designMd === 'string' ? req.body.designMd : '';
@@ -362,8 +406,15 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
         },
       };
       if (deps.createWorkspaceOwnedDesignSystem) {
-        startOptions.createUserDesignSystem = (root, input) =>
-          deps.createWorkspaceOwnedDesignSystem!(root, input, createHome);
+        startOptions.createUserDesignSystem = async (root, input) => {
+          const created = await deps.createWorkspaceOwnedDesignSystem!(root, input, createHome);
+          await registry?.register({
+            resourceType: 'design_system', resourceId: created.id,
+            slug: designSystemDirId(created.id), name: created.title,
+          }, principal);
+          sync?.markDirty('design-system', designSystemDirId(created.id));
+          return created;
+        };
       }
       if (deps.deleteWorkspaceOwnedDesignSystem) {
         startOptions.deleteUserDesignSystem = deps.deleteWorkspaceOwnedDesignSystem;
@@ -381,6 +432,11 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       const transcriptAgent = await deps.resolveTranscriptAgent?.().catch(() => null);
       if (transcriptAgent) startOptions.transcriptAgent = transcriptAgent;
       const result = await startBrandExtraction(startOptions);
+      await registry?.register({
+        resourceType: 'brand', resourceId: result.id, slug: result.id,
+        name: result.brandName ?? result.sourceUrl ?? result.id,
+      }, principal);
+      sync?.markDirty('brand', brandDirId(result.id));
       const backgroundExtraction = backgroundExtractionRef.current;
       trackProgrammaticBrandExtraction(result.id, programmaticAbortController, backgroundExtraction);
       res.json(result);
@@ -424,6 +480,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
         ...(deps.imageryFallback ? { imageryFallback: deps.imageryFallback } : {}),
       });
       trackProgrammaticBrandExtraction(id, programmaticAbortController, backgroundExtractionRef.current);
+      sync?.markDirty('brand', brandDirId(id));
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -483,6 +540,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
         });
       }
       const next = readBrandDetail(brandsRoot, id)?.meta ?? currentMeta;
+      sync?.markDirty('brand', brandDirId(id));
       res.json({ ok: true, status: next.status });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -512,6 +570,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       if (projectId) renderOptions.projectId = projectId;
       if (locale) renderOptions.locale = locale;
       const result = await renderBrandPreviewIntoProject(renderOptions);
+      sync?.markDirty('brand', brandDirId(id));
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -548,6 +607,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
       if (locale) finalizeOptions.locale = locale;
       if (randomId) finalizeOptions.randomId = randomId;
       const result = await finalizeBrand(finalizeOptions);
+      await recordFinalizedMutation(result);
       res.json(result);
     } catch (err) {
       if (sendWorkspaceScopeError(res, err)) return;
@@ -600,6 +660,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
         res.status(422).json({ error: BROWSER_HTML_EXTRACTION_ERROR });
         return;
       }
+      await recordFinalizedMutation(result);
       res.json(result);
     } catch (err) {
       if (isProgrammaticExtractionAbortError(err)) {
@@ -629,6 +690,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
   app.delete('/api/brands/:id', async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
+      const principal = admittedPrincipal();
       const detail = readBrandDetail(brandsRoot, id);
       if (detail?.meta.designSystemId && deps.deleteDesignSystemForRequest) {
         if (!(await deps.deleteDesignSystemForRequest(
@@ -651,6 +713,9 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
           },
         ))) return;
       }
+      if (registry?.enabled && !(await registry.softDelete('brand', id, principal))) {
+        return res.status(404).json({ error: 'brand not found' });
+      }
       await removeBrand(
         brandsRoot,
         userDesignSystemsRoot,
@@ -659,6 +724,7 @@ export function registerBrandRoutes(app: Application, deps: BrandRoutesDeps): vo
           ? async () => true
           : deps.deleteWorkspaceOwnedDesignSystem,
       );
+      await sync?.dropState('brand', brandDirId(id));
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: String(err) });

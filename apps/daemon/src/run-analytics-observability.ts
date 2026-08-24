@@ -142,6 +142,8 @@ export interface RunUsageAnalytics {
   input_accounting_mode: 'inclusive' | 'additive' | 'unknown';
   token_count_source: 'provider_usage' | 'estimated' | 'unknown';
   agent_reported_model: string | null;
+  cost_usd?: number;
+  duration_ms?: number;
 }
 
 /** Compact tool histogram for PostHog `run_finished` (no inputs/outputs). */
@@ -482,6 +484,8 @@ export function scanRunEventsForUsageAnalytics(
   let cacheCreationInputTokens: number | undefined;
   let cacheTokenSource: RunUsageAnalytics['cache_token_source'] = 'unavailable';
   let agentReportedModel: string | null = null;
+  let costUsd: number | undefined;
+  let durationMs: number | undefined;
   const needAgentModel = !hasExplicitRequestedModelForAnalytics(reqBodyModel);
   // Provider-usage is true for any real token field (including thought/cache-only
   // ACP frames). Primary usage is complete only once both input and output are
@@ -507,9 +511,18 @@ export function scanRunEventsForUsageAnalytics(
           provider?: unknown;
           model?: unknown;
           detail?: unknown;
+          costUsd?: unknown;
+          durationMs?: unknown;
         }
       | null
       | undefined;
+    if (ev?.event === 'agent' && data?.type === 'usage') {
+      if (costUsd === undefined && typeof data.costUsd === 'number'
+        && Number.isFinite(data.costUsd) && data.costUsd >= 0) costUsd = data.costUsd;
+      if (durationMs === undefined && typeof data.durationMs === 'number'
+        && Number.isFinite(data.durationMs) && data.durationMs >= 0) durationMs = data.durationMs;
+    }
+
     // Keep merging usage while primary or cache counters are still incomplete.
     // Stopping on primary alone drops earlier cache-only frames when a newer
     // frame already supplied input+output without cache.
@@ -610,14 +623,15 @@ export function scanRunEventsForUsageAnalytics(
       }
     }
 
-    // Stop only once primary input/output and both cache counters are known.
-    // Partial primary frames, cache-only frames, and the inverse (complete
-    // primary without cache) keep the reverse scan open so earlier counters
-    // still merge. Streams with no cache frames simply finish the loop.
+    // Stop once token/model fields and the optional runtime metrics have all
+    // been found. If cost or duration is absent we finish the reverse scan so
+    // an earlier producer frame can still supply it.
     if (
       havePrimaryUsage &&
       haveCacheFields &&
-      (!needAgentModel || agentReportedModel)
+      (!needAgentModel || agentReportedModel) &&
+      costUsd !== undefined &&
+      durationMs !== undefined
     ) {
       break;
     }
@@ -741,6 +755,8 @@ export function scanRunEventsForUsageAnalytics(
     input_accounting_mode: inputAccountingMode,
     token_count_source: haveProviderUsage ? 'provider_usage' : 'unknown',
     agent_reported_model: agentReportedModel,
+    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+    ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
   };
 }
 

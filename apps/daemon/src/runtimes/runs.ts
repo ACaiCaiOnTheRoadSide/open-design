@@ -23,6 +23,24 @@ import {
 
 export const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 
+export function runEndReason(run) {
+  if (!TERMINAL_RUN_STATUSES.has(run.status)) return undefined;
+  if (run.endReason && typeof run.endReason.code === 'string' && run.endReason.code) {
+    return run.endReason;
+  }
+  if (run.status === 'canceled') {
+    return { code: run.cancelOrigin === 'daemon_shutdown' ? 'daemon_shutdown' : 'user_canceled' };
+  }
+  if (run.truncatedMidTurn) return { code: 'output_truncated' };
+  if (run.status === 'succeeded') {
+    return { code: run.terminalTrigger === 'inactivity_watchdog' ? 'idle_artifact_shutdown' : 'completed' };
+  }
+  return {
+    code: run.errorCode || 'AGENT_EXECUTION_FAILED',
+    ...(typeof run.error === 'string' && run.error ? { detail: run.error } : {}),
+  };
+}
+
 const RUN_STATE_SCHEMA_VERSION = 1;
 
 const DIAGNOSTIC_SOURCE = 'open-design-daemon';
@@ -526,6 +544,8 @@ function durableRunState(run) {
     failureAction: run.failureAction ?? null,
     cancelOrigin: run.cancelOrigin ?? null,
     terminalTrigger: run.terminalTrigger ?? null,
+    ...(runEndReason(run) ? { endReason: runEndReason(run) } : {}),
+    truncatedMidTurn: Boolean(run.truncatedMidTurn),
     resumable: run.resumable ?? false,
     artifactCount: Number.isFinite(run.artifactCount) ? run.artifactCount : 0,
     ...(Array.isArray(run.artifactPaths) ? { artifactPaths: run.artifactPaths } : {}),
@@ -718,6 +738,10 @@ export function createChatRunService({
             signal: null,
             status: 'failed',
             resumable: false,
+            reason: {
+              code: state.errorCode || RESTART_ERROR_CODE,
+              ...(state.error ? { detail: state.error } : {}),
+            },
             endedWithUnfinishedWork: Boolean(state.endedWithUnfinishedWork),
           },
           timestamp,
@@ -744,9 +768,13 @@ export function createChatRunService({
       acpSession: null,
       childPid: null,
       processGroupId: null,
+      gateSlot: null,
+      abandonGate: null,
       cancelRequested: false,
       cancelOrigin: state.cancelOrigin ?? null,
       terminalTrigger: state.terminalTrigger ?? null,
+      endReason: state.endReason ?? null,
+      truncatedMidTurn: Boolean(state.truncatedMidTurn),
       eventsLogPath,
       statePath,
       eventsLogStream: null,
@@ -833,6 +861,8 @@ export function createChatRunService({
       acpSession: null,
       childPid: null,
       processGroupId: null,
+      gateSlot: null,
+      abandonGate: null,
       childExitObservedAt: null,
       exitCode: null,
       signal: null,
@@ -1136,6 +1166,7 @@ export function createChatRunService({
     failureDetail: run.failureDetail ?? null,
     failureAction: run.failureAction ?? null,
     resumable: run.resumable ?? false,
+    ...(runEndReason(run) ? { endReason: runEndReason(run) } : {}),
     endedWithUnfinishedWork: !!run.endedWithUnfinishedWork,
     ...(Number.isFinite(run.artifactCount) ? { artifactCount: run.artifactCount } : {}),
     ...(Array.isArray(run.artifactPaths) ? { artifactPaths: run.artifactPaths } : {}),
@@ -1181,6 +1212,12 @@ export function createChatRunService({
 
   const finish = (run, status, code: number | null = null, signal: string | null = null) => {
     if (TERMINAL_RUN_STATUSES.has(run.status)) return;
+    run.gateSlot?.release(
+      status === 'succeeded' ? 'completed' : status,
+      status === 'failed' ? (run.error ?? undefined) : undefined,
+    );
+    run.gateSlot = null;
+    run.abandonGate = null;
     run.status = status;
     run.exitCode = code;
     run.signal = signal;
@@ -1208,6 +1245,7 @@ export function createChatRunService({
       signal,
       status,
       resumable: run.resumable ?? false,
+      reason: runEndReason(run),
       endedWithUnfinishedWork: run.endedWithUnfinishedWork,
       ...(Number.isFinite(run.artifactCount) ? { artifactCount: run.artifactCount } : {}),
       ...(Array.isArray(run.artifactPaths) ? { artifactPaths: run.artifactPaths } : {}),
@@ -1440,6 +1478,8 @@ export function createChatRunService({
     run.cancelOrigin = origin;
     run.updatedAt = Date.now();
     clearPendingRetryRestart(run);
+    run.abandonGate?.();
+    run.abandonGate = null;
     if (!run.child) {
       closeRunStdin(run);
       finish(run, 'canceled', null, 'SIGTERM');
@@ -1486,6 +1526,8 @@ export function createChatRunService({
       run.cancelOrigin = 'daemon_shutdown';
       run.updatedAt = Date.now();
       clearPendingRetryRestart(run);
+      run.abandonGate?.();
+      run.abandonGate = null;
       if (run.acpSession?.abort) {
         try {
           run.acpSession.abort();

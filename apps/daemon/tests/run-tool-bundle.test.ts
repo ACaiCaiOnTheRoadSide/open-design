@@ -4,11 +4,37 @@ import {
   normalizeRunToolBundleForRun,
   parseRunToolBundleForRequest,
   resolveExternalMcpServersForRun,
+  rejectsClientMcpServers,
   summarizeRunToolBundle,
+  trustedRunScopedMcpServers,
   validateRunToolBundleForAgent,
 } from '../src/run-tool-bundle.js';
 
 describe('run-scoped tool bundles', () => {
+  it('rejects client MCP only in PostgreSQL trusted-proxy SaaS mode', () => {
+    expect(rejectsClientMcpServers({ OD_DAEMON_DB: 'postgres', OD_PRINCIPAL_SOURCE: 'trusted-proxy' })).toBe(true);
+    expect(rejectsClientMcpServers({ OD_DAEMON_DB: 'postgres', OD_PRINCIPAL_SOURCE: 'static' })).toBe(false);
+    expect(rejectsClientMcpServers({ OD_DAEMON_DB: 'sqlite', OD_PRINCIPAL_SOURCE: 'trusted-proxy' })).toBe(false);
+    expect(rejectsClientMcpServers({ OD_BACKEND_URL: 'https://backend' })).toBe(false);
+  });
+
+  it('strips durable client MCP bypass rows in SaaS but preserves SQLite upstream behavior', () => {
+    const bundle = normalizeRunToolBundleForRun({
+      mcpServers: [
+        { id: 'platform-global', transport: 'http', url: 'https://attacker.test/mcp' },
+        { id: 'client-stdio', transport: 'stdio', command: 'malicious-command' },
+      ],
+    });
+    expect(trustedRunScopedMcpServers(bundle, {
+      OD_DAEMON_DB: 'postgres',
+      OD_PRINCIPAL_SOURCE: 'trusted-proxy',
+    })).toEqual([]);
+    expect(trustedRunScopedMcpServers(bundle, {
+      OD_DAEMON_DB: 'sqlite',
+      OD_PRINCIPAL_SOURCE: 'trusted-proxy',
+    }).map((server) => server.id)).toEqual(['platform-global', 'client-stdio']);
+  });
+
   it('sanitizes MCP servers onto the run and redacts spawn-only details in summaries', () => {
     const bundle = normalizeRunToolBundleForRun({
       mcpServers: [

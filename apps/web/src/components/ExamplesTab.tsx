@@ -9,6 +9,7 @@ import type { Dict } from '../i18n/types';
 import { fetchSkillExample } from '../providers/registry';
 import { exportAsHtml, exportAsPdf, exportAsZip } from '../runtime/exports';
 import { buildSrcdoc } from '../runtime/srcdoc';
+import { isNativeVisualGenerationSkill } from '../runtime/design-toolbox';
 import type { SkillSummary, Surface } from '../types';
 import { Icon } from './Icon';
 import { PreviewModal } from './PreviewModal';
@@ -35,8 +36,6 @@ type ScenarioFilter = string;
 const SURFACE_PILLS: { value: SurfaceFilter; labelKey: keyof Dict }[] = [
   { value: 'all', labelKey: 'examples.modeAll' },
   { value: 'web', labelKey: 'examples.surfaceWeb' },
-  { value: 'image', labelKey: 'examples.surfaceImage' },
-  { value: 'video', labelKey: 'examples.surfaceVideo' },
   { value: 'audio', labelKey: 'examples.surfaceAudio' },
 ];
 
@@ -130,7 +129,9 @@ export function ExamplesTab({ skills: rawSkills, onUsePrompt }: Props) {
   // through for `findSkillById` lookups elsewhere in the app.
   // Deduplicate by skill.id to prevent duplicate cards (issue #2889).
   const skills = useMemo(() => {
-    const filtered = rawSkills.filter((s) => !s.aggregatesExamples);
+    const filtered = rawSkills.filter((skill) =>
+      !skill.aggregatesExamples && !isNativeVisualGenerationSkill(skill)
+    );
     const seen = new Map<string, SkillSummary>();
     for (const skill of filtered) {
       if (!seen.has(skill.id)) {

@@ -6,7 +6,8 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { startServer } from '../../src/server.js';
-import { registerProjectRoutes } from '../../src/routes/project/index.js';
+import { registerProjectFileRoutes, registerProjectRoutes } from '../../src/routes/project/index.js';
+import { ProjectDirectoryRollbackError } from '../../src/projects.js';
 import { projectResourceIdFor } from '../../src/integrations/vela-team-projects.js';
 import { verifyWorkspaceRequestContext } from '../../src/collab/request-workspace-context.js';
 import {
@@ -1496,6 +1497,331 @@ describe('workspace project routes', () => {
     }
   });
 
+  it('commits batch SQLite deletion before Memory cleanup and never rolls it back on cleanup failure', async () => {
+    const projectId = `workspace-delete-memory-fails-${Date.now()}`;
+    const rollback = vi.fn(async () => {});
+    const commit = vi.fn(async () => {});
+    const dbDeleteProject = vi.fn();
+    const deleteWorkspaceProject = vi.fn();
+    const enqueueProjectDelete = vi.fn();
+    const cleanup = vi.fn(async (_ids: readonly string[]) => { throw new Error('raw pg detail'); });
+    const stage = vi.fn(async () => ({ rollback, commit }));
+    const app = express();
+    app.use(express.json());
+    registerProjectRoutes(app, workspaceProjectRouteDeps({
+      workspaceId,
+      projectId,
+      dbDeleteProject,
+      removeProjectDir: vi.fn(async () => {}),
+      deleteWorkspaceProject,
+      countWorkspaceProjectRefs: vi.fn().mockReturnValueOnce(1).mockReturnValue(0),
+      stageProjectDirsForDelete: stage,
+      deleteProjectMemoryForCurrentPrincipal: cleanup,
+      businessFactsOutbox: { enqueueProjectDelete },
+    }));
+    const routeServer = await listen(app);
+    try {
+      const response = await fetch(`${routeServer.url}/api/workspaces/${workspaceId}/projects/batch-delete`, {
+        method: 'POST', headers: headers('member-cleanup-fail'), body: JSON.stringify({ projectIds: [projectId] }),
+      });
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({ error: { code: 'PROJECT_MEMORY_CLEANUP_FAILED' } });
+      expect(cleanup).toHaveBeenCalledWith([projectId]);
+      expect(dbDeleteProject.mock.invocationCallOrder[0]).toBeLessThan(cleanup.mock.invocationCallOrder[0]!);
+      expect(rollback).not.toHaveBeenCalled();
+      expect(commit).toHaveBeenCalledOnce();
+      expect(deleteWorkspaceProject).toHaveBeenCalledWith(expect.anything(), workspaceId, projectId);
+      expect(dbDeleteProject).toHaveBeenCalledWith(expect.anything(), projectId, { facts: 'none' });
+      expect(enqueueProjectDelete).toHaveBeenCalledWith(projectId, expect.any(Number));
+      expect(enqueueProjectDelete.mock.invocationCallOrder[0]).toBeLessThan(cleanup.mock.invocationCallOrder[0]!);
+    } finally {
+      await close(routeServer.server);
+    }
+  });
+
+  it('passes only final project ids to batch Memory cleanup', async () => {
+    const projectId = `workspace-unlink-memory-${Date.now()}`;
+    const cleanup = vi.fn(async (_ids: readonly string[]) => {});
+    const dbDeleteProject = vi.fn();
+    const deleteWorkspaceProject = vi.fn();
+    const stageProjectDirsForDelete = vi.fn();
+    const app = express();
+    app.use(express.json());
+    registerProjectRoutes(app, workspaceProjectRouteDeps({
+      workspaceId,
+      projectId,
+      dbDeleteProject,
+      removeProjectDir: vi.fn(async () => {}),
+      deleteWorkspaceProject,
+      countWorkspaceProjectRefs: vi.fn(() => 2),
+      stageProjectDirsForDelete,
+      deleteProjectMemoryForCurrentPrincipal: cleanup,
+    }));
+    const routeServer = await listen(app);
+    try {
+      const response = await fetch(`${routeServer.url}/api/workspaces/${workspaceId}/projects/batch-delete`, {
+        method: 'POST', headers: headers('member-cleanup-fail'), body: JSON.stringify({ projectIds: [projectId] }),
+      });
+      expect(response.status).toBe(200);
+      expect(cleanup).toHaveBeenCalledWith([]);
+      expect(stageProjectDirsForDelete).not.toHaveBeenCalled();
+      expect(deleteWorkspaceProject).toHaveBeenCalledWith(expect.anything(), workspaceId, projectId);
+      expect(dbDeleteProject).not.toHaveBeenCalled();
+    } finally {
+      await close(routeServer.server);
+    }
+  });
+
+  it('returns stable 500 only after single-delete has irreversibly removed local project storage', async () => {
+    const projectId = `single-delete-memory-fails-${Date.now()}`;
+    const dbDeleteProject = vi.fn();
+    const removeProjectDir = vi.fn(async () => {});
+    const cleanup = vi.fn(async (_ids: readonly string[]) => { throw new Error('postgres.internal leaked detail'); });
+    const deps = workspaceProjectRouteDeps({
+      workspaceId,
+      projectId,
+      dbDeleteProject,
+      removeProjectDir,
+      deleteProjectMemoryForCurrentPrincipal: cleanup,
+    }) as any;
+    const cancel = vi.fn(async () => {});
+    deps.design.runs = { list: () => [{ id: 'active' }], cancel };
+    const app = express();
+    app.use(express.json());
+    registerProjectRoutes(app, deps);
+    const routeServer = await listen(app);
+    try {
+      const response = await fetch(`${routeServer.url}/api/projects/${projectId}`, {
+        method: 'DELETE', headers: headers('member-cleanup-fail'),
+      });
+      expect(response.status).toBe(500);
+      const body = await response.json() as any;
+      expect(body.error.code).toBe('PROJECT_MEMORY_CLEANUP_FAILED');
+      expect(JSON.stringify(body)).not.toContain('postgres.internal');
+      expect(cancel).toHaveBeenCalledTimes(2);
+      expect(cleanup).toHaveBeenCalledWith([projectId]);
+      expect(dbDeleteProject.mock.invocationCallOrder[0]).toBeLessThan(cleanup.mock.invocationCallOrder[0]!);
+      expect(dbDeleteProject).toHaveBeenCalledWith(expect.anything(), projectId, { facts: 'none' });
+      expect(removeProjectDir).toHaveBeenCalledWith('projects', projectId);
+    } finally {
+      await close(routeServer.server);
+    }
+  });
+
+  it('atomically enqueues the single-delete tombstone with the SQLite project delete', async () => {
+    const projectId = `single-delete-outbox-${Date.now()}`;
+    const dbDeleteProject = vi.fn();
+    const enqueueProjectDelete = vi.fn();
+    const cleanup = vi.fn(async () => {});
+    const app = express();
+    app.use(express.json());
+    registerProjectRoutes(app, workspaceProjectRouteDeps({
+      workspaceId,
+      projectId,
+      dbDeleteProject,
+      removeProjectDir: vi.fn(async () => {}),
+      deleteProjectMemoryForCurrentPrincipal: cleanup,
+      businessFactsOutbox: { enqueueProjectDelete },
+    }));
+    const routeServer = await listen(app);
+    try {
+      const response = await fetch(`${routeServer.url}/api/projects/${projectId}`, {
+        method: 'DELETE', headers: headers('member-cleanup-fail'),
+      });
+      expect(response.status).toBe(200);
+      expect(dbDeleteProject).toHaveBeenCalledWith(expect.anything(), projectId, { facts: 'none' });
+      expect(enqueueProjectDelete).toHaveBeenCalledWith(projectId, expect.any(Number));
+      expect(dbDeleteProject.mock.invocationCallOrder[0]).toBeLessThan(enqueueProjectDelete.mock.invocationCallOrder[0]!);
+      expect(enqueueProjectDelete.mock.invocationCallOrder[0]).toBeLessThan(cleanup.mock.invocationCallOrder[0]!);
+    } finally {
+      await close(routeServer.server);
+    }
+  });
+
+  it('releases the batch-delete gate when directory staging reports a rollback failure', async () => {
+    const projectId = `batch-delete-rollback-fails-${Date.now()}`;
+    const directoryFailure = new ProjectDirectoryRollbackError([new Error('restore failed')]);
+    const stageProjectDirsForDelete = vi.fn()
+      .mockRejectedValueOnce(directoryFailure)
+      .mockResolvedValueOnce({ rollback: vi.fn(async () => {}), commit: vi.fn(async () => {}) });
+    const app = express();
+    app.use(express.json());
+    registerProjectRoutes(app, workspaceProjectRouteDeps({
+      workspaceId,
+      projectId,
+      dbDeleteProject: vi.fn(),
+      removeProjectDir: vi.fn(async () => {}),
+      stageProjectDirsForDelete,
+    }));
+    const routeServer = await listen(app);
+    const requestDelete = () => fetch(
+      `${routeServer.url}/api/workspaces/${workspaceId}/projects/batch-delete`,
+      {
+        method: 'POST',
+        headers: headers('member-cleanup-fail'),
+        body: JSON.stringify({ projectIds: [projectId] }),
+      },
+    );
+    try {
+      const failed = await requestDelete();
+      expect(failed.status).toBe(400);
+      await expect(failed.json()).resolves.toMatchObject({
+        error: { message: expect.stringContaining('project directory rollback failed') },
+      });
+
+      // A leaked gate would deterministically return PROJECT_DELETING here
+      // before staging gets its second invocation.
+      const retried = await requestDelete();
+      expect(retried.status, await retried.text()).toBe(200);
+      expect(stageProjectDirsForDelete).toHaveBeenCalledTimes(2);
+    } finally {
+      await close(routeServer.server);
+    }
+  });
+
+  it('returns retryable 503 instead of stale files when managed hydration fails', async () => {
+    const projectId = `hydrate-fails-${Date.now()}`;
+    const listFiles = vi.fn(async () => [{ name: 'stale.html' }]);
+    const hydrate = vi.fn(async () => { throw new Error('sync backend secret'); });
+    const baseDeps = workspaceProjectRouteDeps({
+      workspaceId,
+      projectId,
+      dbDeleteProject: vi.fn(),
+      removeProjectDir: vi.fn(),
+    }) as any;
+    const getProject = baseDeps.projectStore.getProject;
+    const app = express();
+    app.use(express.json());
+    registerProjectFileRoutes(app, {
+      ...baseDeps,
+      uploads: { upload: {} },
+      node: { fs: {} },
+      documents: { buildDocumentPreview: vi.fn() },
+      artifacts: { validateArtifactManifestInput: vi.fn() },
+      projectPreviewScopes: new Map(),
+      projectStore: {
+        ...baseDeps.projectStore,
+        getProject: (db: unknown, requestedProjectId: string) => requestedProjectId === 'external-project'
+          ? { id: requestedProjectId, metadata: { baseDir: '/tmp/external-project' } }
+          : getProject(db, requestedProjectId),
+      },
+      projectFiles: { ...baseDeps.projectFiles, listFiles },
+      authorizeProjectRequest: vi.fn(async () => true),
+      projectSync: {
+        hydrate,
+        markDirty: vi.fn(),
+        dropState: vi.fn(),
+        reviveProject: vi.fn(),
+        runMutation: vi.fn(),
+      },
+    } as any);
+    const routeServer = await listen(app);
+    try {
+      const response = await fetch(`${routeServer.url}/api/projects/${projectId}/files`);
+      expect(response.status).toBe(503);
+      const body = await response.json() as any;
+      expect(body.error).toMatchObject({ code: 'UPSTREAM_UNAVAILABLE', retryable: true });
+      expect(JSON.stringify(body)).not.toContain('sync backend secret');
+      expect(hydrate).toHaveBeenCalledWith(projectId, { ifMissing: true });
+      expect(listFiles).not.toHaveBeenCalled();
+
+      const externalResponse = await fetch(`${routeServer.url}/api/projects/external-project/files`);
+      expect(externalResponse.status).toBe(200);
+      expect(hydrate).toHaveBeenCalledTimes(1);
+      expect(listFiles).toHaveBeenCalledOnce();
+    } finally {
+      await close(routeServer.server);
+    }
+  });
+
+  it('hydrates every preview disk-read entrypoint and skips external baseDir projects', async () => {
+    const projectId = `preview-hydrate-fails-${Date.now()}`;
+    const hydrate = vi.fn(async () => { throw new Error('sync backend secret'); });
+    const resolveProjectFilePath = vi.fn(async () => ({
+      name: 'asset.txt',
+      filePath: '/unused/asset.txt',
+      size: 0,
+      mime: 'text/plain',
+      kind: 'text',
+      mtime: 1,
+    }));
+    const baseDeps = workspaceProjectRouteDeps({
+      workspaceId,
+      projectId,
+      dbDeleteProject: vi.fn(),
+      removeProjectDir: vi.fn(),
+    }) as any;
+    const getProject = baseDeps.projectStore.getProject;
+    const app = express();
+    app.use(express.json());
+    registerProjectFileRoutes(app, {
+      ...baseDeps,
+      uploads: { upload: {} },
+      node: {
+        fs: {
+          promises: {
+            open: vi.fn(async () => ({
+              read: vi.fn(async () => ({ bytesRead: 0 })),
+              close: vi.fn(async () => {}),
+            })),
+          },
+        },
+      },
+      documents: { buildDocumentPreview: vi.fn() },
+      artifacts: { validateArtifactManifestInput: vi.fn() },
+      projectPreviewScopes: {
+        mint: vi.fn(() => 'preview-scope'),
+        resolve: vi.fn(() => null),
+      },
+      projectStore: {
+        ...baseDeps.projectStore,
+        getProject: (db: unknown, requestedProjectId: string) => requestedProjectId === 'external-project'
+          ? { id: requestedProjectId, metadata: { baseDir: '/tmp/external-project' } }
+          : getProject(db, requestedProjectId),
+      },
+      projectFiles: {
+        ...baseDeps.projectFiles,
+        resolveProjectFilePath,
+        readProjectFile: vi.fn(async () => ({ mime: 'text/plain', buffer: Buffer.alloc(0) })),
+        parseByteRange: vi.fn(() => null),
+      },
+      authorizeProjectRequest: vi.fn(async () => true),
+      projectSync: {
+        hydrate,
+        markDirty: vi.fn(),
+        dropState: vi.fn(),
+        reviveProject: vi.fn(),
+        runMutation: vi.fn(),
+      },
+    } as any);
+    const routeServer = await listen(app);
+    const paths = [
+      'preview-url?file=asset.txt',
+      'text-preview/asset.txt',
+      'preview/preview-scope/asset.txt',
+    ];
+    try {
+      for (const routePath of paths) {
+        const response = await fetch(`${routeServer.url}/api/projects/${projectId}/${routePath}`);
+        expect(response.status).toBe(503);
+        const body = await response.json() as any;
+        expect(body.error).toMatchObject({ code: 'UPSTREAM_UNAVAILABLE', retryable: true });
+        expect(JSON.stringify(body)).not.toContain('sync backend secret');
+      }
+      expect(hydrate).toHaveBeenCalledTimes(3);
+      expect(resolveProjectFilePath).not.toHaveBeenCalled();
+
+      for (const routePath of paths) {
+        const response = await fetch(`${routeServer.url}/api/projects/external-project/${routePath}`);
+        expect(response.status, `${routePath}: ${await response.text()}`).toBe(200);
+      }
+      expect(hydrate).toHaveBeenCalledTimes(3);
+      expect(resolveProjectFilePath).toHaveBeenCalledTimes(3);
+    } finally {
+      await close(routeServer.server);
+    }
+  });
+
   it('merges Vela team-project catalog entries as read-only member-discovery projects', async () => {
     const localProjectId = `workspace-local-${Date.now()}`;
     const remoteProjectId = `workspace-remote-${Date.now()}`;
@@ -2485,6 +2811,8 @@ function workspaceProjectRouteDeps({
   updateWorkspaceProject,
   rebindWorkspaceProject,
   workspaceRowOverrides,
+  deleteProjectMemoryForCurrentPrincipal,
+  businessFactsOutbox,
 }: {
   workspaceId: string;
   projectId: string;
@@ -2498,6 +2826,8 @@ function workspaceProjectRouteDeps({
   updateWorkspaceProject?: ReturnType<typeof vi.fn>;
   rebindWorkspaceProject?: ReturnType<typeof vi.fn>;
   workspaceRowOverrides?: Record<string, unknown>;
+  deleteProjectMemoryForCurrentPrincipal?: (projectIds: readonly string[]) => Promise<void>;
+  businessFactsOutbox?: unknown;
 }) {
   const now = 1;
   const project = {
@@ -2546,7 +2876,7 @@ function workspaceProjectRouteDeps({
         throw new Error(`unexpected direct SQLite query in workspace route fixture: ${sql}`);
       },
     },
-    design: {},
+    design: { runs: { list: () => [], cancel: vi.fn(async () => {}) } },
     http: {
       createSseResponse: noop,
       sendApiError: (res: any, status: number, code: string, message: string, init: Record<string, unknown> = {}) =>
@@ -2621,6 +2951,8 @@ function workspaceProjectRouteDeps({
       validateProjectSkillId: async () => ({ ok: true, id: null }),
     },
     collabSync: collabSync ?? { requestTeamShare: noop },
+    deleteProjectMemoryForCurrentPrincipal,
+    businessFactsOutbox,
     teamProjectCatalog,
   } as unknown as Parameters<typeof registerProjectRoutes>[1];
 }

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { WHITE_LABEL_SAAS } from '../../src/features/whiteLabel';
 import { App } from '../../src/App';
 import type { AppConfig } from '../../src/types';
 import {
@@ -275,6 +276,26 @@ describe('App connectors settings flows', () => {
     vi.clearAllMocks();
   });
 
+  it('persists and applies a quick accent change while keeping the hosted app light-only', async () => {
+    mockedLoadConfig.mockReturnValue({ ...baseConfig, theme: 'light', accentColor: '#353535' });
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId('theme-quick-menu-trigger'));
+    expect(screen.queryByText('System')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: '#F04142' }));
+
+    await waitFor(() => {
+      expect(mockedSaveConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ theme: 'light', accentColor: '#f04142' }),
+      );
+      expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(
+        expect.objectContaining({ theme: 'light', accentColor: '#f04142' }),
+      );
+    });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#f04142');
+  });
+
   it('hydrates a daemon-saved Composio key into settings when local state does not have a pending edit', async () => {
     mockedFetchComposioConfigFromDaemon.mockResolvedValue({
       apiKey: '',
@@ -371,7 +392,7 @@ describe('App connectors settings flows', () => {
     });
   });
 
-  it('does not show first-run privacy consent until daemon config hydration finishes', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('does not show first-run privacy consent until daemon config hydration finishes', async () => {
     let resolveDaemonConfig: (value: Record<string, never>) => void = () => {};
     mockedFetchDaemonConfig.mockReturnValue(
       new Promise((resolve) => {
@@ -401,7 +422,7 @@ describe('App connectors settings flows', () => {
     );
   });
 
-  it('keeps telemetry and content sharing enabled when the first-run banner share choice is clicked', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('keeps telemetry and content sharing enabled when the first-run banner share choice is clicked', async () => {
     render(<App />);
 
     await waitFor(() => {
@@ -422,7 +443,7 @@ describe('App connectors settings flows', () => {
     });
   });
 
-  it('preserves an existing installation id when the first-run banner share choice is clicked', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('preserves an existing installation id when the first-run banner share choice is clicked', async () => {
     const randomUUID = vi.fn(() => 'inst-new');
     vi.stubGlobal('crypto', { randomUUID });
     mockedLoadConfig.mockReturnValue({
@@ -451,7 +472,7 @@ describe('App connectors settings flows', () => {
     expect(randomUUID).not.toHaveBeenCalled();
   });
 
-  it('preserves the artifact manifest preference when the first-run banner share choice is clicked', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('preserves the artifact manifest preference when the first-run banner share choice is clicked', async () => {
     mockedLoadConfig.mockReturnValue({
       ...baseConfig,
       installationId: 'inst-existing',
@@ -478,7 +499,7 @@ describe('App connectors settings flows', () => {
     });
   });
 
-  it('turns telemetry off when the first-run banner decline choice is clicked', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('turns telemetry off when the first-run banner decline choice is clicked', async () => {
     render(<App />);
 
     await waitFor(() => {
@@ -499,7 +520,7 @@ describe('App connectors settings flows', () => {
     });
   });
 
-  it('preserves the artifact manifest preference when the first-run banner decline choice is clicked', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('preserves the artifact manifest preference when the first-run banner decline choice is clicked', async () => {
     mockedLoadConfig.mockReturnValue({
       ...baseConfig,
       installationId: 'inst-existing',
@@ -526,7 +547,7 @@ describe('App connectors settings flows', () => {
     });
   });
 
-  it('keeps the first-run privacy banner mounted while settings is open', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('keeps the first-run privacy banner mounted while settings is open', async () => {
     // The banner and Settings have independent lifecycles. The banner's
     // z-index in index.css sits above the modal backdrop, so opening
     // Settings (or any other modal) must not unmount the banner — the
@@ -545,7 +566,7 @@ describe('App connectors settings flows', () => {
     expect(container.querySelector('.privacy-consent-banner')).toBeTruthy();
   });
 
-  it('preserves an open settings draft when the first-run banner share choice is clicked before autosave', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('preserves an open settings draft when the first-run banner share choice is clicked before autosave', async () => {
     const { container } = render(<App />);
 
     await waitFor(() => {
@@ -594,7 +615,7 @@ describe('App connectors settings flows', () => {
     });
   });
 
-  it('shows the privacy banner on non-home routes once onboarding completes', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('shows the privacy banner on non-home routes once onboarding completes', async () => {
     // The design-system finish path drops the user into a project view
     // (the first generation runs there). Product wants the disclosure to
     // appear in that view too — the user is already waiting for output,

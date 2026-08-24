@@ -101,6 +101,10 @@ const residualAllowedExactPaths = new Set([
   // PostCSS loads Tailwind through a web-local .mjs compatibility config entry.
   "apps/web/postcss.config.mjs",
   "scripts/bake-html-ppt-examples.mjs",
+  // Sandbox export skill runtimes execute directly with Node after setup-env.sh
+  // installs their isolated Playwright dependencies under $TMPDIR.
+  "skills/html-to-pptx/scripts/render-pptx.mjs",
+  "skills/html-to-image/scripts/render-image.mjs",
   // CI-only plugin-preview renderer. Kept .mjs and run directly by Node so its
   // runtime deps (puppeteer-core + a headless Chrome + ffmpeg) are provided by
   // the CI environment and never pulled into the daemon/web TS build or bundle.
@@ -1340,8 +1344,22 @@ async function checkDaemonCoreBoundary(context: GuardContext): Promise<boolean> 
   return crossAppImportsPass && scopeBoundaryPass;
 }
 
+async function checkSharedExportSkillSetup(): Promise<boolean> {
+  const paths = [
+    "skills/html-to-pptx/scripts/setup-env.sh",
+    "skills/html-to-image/scripts/setup-env.sh",
+  ];
+  const copies = await Promise.all(paths.map((relative) => readFile(path.join(repoRoot, relative), "utf8")));
+  if (copies[0] !== copies[1]) {
+    console.error(`Shared export setup scripts differ: ${paths.join(", ")}`);
+    return false;
+  }
+  return true;
+}
+
 const checks: GuardCheck[] = [
   { name: "residual JavaScript", run: checkResidualJavaScript },
+  { name: "shared export skill setup", run: checkSharedExportSkillSetup },
   { name: "certain-exempt surface consumption", run: checkCertainExemptConsumption },
   { name: "packaged leaf boundary", run: checkPackagedLeafBoundary },
   { name: "daemon core boundary", run: checkDaemonCoreBoundary },

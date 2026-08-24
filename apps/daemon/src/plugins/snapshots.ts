@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { readPluginEnvKnobs } from '../app-config.js';
+import { getRequestContext, type VerifiedPrincipal } from '../request-context.js';
 import {
   OPEN_DESIGN_PLUGIN_SPEC_VERSION,
   type AppliedPluginSnapshot,
@@ -29,6 +30,31 @@ import {
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, unknown>;
+
+function snapshotOwnedByCurrentPrincipal(db: SqliteDb, snapshotId: string): boolean {
+  const tenantId = getRequestContext()?.tenantId;
+  if (!tenantId) return true;
+  return Boolean(db.prepare(
+    `SELECT 1 FROM applied_plugin_snapshots WHERE id = ? AND owner_tenant_id = ?`,
+  ).get(snapshotId, tenantId));
+}
+
+type SnapshotOwnerRegistrar = (
+  snapshotId: string,
+  projectId: string,
+  principal: Readonly<VerifiedPrincipal>,
+) => Promise<void>;
+let snapshotOwnerRegistrar: SnapshotOwnerRegistrar | null = null;
+const pendingOwnerRegistrations = new Map<string, Promise<void>>();
+
+export function configureSnapshotOwnerRegistrar(registrar: SnapshotOwnerRegistrar | null): void {
+  snapshotOwnerRegistrar = registrar;
+}
+
+/** Awaitable fence used by HTTP readers before consulting the owner registry. */
+export async function waitForSnapshotOwnerRegistration(snapshotId: string): Promise<void> {
+  await pendingOwnerRegistrations.get(snapshotId);
+}
 
 export interface CreateSnapshotInput {
   projectId: string;
@@ -66,6 +92,7 @@ export interface CreateSnapshotInput {
 export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): AppliedPluginSnapshot {
   const id = randomUUID();
   const now = Date.now();
+  const principal = getRequestContext();
   const knobs = readPluginEnvKnobs();
   // Per PB2: when a snapshot is created without an associated run, stamp an
   // expiry; when a run is already linked, the snapshot is referenced and the
@@ -78,7 +105,7 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
 
   db.prepare(`
     INSERT INTO applied_plugin_snapshots (
-      id, project_id, conversation_id, run_id, plugin_id, plugin_spec_version, plugin_version,
+      id, owner_tenant_id, project_id, conversation_id, run_id, plugin_id, plugin_spec_version, plugin_version,
       manifest_source_digest, source_marketplace_id, source_marketplace_entry_name,
       source_marketplace_entry_version, marketplace_trust, resolved_source,
       resolved_ref, archive_integrity, pinned_ref, task_kind,
@@ -88,9 +115,10 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
       plugin_title, plugin_description, query_text,
       status, applied_at, expires_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fresh', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fresh', ?, ?)
   `).run(
     id,
+    principal?.tenantId ?? null,
     input.projectId,
     input.conversationId ?? null,
     input.runId ?? null,
@@ -131,23 +159,35 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
     input,
     status: 'fresh',
   });
+  if (principal && snapshotOwnerRegistrar) {
+    const pending = snapshotOwnerRegistrar(id, input.projectId, principal)
+      // Registration failure leaves the SQLite row quarantined: owner-filtered
+      // reads cannot observe it, and a rejected background promise cannot crash
+      // the daemon before the request reaches its read fence.
+      .catch(() => undefined)
+      .finally(() => pendingOwnerRegistrations.delete(id));
+    pendingOwnerRegistrations.set(id, pending);
+  }
   return snapshot;
 }
 
 export function getSnapshot(db: SqliteDb, snapshotId: string): AppliedPluginSnapshot | null {
+  if (!snapshotOwnedByCurrentPrincipal(db, snapshotId)) return null;
   const row = db.prepare(`SELECT * FROM applied_plugin_snapshots WHERE id = ?`).get(snapshotId) as DbRow | undefined;
   if (!row) return null;
   return rowToSnapshot(row);
 }
 
 export function listSnapshotsForProject(db: SqliteDb, projectId: string): AppliedPluginSnapshot[] {
-  const rows = db
-    .prepare(`SELECT * FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC`)
-    .all(projectId) as DbRow[];
+  const tenantId = getRequestContext()?.tenantId;
+  const rows = tenantId
+    ? db.prepare(`SELECT * FROM applied_plugin_snapshots WHERE project_id = ? AND owner_tenant_id = ? ORDER BY applied_at DESC`).all(projectId, tenantId) as DbRow[]
+    : db.prepare(`SELECT * FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC`).all(projectId) as DbRow[];
   return rows.map(rowToSnapshot);
 }
 
 export function linkSnapshotToRun(db: SqliteDb, snapshotId: string, runId: string): void {
+  if (!snapshotOwnedByCurrentPrincipal(db, snapshotId)) return;
   db.prepare(`
     UPDATE applied_plugin_snapshots
        SET run_id = ?, expires_at = NULL
@@ -161,6 +201,7 @@ export function linkSnapshotToRun(db: SqliteDb, snapshotId: string, runId: strin
 // referenced (PB2 reproducibility-first). Idempotent — re-linking the
 // same id is a no-op.
 export function linkSnapshotToProject(db: SqliteDb, snapshotId: string, projectId: string): void {
+  if (!snapshotOwnedByCurrentPrincipal(db, snapshotId)) return;
   db.prepare(
     `UPDATE applied_plugin_snapshots
         SET project_id = ?, expires_at = NULL
@@ -180,6 +221,7 @@ export function restoreProjectSnapshotLink(
   previousSnapshotId: string | null | undefined,
   discardedRunId?: string | null | undefined,
 ): void {
+  if (!snapshotOwnedByCurrentPrincipal(db, snapshotIdToDiscard)) return;
   const previous = typeof previousSnapshotId === 'string' && previousSnapshotId.length > 0
     ? previousSnapshotId
     : null;
@@ -223,6 +265,7 @@ export function linkSnapshotToConversation(
   snapshotId: string,
   conversationId: string,
 ): void {
+  if (!snapshotOwnedByCurrentPrincipal(db, snapshotId)) return;
   db.prepare(
     `UPDATE applied_plugin_snapshots
         SET conversation_id = ?, expires_at = NULL
@@ -236,6 +279,7 @@ export function linkSnapshotToConversation(
 }
 
 export function markSnapshotStale(db: SqliteDb, snapshotId: string): void {
+  if (!snapshotOwnedByCurrentPrincipal(db, snapshotId)) return;
   db.prepare(`UPDATE applied_plugin_snapshots SET status = 'stale' WHERE id = ?`).run(snapshotId);
 }
 
@@ -273,6 +317,8 @@ export interface PruneExpiredOptions {
   // projects while letting operators clean up after `od project
   // delete <id>` so dangling snapshot rows don't accumulate.
   retentionDays?: number;
+  /** SaaS caller fence: only these owner-verified ids may be deleted. */
+  allowedIds?: ReadonlySet<string>;
 }
 
 export function pruneExpiredSnapshots(
@@ -319,7 +365,8 @@ export function pruneExpiredSnapshots(
 
   const ids = [...expiredIds, ...beforeIds, ...retentionIds].map((r) => r.id);
   // Dedupe — a row might match both expires_at and retentionDays.
-  const unique = Array.from(new Set(ids));
+  const unique = Array.from(new Set(ids)).filter((id) =>
+    snapshotOwnedByCurrentPrincipal(db, id) && (!options.allowedIds || options.allowedIds.has(id)));
   if (unique.length === 0) return { removed: 0, ids: [] };
   const placeholders = unique.map(() => '?').join(', ');
   db.prepare(`DELETE FROM applied_plugin_snapshots WHERE id IN (${placeholders})`).run(...unique);
@@ -327,7 +374,10 @@ export function pruneExpiredSnapshots(
 }
 
 export function countSnapshotsForProject(db: SqliteDb, projectId: string): number {
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM applied_plugin_snapshots WHERE project_id = ?`).get(projectId) as DbRow;
+  const tenantId = getRequestContext()?.tenantId;
+  const row = tenantId
+    ? db.prepare(`SELECT COUNT(*) AS n FROM applied_plugin_snapshots WHERE project_id = ? AND owner_tenant_id = ?`).get(projectId, tenantId) as DbRow
+    : db.prepare(`SELECT COUNT(*) AS n FROM applied_plugin_snapshots WHERE project_id = ?`).get(projectId) as DbRow;
   return Number(row['n'] ?? 0);
 }
 

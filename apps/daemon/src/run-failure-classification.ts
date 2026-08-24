@@ -170,7 +170,13 @@ function collectFailureText(input: RunFailureClassificationInput): string {
   return parts.join('\n');
 }
 
+function isConcurrencyLimitText(text: string): boolean {
+  return /\b(concurrency limit|concurrency lease|TENANT_CONCURRENCY_LIMIT_EXCEEDED)\b/i
+    .test(text);
+}
+
 function isHardQuotaText(text: string): boolean {
+  if (isConcurrencyLimitText(text)) return false;
   return /\b(session limit|usage limit|limit reached|quota|billing (?:hard )?limit|insufficient[ _-]?(?:quota|credit|credits|funds)|exceeded your current quota|out of credits|no payment method|requires more credits|can only afford)\b|DAILY_LIMIT_EXCEEDED|用户额度不足|额度不足|预扣费额度失败/i
     .test(text);
 }
@@ -179,6 +185,7 @@ function isHardQuotaText(text: string): boolean {
 // returns this in Chinese ("速率限制" / "请求频率"), which the English-only
 // quota check above misses, so it currently leaks into execution_failed.
 function isRateLimitText(text: string): boolean {
+  if (isConcurrencyLimitText(text)) return true;
   return /(速率限制|控制请求频率|请求(?:过于)?频繁|rate[ _-]?limit|too many requests)/i
     .test(text);
 }

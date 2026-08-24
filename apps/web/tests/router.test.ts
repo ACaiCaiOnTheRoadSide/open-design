@@ -17,7 +17,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { buildPath, parseRoute, type Route } from '../src/router';
+import { buildPath, isTrustedEmbedParentOrigin, parseRoute, type Route } from '../src/router';
+
+describe('embedded route notification origin policy', () => {
+  it('allows same-origin and explicit parents but rejects arbitrary embedders', () => {
+    const configured = new Set(['https://saas.example.com']);
+    expect(isTrustedEmbedParentOrigin('https://od.example.com', 'https://od.example.com', configured)).toBe(true);
+    expect(isTrustedEmbedParentOrigin('https://saas.example.com', 'https://od.example.com', configured)).toBe(true);
+    expect(isTrustedEmbedParentOrigin('https://evil.example.com', 'https://od.example.com', configured)).toBe(false);
+  });
+});
 
 function roundTrip(route: Route): Route {
   return parseRoute(buildPath(route));

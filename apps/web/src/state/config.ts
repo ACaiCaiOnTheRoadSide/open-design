@@ -22,6 +22,7 @@ import {
   DEFAULT_SUCCESS_SOUND_ID,
 } from '../utils/notifications';
 import { randomUUID } from '../utils/uuid';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 
 const STORAGE_KEY = 'open-design:config';
 const CONFIG_MIGRATION_VERSION = 3;
@@ -90,7 +91,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   agentId: null,
   skillId: null,
   designSystemId: null,
-  onboardingCompleted: false,
+  onboardingCompleted: WHITE_LABEL_SAAS,
   theme: FORCED_APP_THEME,
   accentColor: DEFAULT_ACCENT_COLOR,
   mediaProviders: {},
@@ -112,7 +113,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   // existed yet — observed live on the prerelease.10 QA run, which left
   // zero `page_view pn=onboarding` rows on PostHog despite the user
   // completing the flow.
-  telemetry: { metrics: true, content: true },
+  telemetry: WHITE_LABEL_SAAS
+    ? { metrics: false, content: false }
+    : { metrics: true, content: true },
+  privacyDecisionAt: WHITE_LABEL_SAAS ? 1 : undefined,
 };
 
 /** Well-known providers with pre-filled base URLs. */

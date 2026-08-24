@@ -14,6 +14,7 @@ vi.mock('../../src/analytics/events', async (importOriginal) => {
   };
 });
 
+import { WHITE_LABEL_SAAS } from '../../src/features/whiteLabel';
 import { ChatComposer, type ChatComposerHandle } from '../../src/components/ChatComposer';
 import { I18nProvider } from '../../src/i18n';
 import type { Locale } from '../../src/i18n/types';
@@ -519,7 +520,7 @@ describe('ChatComposer context pickers', () => {
   // absolutePath. If a file context were ever counted as a directory owner,
   // `workspaceContextDirStillReferenced` would treat the dir as still in use and
   // swallow the unlink — the second PATCH below would never happen.
-  it('never counts an active file context path as a linked dir', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('never counts an active file context path as a linked dir', async () => {
     openFolderPaths = ['/Users/me/new-work-dir'];
     const onProjectMetadataChange = vi.fn();
 
@@ -574,7 +575,7 @@ describe('ChatComposer context pickers', () => {
     );
   });
 
-  it('removes the linked dir added for a local-code context when its chip is cleared', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('removes the linked dir added for a local-code context when its chip is cleared', async () => {
     const onProjectMetadataChange = vi.fn();
     renderComposer({
       projectMetadata: { kind: 'prototype' },
@@ -710,7 +711,7 @@ describe('ChatComposer context pickers', () => {
     expect(onSend.mock.calls[0]?.[3]?.context?.workspaceItems).toBeUndefined();
   });
 
-  it('keeps sent linked-dir workspace context visible and removable after reset', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('keeps sent linked-dir workspace context visible and removable after reset', async () => {
     const onProjectMetadataChange = vi.fn();
     const onSend = vi.fn();
 
@@ -774,7 +775,7 @@ describe('ChatComposer context pickers', () => {
     );
   });
 
-  it('does not remove a pre-existing linked dir when a matching workspace chip is cleared', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('does not remove a pre-existing linked dir when a matching workspace chip is cleared', async () => {
     const onProjectMetadataChange = vi.fn();
     renderComposer({
       projectMetadata: { kind: 'prototype', linkedDirs: ['/Users/me/reference-dir'] },
@@ -799,7 +800,7 @@ describe('ChatComposer context pickers', () => {
     expect(onProjectMetadataChange).not.toHaveBeenCalled();
   });
 
-  it('keeps draft text typed while linked-dir removal is pending', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('keeps draft text typed while linked-dir removal is pending', async () => {
     renderComposer({ projectMetadata: { kind: 'prototype' } });
     await flushMounts();
 
@@ -835,7 +836,7 @@ describe('ChatComposer context pickers', () => {
   // other direction of the same invariant: the two kinds of linked dir stay
   // independent, so linking local code appends to the project's existing primary
   // dir instead of replacing it, and clearing the chip unlinks only its own dir.
-  it('links a local-code dir alongside the existing working dir and unlinks only that dir', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('links a local-code dir alongside the existing working dir and unlinks only that dir', async () => {
     openFolderPaths = ['/Users/me/reference-dir'];
     const onProjectMetadataChange = vi.fn();
 
@@ -954,7 +955,7 @@ describe('ChatComposer context pickers', () => {
   // are deleted rather than re-pointed. The neighbouring "keeps a shared linked
   // dir while another workspace item uses the same path" still covers the other,
   // still-live branch of "this dir is still referenced, don't unlink it".
-  it('keeps a shared linked dir while another workspace item uses the same path', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('keeps a shared linked dir while another workspace item uses the same path', async () => {
     openFolderPaths = ['/Users/me/shared'];
     const onProjectMetadataChange = vi.fn();
     renderComposer({

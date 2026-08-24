@@ -21,6 +21,7 @@ import {
   markSnapshotStale,
   restoreProjectSnapshotLink,
 } from '../src/plugins/snapshots.js';
+import { runWithRequestContext } from '../src/request-context.js';
 
 let db: Database.Database;
 let tmpDir: string;
@@ -69,6 +70,32 @@ const baseInput = (extra: Partial<Parameters<typeof createSnapshot>[1]> = {}) =>
 });
 
 describe('snapshots writer', () => {
+  it('fences every snapshot read/update callback by the creating tenant', () => {
+    db.prepare('INSERT INTO projects (id, name) VALUES (?, ?), (?, ?)')
+      .run('project-1', 'Project 1', 'project-2', 'Project 2');
+    const snapshot = runWithRequestContext(
+      { tenantId: 'tenant-a', userId: 'user-a' },
+      () => createSnapshot(db, baseInput()),
+    );
+    runWithRequestContext({ tenantId: 'tenant-b', userId: 'user-b' }, () => {
+      expect(getSnapshot(db, snapshot.snapshotId)).toBeNull();
+      linkSnapshotToRun(db, snapshot.snapshotId, 'foreign-run');
+      linkSnapshotToProject(db, snapshot.snapshotId, 'project-2');
+      markSnapshotStale(db, snapshot.snapshotId);
+    });
+    const raw = db.prepare(`SELECT project_id, run_id, status, owner_tenant_id FROM applied_plugin_snapshots WHERE id = ?`)
+      .get(snapshot.snapshotId);
+    expect(raw).toEqual({ project_id: 'project-1', run_id: null, status: 'fresh', owner_tenant_id: 'tenant-a' });
+    expect(db.prepare(`SELECT applied_plugin_snapshot_id FROM projects WHERE id = 'project-2'`).get())
+      .toEqual({ applied_plugin_snapshot_id: null });
+    runWithRequestContext({ tenantId: 'tenant-a', userId: 'user-a' }, () => {
+      linkSnapshotToRun(db, snapshot.snapshotId, 'owned-run');
+      expect(getSnapshot(db, snapshot.snapshotId)?.snapshotId).toBe(snapshot.snapshotId);
+    });
+    expect(db.prepare(`SELECT run_id FROM applied_plugin_snapshots WHERE id = ?`).get(snapshot.snapshotId))
+      .toEqual({ run_id: 'owned-run' });
+  });
+
   it('createSnapshot inserts a row and round-trips via getSnapshot', () => {
     db.prepare('INSERT INTO projects (id, name) VALUES (?, ?)').run('project-1', 'Project 1');
     const snap = createSnapshot(db, baseInput({

@@ -303,6 +303,14 @@ import {
   type FileRefreshResult,
 } from './FileWorkspace';
 import {
+  buildImageAgentExport,
+  buildPdfAgentExport,
+  buildPptxAgentExport,
+  type ImageAgentExportRequest,
+  type PdfAgentExportRequest,
+  type PptxAgentExportRequest,
+} from './export-agent-delegation';
+import {
   type PluginFolderAgentAction,
 } from './design-files/pluginFolderActions';
 import { SHARE_TO_COMMUNITY_PROMPT } from './share-to-community/shareToCommunityPrompt';
@@ -8528,6 +8536,11 @@ export function ProjectView({
     [currentConversationActionDisabled, handleSend, messages],
   );
 
+  const handleSelectDesignReference = useCallback((text: string) => {
+    if (currentConversationActionDisabled) return;
+    void handleSend(text, [], []);
+  }, [currentConversationActionDisabled, handleSend]);
+
   // "Continue" on a resumable failed run: send a fresh turn in the same
   // conversation. For a session-resuming runtime (Claude) the daemon persisted
   // the failed run's CLI session, so this turn resumes it (`--resume`) and the
@@ -9945,6 +9958,27 @@ export function ProjectView({
     [requestOpenFile],
   );
 
+  const handleExportPptxViaAgent = useCallback(async (request: PptxAgentExportRequest) => {
+    if (currentConversationActionDisabled) return false;
+    const task = buildPptxAgentExport(request);
+    const started = await handleSend(task.prompt, [], [], { skillIds: task.skillIds });
+    return started !== false;
+  }, [currentConversationActionDisabled, handleSend]);
+
+  const handleExportImageViaAgent = useCallback(async (request: ImageAgentExportRequest) => {
+    if (currentConversationActionDisabled) return false;
+    const task = buildImageAgentExport(request);
+    const started = await handleSend(task.prompt, [], [], { skillIds: task.skillIds });
+    return started !== false;
+  }, [currentConversationActionDisabled, handleSend]);
+
+  const handleExportPdfViaAgent = useCallback(async (request: PdfAgentExportRequest) => {
+    if (currentConversationActionDisabled) return false;
+    const task = buildPdfAgentExport(request);
+    const started = await handleSend(task.prompt, [], [], { skillIds: task.skillIds });
+    return started !== false;
+  }, [currentConversationActionDisabled, handleSend]);
+
   const handleBrowserUsePrompt = useCallback((text: string) => {
     setWorkspaceFocused(false);
     setComposerDraftSignal({
@@ -11085,6 +11119,7 @@ export function ProjectView({
           ) : null}
           {activeConversationId || conversationLoadError || emptyConversationReadOnlySettled ? (
             <ChatPane
+              templateRecommendEnabled
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}
@@ -11154,6 +11189,7 @@ export function ProjectView({
               initialDraft={chatInitialDraft}
               onboardingStarterPath={onboardingEntryRef.current?.productType ?? null}
               questionFormSubmitDisabled={currentConversationActionDisabled}
+              onSelectDesignReference={handleSelectDesignReference}
               onSubmitQuestionForm={(text, attachments = [], context, sourceAssistantMessageId) => {
                 if (currentConversationActionDisabled) return false;
                 const sourceAssistant = sourceAssistantMessageId
@@ -11409,6 +11445,9 @@ export function ProjectView({
           onSendBoardCommentAttachments={handleSendBoardCommentAttachments}
           onBrandExtractionStopRequest={projectIsProgrammaticBrandExtraction ? handleStop : undefined}
           onRequestBrowserUsePrompt={handleBrowserUsePrompt}
+          onExportPptxViaAgent={handleExportPptxViaAgent}
+          onExportImageViaAgent={handleExportImageViaAgent}
+          onExportPdfViaAgent={handleExportPdfViaAgent}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
           focusMode={workspaceFocused}

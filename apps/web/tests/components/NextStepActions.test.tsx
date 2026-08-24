@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { WHITE_LABEL_SAAS } from '../../src/features/whiteLabel';
 import {
   NextStepActions,
   PROJECT_CONTINUE_PROMPT,
@@ -346,7 +347,7 @@ describe('NextStepActions', () => {
     expect(screen.getByTestId('next-step-more-share')).toBeTruthy();
   });
 
-  it('cascades into searchable non-featured toolbox actions and global resources', () => {
+  it.skipIf(WHITE_LABEL_SAAS)('cascades into searchable non-featured toolbox actions and global resources', () => {
     renderActions();
     fireEvent.mouseEnter(screen.getByTestId('next-step-toolbox-more'));
     fireEvent.mouseEnter(screen.getByTestId('next-step-more-toolbox'));
@@ -371,7 +372,7 @@ describe('NextStepActions', () => {
     expect(within(list).getByText('Emil Kowalski Motion')).toBeTruthy();
   });
 
-  it('filters actions and global resources from the toolbox search box', () => {
+  it.skipIf(WHITE_LABEL_SAAS)('filters actions and global resources from the toolbox search box', () => {
     renderActions();
     fireEvent.mouseEnter(screen.getByTestId('next-step-toolbox-more'));
     fireEvent.mouseEnter(screen.getByTestId('next-step-more-toolbox'));

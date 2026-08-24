@@ -3013,6 +3013,43 @@ export function projectRawUrl(
   return `/api/projects/${encodeURIComponent(projectId)}/raw/${safePath}`;
 }
 
+function projectRawPrefix(projectId: string): string {
+  return `/api/projects/${encodeURIComponent(projectId)}/raw/`;
+}
+
+function projectRawSignedPrefix(projectId: string, token: string): string {
+  return `/raw-signed/${encodeURIComponent(token)}/${encodeURIComponent(projectId)}/`;
+}
+
+/** Build a cookie-free URL only for sandbox preview requests. */
+export function projectRawSignedUrl(
+  projectId: string,
+  filePath: string,
+  token: string | null,
+): string {
+  if (!token) return projectRawUrl(projectId, filePath);
+  const safePath = filePath.split('/').map(encodeURIComponent).join('/');
+  return `${projectRawSignedPrefix(projectId, token)}${safePath}`;
+}
+
+/**
+ * Sign same-project raw URLs in assembled preview HTML. Matching is restricted
+ * to URL values that begin with the internal path; an internal-looking path in
+ * an external URL/query is deliberately left alone so the token cannot leak.
+ */
+export function signProjectRawUrlsInHtml(
+  html: string,
+  projectId: string,
+  token: string | null,
+): string {
+  if (!token) return html;
+  const plain = projectRawPrefix(projectId);
+  const signed = projectRawSignedPrefix(projectId, token);
+  return html.replace(/(^|["'\s(])\/api\/projects\/[^/]+\/raw\//g, (match, boundary: string) => {
+    return match.slice(boundary.length) === plain ? `${boundary}${signed}` : match;
+  });
+}
+
 export function designSystemStaticUrl(
   designSystemId: string,
   filePath: string,

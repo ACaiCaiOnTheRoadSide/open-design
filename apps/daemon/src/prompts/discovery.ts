@@ -124,7 +124,19 @@ Then proceed to RULE 3.
 
 ### Branch B — no user-provided brand/reference source and no Branch A brand value
 
-Skip directly to RULE 3. Do **not** emit any second direction-picking form and do **not** make the user choose a direction after project creation. This includes \`brand\` value \`"pick_direction"\`, skipped brand answers, and active-design-system cases where the user did not provide a new brand/reference source. If an active design system is present, use its DESIGN.md as the visual direction and bind its tokens/rules first. If no active design system is present, pick the best-matching direction yourself from the Direction library below and bind it without asking.
+If an active design system or template is present, use it and proceed directly to RULE 3. Otherwise offer visual references once with a lightweight localized \`<question-form id="design-ref-offer">\` containing one required radio question, id \`designReferences\`, stable values \`yes\` and \`no\`. Stop after the form. A \`no\` answer means pick the best matching direction yourself and continue; do not interrogate the user further.
+
+## Design reference search (no template / design system)
+
+Run this only after an explicit \`designReferences: yes\` answer or an explicit request for references. Search Pinterest with exactly one Bash command:
+\`"$OD_NODE_BIN" "$OD_BIN" research search --query "<design type + domain + UI design qualifier>" --max-sources 20 --providers pinterest\`.
+Keep results with an \`imageUrl\`, download sequentially (at most 10) into \`references/ref_<N>.<ext>\`, verify formats with \`file\`, rename extensions to match the actual file type, and use \`ls references/\` as filename authority. If Pinterest yields nothing, generate up to three distinct references with the available image-generation MCP tool and download the completed results the same way.
+
+Emit every valid result in one host-parsed block; the host paginates three at a time:
+\`<design-references>{"pageSize":3,"items":[{"id":"ref_1","title":"...","image":"references/ref_1.jpg","description":"..."}]}</design-references>\`.
+The \`image\` value MUST exactly match the verified on-disk filename. Stop and wait after emitting it; do not create substitute direction-validation images or duplicate buttons.
+
+On \`[design reference selected — ref_X — title]\`, analyze that image's palette, typography, density, and layout and proceed to RULE 3 using it as the direction. On \`[design reference selected — none — 都不喜欢]\`, acknowledge briefly, do not search again, choose the best direction yourself, and proceed to RULE 3.
 
 ---
 

@@ -168,6 +168,8 @@ interface Props {
   activePluginIsExplicit?: boolean;
   activePluginRecord?: InstalledPluginRecord | null;
   activeChipId: string | null;
+  /** Chip ids omitted from every native template entry point. */
+  hiddenTemplateChipIds?: readonly string[];
   // Prototype's selected second-level scene is owned by HomeView so action
   // metadata and persistence stay aligned with the visible filter selection.
   activePrototypeSubtypeId?: string | null;
@@ -210,6 +212,8 @@ interface Props {
   // available for every product kind. `null` = "No design system".
   selectedDesignSystemId?: string | null;
   onDesignSystemChange?: (id: string | null) => void;
+  /** Optional action colocated with the persistent design-system picker. */
+  stagedRowAccessory?: ReactNode;
   stagedFiles?: File[];
   onAddFiles?: (files: File[]) => void;
   onRemoveFile?: (index: number) => void;
@@ -318,6 +322,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     activeSkillTitle = null,
     activeSkillRecord = null,
     activeChipId,
+    hiddenTemplateChipIds = [],
     onClearActivePlugin,
     onClearActiveChip = onClearActivePlugin,
     onClearActiveSkill = () => undefined,
@@ -343,6 +348,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     designSystems = EMPTY_DESIGN_SYSTEMS,
     selectedDesignSystemId = null,
     onDesignSystemChange,
+    stagedRowAccessory,
     stagedFiles = EMPTY_STAGED_FILES,
     onAddFiles = () => undefined,
     onImportFigma,
@@ -705,18 +711,20 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     [fieldByName, footerInputNames],
   );
   const activeCreateChip = useMemo(
-    () => activeChipId
+    () => activeChipId && !hiddenTemplateChipIds.includes(activeChipId)
       ? chipsForGroup('create').find((chip) => chip.id === activeChipId) ?? null
       : null,
-    [activeChipId],
+    [activeChipId, hiddenTemplateChipIds],
   );
   // Footer Template picker options: the ordered create-scenario chips (pure
   // project-type templates — Slides / Prototype / Wireframe / Document / …).
   // Excludes action chips (Brand Kit / Figma) that navigate away instead of
   // seeding a template, so the dropdown matches the rail's template set.
   const templateChips = useMemo(
-    () => orderedCreateChips().filter((chip) => chip.action.kind === 'apply-scenario'),
-    [],
+    () => orderedCreateChips().filter(
+      (chip) => chip.action.kind === 'apply-scenario' && !hiddenTemplateChipIds.includes(chip.id),
+    ),
+    [hiddenTemplateChipIds],
   );
   // A surface outside the hero (e.g. the workspace tabs-bar) can hand off a
   // template pick through this window event; apply the chip exactly as if it
@@ -2071,7 +2079,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         </div>
       </div>
 
-      {onDesignSystemChange || onPickWorkingDir ? (
+      {onDesignSystemChange || stagedRowAccessory || onPickWorkingDir ? (
         <div className="home-hero__workdir-row">
           {onDesignSystemChange ? (
             <DesignSystemPicker
@@ -2081,7 +2089,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               onChange={onDesignSystemChange}
             />
           ) : null}
-          {onDesignSystemChange && onPickWorkingDir ? (
+          {stagedRowAccessory}
+          {(onDesignSystemChange || stagedRowAccessory) && onPickWorkingDir ? (
             <span className="home-hero__workdir-divider" aria-hidden />
           ) : null}
           {onPickWorkingDir ? (

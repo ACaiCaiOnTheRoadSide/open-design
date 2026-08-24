@@ -29,6 +29,7 @@ import {
   removeJsonInstall,
 } from './mcp-agent-install.js';
 import { resolveMcpWorkspaceContext } from './mcp-workspace-context.js';
+import { runFile, runSync } from './sync/cli-run.js';
 
 const argv = process.argv.slice(2);
 
@@ -403,6 +404,8 @@ const SUBCOMMAND_MAP = {
   memory: runMemory,
   run: runRun,
   files: runFiles,
+  sync: runSync,
+  file: runFile,
   templates: runTemplates,
   conversation: runConversation,
   chat: runChat,

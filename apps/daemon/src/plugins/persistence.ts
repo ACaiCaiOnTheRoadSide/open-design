@@ -180,6 +180,10 @@ export function migratePlugins(db: SqliteDb): void {
 
   const installedCols = db.prepare(`PRAGMA table_info(installed_plugins)`).all() as DbRow[];
   for (const [name, ddl] of [
+    // Public manifest identity is separate from the physical SQLite key. In
+    // SaaS mode the latter is tenant-qualified, so equal slugs can coexist.
+    ['public_id', `ALTER TABLE installed_plugins ADD COLUMN public_id TEXT`],
+    ['enabled', `ALTER TABLE installed_plugins ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`],
     ['source_marketplace_entry_name', `ALTER TABLE installed_plugins ADD COLUMN source_marketplace_entry_name TEXT`],
     ['source_marketplace_entry_version', `ALTER TABLE installed_plugins ADD COLUMN source_marketplace_entry_version TEXT`],
     ['marketplace_trust', `ALTER TABLE installed_plugins ADD COLUMN marketplace_trust TEXT`],
@@ -196,12 +200,15 @@ export function migratePlugins(db: SqliteDb): void {
   ] as const) {
     if (!installedCols.some((c) => c['name'] === name)) db.exec(ddl);
   }
+  db.exec(`UPDATE installed_plugins SET public_id = id WHERE public_id IS NULL`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_installed_plugins_public_id ON installed_plugins(public_id)`);
 
   const snapshotCols = db.prepare(`PRAGMA table_info(applied_plugin_snapshots)`).all() as DbRow[];
   if (!snapshotCols.some((c) => c['name'] === 'plugin_spec_version')) {
     db.exec(`ALTER TABLE applied_plugin_snapshots ADD COLUMN plugin_spec_version TEXT NOT NULL DEFAULT '1.0.0'`);
   }
   for (const [name, ddl] of [
+    ['owner_tenant_id', `ALTER TABLE applied_plugin_snapshots ADD COLUMN owner_tenant_id TEXT`],
     ['source_marketplace_entry_name', `ALTER TABLE applied_plugin_snapshots ADD COLUMN source_marketplace_entry_name TEXT`],
     ['source_marketplace_entry_version', `ALTER TABLE applied_plugin_snapshots ADD COLUMN source_marketplace_entry_version TEXT`],
     ['marketplace_trust', `ALTER TABLE applied_plugin_snapshots ADD COLUMN marketplace_trust TEXT`],

@@ -52,6 +52,7 @@ import { SignOutConfirmDialog } from './SignOutConfirmDialog';
 import { notifyAmrLoginStatusChanged } from './amrLoginPolling';
 import { Icon } from './Icon';
 import { GITHUB_STARS_FALLBACK_LABEL, formatStars, useGithubStars } from './useGithubStars';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 import { PlanWordmark, planBadgeTierForWorkspace } from './PlanWordmark';
 import { RemixIcon } from './RemixIcon';
 import { InviteDialog } from './InviteDialog';
@@ -682,7 +683,7 @@ export function EntryTopRightCluster({
   // Sign-out confirm gate (recvqgMWpJZqhL): the menu item only ARMS the
   // confirmation dialog; the real logout chain runs on explicit confirm.
   const [confirmSignOut, setConfirmSignOut] = useState(false);
-  const githubStars = useGithubStars();
+  const githubStars = useGithubStars(!WHITE_LABEL_SAAS);
   // Signed-in account email for the menu head (#5517 shows it under the
   // display name). The workspace context carries no email, so lazily read the
   // vela login-status projection the first time the menu opens — never on
@@ -812,7 +813,7 @@ export function EntryTopRightCluster({
           {/* GitHub star chip: its own option in the cluster, right after the
               campaign badge (per product) — it used to live in the account
               menu's social row. */}
-          <a
+          {!WHITE_LABEL_SAAS ? <a
             className="entry-top-right-github"
             href={REPO_URL}
             {...externalLinkProps}
@@ -823,7 +824,7 @@ export function EntryTopRightCluster({
           >
             <Icon name="github-filled" size={14} />
             <span>{githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)}</span>
-          </a>
+          </a> : null}
           {/* One shared capsule for the account module (per product: 头像和积分
               合并成一个胶囊): credits segment on the left (same availability
               rule as the menu's billing card; clicking jumps to B's billing

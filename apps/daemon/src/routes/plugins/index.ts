@@ -31,10 +31,13 @@ import type { PluginShareAction } from '../../services/plugin-share-tasks.js';
 import type { AuthorizeProjectRequest } from '../../collab/project-request-authority.js';
 import { workspaceTeamPluginBindingResourceId } from '../../plugins/registry.js';
 import { localPluginRegistryScope } from '../../plugins/local-source.js';
+import type { ResourceOwnerRegistry } from '../../storage/resource-owner-registry.js';
 import {
   classifyPluginInstallError,
   type PluginInstallErrorCode,
 } from '../../plugins/installer.js';
+import { waitForSnapshotOwnerRegistration } from '../../plugins/snapshots.js';
+import { getRequestContext } from '../../request-context.js';
 
 function pluginUploadFailure(
   cause: unknown,
@@ -138,8 +141,8 @@ interface PluginRouteHelpers {
     array(field: string, maxCount?: number): RequestHandler;
   };
   pluginInstallation: {
-    stageUploadedPluginZip(buffer: Buffer, source: string): Promise<{ ok?: boolean }>;
-    stageUploadedPluginFolder(files: Array<{ buffer: Buffer; originalname: string }>, rawPaths: unknown): Promise<{ ok?: boolean }>;
+    stageUploadedPluginZip(buffer: Buffer, source: string): Promise<{ ok?: boolean; plugin?: InstalledPluginLike | null }>;
+    stageUploadedPluginFolder(files: Array<{ buffer: Buffer; originalname: string }>, rawPaths: unknown): Promise<{ ok?: boolean; plugin?: InstalledPluginLike | null }>;
   };
   connectorService: unknown;
   resolvedPortRef: { current: number | null | undefined };
@@ -191,6 +194,7 @@ interface PluginRouteHelpers {
 
 export interface RegisterPluginRoutesDeps {
   db: SqliteDbLike;
+  resourceOwnerRegistry?: ResourceOwnerRegistry;
   authorizeProjectRequest: AuthorizeProjectRequest;
   /** Team-resource copy red-line (D3). When present, a frozen team plugin cannot
    *  be duplicated into a personal project. Omit to skip the guard (no-op). */
@@ -250,6 +254,7 @@ export interface RegisterPluginRoutesDeps {
       workspaceMemberId?: string | null,
     ) => InstalledPluginLike[] | Promise<InstalledPluginLike[]>;
     getInstalledPlugin: (db: SqliteDbLike, id: string) => InstalledPluginLike | null;
+    setPluginEnabled?: (db: SqliteDbLike, id: string, enabled: boolean) => InstalledPluginLike | null;
     getWorkspacePlugin?: (
       db: SqliteDbLike,
       id: string,
@@ -268,7 +273,7 @@ export interface RegisterPluginRoutesDeps {
     applyPlugin: (args: unknown) => PluginApplyResult;
     doctorPlugin: (plugin: InstalledPluginLike, registry: unknown, extras: unknown) => unknown;
     getSnapshot: (db: SqliteDbLike, id: string) => AppliedPluginSnapshotLike | null;
-    pruneExpiredSnapshots: (db: SqliteDbLike, opts?: { before?: number }) => { removed: number; ids: string[] };
+    pruneExpiredSnapshots: (db: SqliteDbLike, opts?: { before?: number; allowedIds?: ReadonlySet<string> }) => { removed: number; ids: string[] };
     readPluginLockfile: (path: string) => Promise<unknown>;
     resolvePluginSnapshot: (args: unknown) => unknown;
     MissingInputError: new (...args: unknown[]) => MissingInputErrorLike;
@@ -324,11 +329,15 @@ export function registerPluginEventRoutes(app: Express, deps: RegisterPluginEven
     // Plugin events predate Workspace bindings and carry no trustworthy scope
     // of their own. Prove visibility against the current scoped catalog; an
     // empty-id or already-uninstalled event cannot be proven and is hidden.
+    const principal = getRequestContext();
+    const tenantEvents = principal
+      ? events.filter((event) => (event as T & { tenantId?: string }).tenantId === principal.tenantId)
+      : events;
     const visibleIds = await deps.plugins.listVisiblePluginIds(
       scope.workspaceId,
       scope.workspaceMemberId,
     );
-    return events.filter((event): event is T => Boolean(
+    return tenantEvents.filter((event): event is T => Boolean(
       event.pluginId && visibleIds.has(event.pluginId),
     ));
   };
@@ -351,6 +360,7 @@ export function registerPluginEventRoutes(app: Express, deps: RegisterPluginEven
     res.json({ stats: summarisePluginEvents(events), generatedAt: Date.now() });
   });
   app.post('/api/plugins/events/purge', deps.http.requireLocalDaemonRequest, async (_req, res) => {
+    if (getRequestContext()) return res.status(403).json({ error: 'TENANT_EVENT_PURGE_FORBIDDEN' });
     try {
       const { purgePluginEventBuffer } = await import('../../plugins/events.js');
       res.json({ ok: true, ...purgePluginEventBuffer() });
@@ -419,9 +429,15 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
     authority: WorkspaceCollabContext | null,
   ) => {
     const workspaceId = authority?.workspaceId ?? null;
-    return plugins.getWorkspacePlugin
-      ? plugins.getWorkspacePlugin(db, id, workspaceId, authority?.workspaceMemberId ?? null)
-      : plugins.getInstalledPlugin(db, id);
+    const plugin = plugins.getWorkspacePlugin
+      ? await plugins.getWorkspacePlugin(db, id, workspaceId, authority?.workspaceMemberId ?? null)
+      : await plugins.getInstalledPlugin(db, id);
+    if (!plugin || !deps.resourceOwnerRegistry) return plugin;
+    if (plugin.sourceKind === 'bundled') {
+      await deps.resourceOwnerRegistry.registerBackend({ kind: 'plugin', id, sourceKind: 'backend' });
+      return plugin;
+    }
+    return await deps.resourceOwnerRegistry.isVisible('plugin', id) ? plugin : null;
   };
   const applyResolvedPlugin = async (
     req: Request,
@@ -499,7 +515,23 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
     return binding.visibility === 'team'
       || binding.createdByWorkspaceMemberId === authority.workspaceMemberId;
   };
-  app.get('/api/plugins', async (req, res) => { try { const authority = await resolveWorkspaceAuthority(req, res, deps.verifyWorkspaceReadAuthority ?? deps.verifyWorkspaceRequestAuthority); if (authority === undefined) return; const visible = await plugins.listInstalledPlugins(db, authority?.workspaceId ?? null, authority?.workspaceMemberId ?? null); res.json({ plugins: helpers.applyBakedPreviews(visible, helpers.PLUGIN_PREVIEWS_DIR) }); } catch (err) { res.status(500).json({ error: String(err) }); } });
+  app.get('/api/plugins', async (req, res) => {
+    try {
+      const authority = await resolveWorkspaceAuthority(req, res, deps.verifyWorkspaceReadAuthority ?? deps.verifyWorkspaceRequestAuthority);
+      if (authority === undefined) return;
+      let visible = await plugins.listInstalledPlugins(db, authority?.workspaceId ?? null, authority?.workspaceMemberId ?? null);
+      if (deps.resourceOwnerRegistry) {
+        for (const plugin of visible) {
+          if (plugin.sourceKind === 'bundled' && plugin.id) {
+            await deps.resourceOwnerRegistry.registerBackend({ kind: 'plugin', id: plugin.id, sourceKind: 'backend' });
+          }
+        }
+        const ids = await deps.resourceOwnerRegistry.filterVisibleIds('plugin', visible.flatMap((plugin) => plugin.id ? [plugin.id] : []));
+        visible = visible.filter((plugin) => Boolean(plugin.id && ids.has(plugin.id)));
+      }
+      res.json({ plugins: helpers.applyBakedPreviews(visible, helpers.PLUGIN_PREVIEWS_DIR) });
+    } catch (err) { res.status(500).json({ error: String(err) }); }
+  });
   // Keep this static route before /api/plugins/:id; Express matches in
   // registration order and would otherwise interpret "stats" as a plugin id.
   app.get('/api/plugins/stats', async (req, res) => {
@@ -511,11 +543,14 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
       authority?.workspaceMemberId ?? null,
     );
     const snapshotRows = db.prepare(
-      `SELECT status, project_id, project_id AS projectId, run_id, applied_at
+      `SELECT id, status, project_id, project_id AS projectId, run_id, applied_at
          FROM applied_plugin_snapshots`,
-    ).all() as Array<{ projectId?: string }>;
-    const visibleSnapshots = snapshotRows.filter((row) =>
-      snapshotVisibleToAuthority(row, authority));
+    ).all() as Array<{ id: string; projectId?: string }>;
+    const ownerVisibleIds = deps.resourceOwnerRegistry
+      ? await deps.resourceOwnerRegistry.filterVisibleIds('plugin_snapshot', snapshotRows.map((row) => row.id))
+      : new Set(snapshotRows.map((row) => row.id));
+    const visibleSnapshots = snapshotRows.filter((row) => ownerVisibleIds.has(row.id)
+      && snapshotVisibleToAuthority(row, authority));
     return helpers.handlePluginStats(res, installed, visibleSnapshots);
   });
   app.get('/api/plugins/:id', async (req, res) => { try { const authority = await resolveWorkspaceAuthority(req, res); if (authority === undefined) return; const plugin = await resolveRequestPlugin(req.params.id, authority); if (!plugin) return res.status(404).json({ error: 'plugin not found' }); res.json(plugin); } catch (err) { res.status(500).json({ error: String(err) }); } });
@@ -531,6 +566,13 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
           file.buffer,
           `upload:zip:${helpers.decodeMultipartFilename(file.originalname || 'plugin.zip')}`,
         );
+        if (result.ok && result.plugin?.id && result.plugin.fsPath) {
+          await deps.resourceOwnerRegistry?.registerUser({
+            kind: 'plugin', id: result.plugin.id, sourceKind: 'upload',
+            localPath: result.plugin.fsPath,
+            metadata: { version: result.plugin.version, installMode: 'upload-zip' },
+          });
+        }
         return res.status(result.ok ? 200 : 400).json(result);
       } catch (cause) {
         return res.status(400).json(pluginUploadFailure(cause));
@@ -551,6 +593,13 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
           files,
           req.body?.paths,
         );
+        if (result.ok && result.plugin?.id && result.plugin.fsPath) {
+          await deps.resourceOwnerRegistry?.registerUser({
+            kind: 'plugin', id: result.plugin.id, sourceKind: 'upload',
+            localPath: result.plugin.fsPath,
+            metadata: { version: result.plugin.version, installMode: 'upload-folder' },
+          });
+        }
         return res.status(result.ok ? 200 : 400).json(result);
       } catch (cause) {
         return res.status(400).json(pluginUploadFailure(cause));
@@ -584,7 +633,9 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
       ) {
         return res.status(403).json({ error: 'WORKSPACE_RESOURCE_MANAGE_DENIED' });
       }
-      const binding = workspaceResources?.getWorkspaceResourceByResourceId(db, 'plugin', req.params.id);
+      const binding = deps.resourceOwnerRegistry
+        ? undefined
+        : workspaceResources?.getWorkspaceResourceByResourceId(db, 'plugin', req.params.id);
       if (binding && workspaceResources && !await enforceVerifiedWorkspaceResourceMutation(
         'plugin',
         req,
@@ -599,6 +650,11 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
           ? async () => ({ ok: true as const, context: authority })
           : undefined,
       )) return;
+      if (deps.resourceOwnerRegistry && !await deps.resourceOwnerRegistry.softDelete('plugin', req.params.id)) {
+        return res.status(404).json({ error: 'plugin not found' });
+      }
+      // SaaS plugin bytes use a tenant-qualified physical row/path, so another
+      // tenant owning the same public slug never requires a logical-only delete.
       const result = await plugins.uninstallPlugin(db, req.params.id, paths.PLUGIN_REGISTRY_ROOTS); if (!result.ok && !result.removedFolder) return res.status(404).json({ error: 'plugin not found', warning: result.warning }); res.json(result);
     } catch (err) { res.status(500).json({ error: String(err) }); }
   });
@@ -613,7 +669,9 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
     const requestedPlugin = await resolveRequestPlugin(req.params.id, authority);
     if (!requestedPlugin) return res.status(404).json({ error: 'plugin not found' });
     if (denyTeamPluginMutation(res, req.params.id, authority, requestedPlugin)) return;
-    const binding = workspaceResources?.getWorkspaceResourceByResourceId(db, 'plugin', req.params.id);
+    const binding = deps.resourceOwnerRegistry
+      ? undefined
+      : workspaceResources?.getWorkspaceResourceByResourceId(db, 'plugin', req.params.id);
     if (binding && workspaceResources && !await enforceVerifiedWorkspaceResourceMutation(
       'plugin',
       req,
@@ -630,6 +688,21 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
     )) return;
     return helpers.installOrUpgradePlugin(req, res, 'upgrade', authority);
   });
+  const setEnabled = (enabled: boolean) => async (req: Request, res: Response) => {
+    const authority = await resolveWorkspaceAuthority(req, res);
+    if (authority === undefined) return;
+    const id = Array.isArray(req.params.id) ? req.params.id[0] ?? '' : req.params.id ?? '';
+    const plugin = await resolveRequestPlugin(id, authority);
+    if (!plugin) return res.status(404).json({ error: 'plugin not found' });
+    if (plugin.sourceKind === 'bundled') {
+      return res.status(403).json({ error: 'BACKEND_MANAGED_RESOURCE_READ_ONLY' });
+    }
+    const updated = plugins.setPluginEnabled?.(db, id, enabled);
+    if (!updated) return res.status(404).json({ error: 'plugin not found' });
+    return res.json({ ok: true, plugin: updated });
+  };
+  app.post('/api/plugins/:id/enable', setEnabled(true));
+  app.post('/api/plugins/:id/disable', setEnabled(false));
   app.post('/api/plugins/:id/apply-local', async (req, res) => {
     // This endpoint identifies bytes the local catalogue already returned. It
     // deliberately performs no Workspace authority read; catalogue sync owns
@@ -645,6 +718,14 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
       }
       const plugin = await plugins.getLocalPluginBySource(db, req.params.id, source);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
+      if (plugin.enabled === false) return res.status(409).json({ error: 'plugin is disabled' });
+      if (deps.resourceOwnerRegistry) {
+        if (plugin.sourceKind === 'bundled') {
+          await deps.resourceOwnerRegistry.registerBackend({ kind: 'plugin', id: req.params.id, sourceKind: 'backend' });
+        } else if (!await deps.resourceOwnerRegistry.isVisible('plugin', req.params.id)) {
+          return res.status(404).json({ error: 'plugin not found' });
+        }
+      }
       const registry = await helpers.loadPluginRegistryView(
         localPluginRegistryScope(plugin),
       );
@@ -671,6 +752,7 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
       if (authority === undefined) return;
       const plugin = await resolveRequestPlugin(req.params.id, authority);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
+      if (plugin.enabled === false) return res.status(409).json({ error: 'plugin is disabled' });
       const registry = await helpers.loadPluginRegistryView({
         workspaceId: authority?.workspaceId ?? null,
         workspaceMemberId: authority?.workspaceMemberId ?? null,
@@ -838,6 +920,9 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
     if (authority === undefined) return;
     const plugin = await resolveRequestPlugin(req.params.id, authority);
     if (!plugin) return res.status(404).json({ error: 'plugin not found' });
+    if (plugin.sourceKind === 'bundled') {
+      return res.status(403).json({ error: 'BACKEND_MANAGED_RESOURCE_READ_ONLY' });
+    }
     if (typeof plugin.source === 'string' && plugin.source.startsWith('team:plugin:')) {
       return res.status(403).json({ error: 'WORKSPACE_RESOURCE_MANAGE_DENIED' });
     }
@@ -852,6 +937,13 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
     if (!snap) {
       res.status(404).json({ error: 'snapshot not found' });
       return null;
+    }
+    if (deps.resourceOwnerRegistry) {
+      await waitForSnapshotOwnerRegistration(snapshotId);
+      if (!await deps.resourceOwnerRegistry.isVisible('plugin_snapshot', snapshotId)) {
+        res.status(404).json({ error: 'snapshot not found' });
+        return null;
+      }
     }
     const row = db.prepare(
       `SELECT project_id AS projectId FROM applied_plugin_snapshots WHERE id = ?`,
@@ -895,8 +987,11 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
           ORDER BY applied_at DESC
           LIMIT 500`,
       ).all() as Array<SqliteRowId & { projectId?: string }>;
-      const visibleRows = rows.filter((row) =>
-        snapshotVisibleToAuthority(row, authority));
+      const ownerVisibleIds = deps.resourceOwnerRegistry
+        ? await deps.resourceOwnerRegistry.filterVisibleIds('plugin_snapshot', rows.map((row) => row.id))
+        : new Set(rows.map((row) => row.id));
+      const visibleRows = rows.filter((row) => ownerVisibleIds.has(row.id)
+        && snapshotVisibleToAuthority(row, authority));
       res.json({
         snapshots: visibleRows
           .map((row) => plugins.getSnapshot(db, row.id))
@@ -915,8 +1010,12 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
       const rows = db.prepare(
         `SELECT id FROM applied_plugin_snapshots WHERE project_id = ? ORDER BY applied_at DESC`,
       ).all(req.params.projectId) as SqliteRowId[];
+      const ownerVisibleIds = deps.resourceOwnerRegistry
+        ? await deps.resourceOwnerRegistry.filterVisibleIds('plugin_snapshot', rows.map((row) => row.id))
+        : new Set(rows.map((row) => row.id));
       res.json({
         snapshots: rows
+          .filter((row) => ownerVisibleIds.has(row.id))
           .map((row) => plugins.getSnapshot(db, row.id))
           .filter((snapshot): snapshot is AppliedPluginSnapshotLike => snapshot !== null),
       });
@@ -951,7 +1050,7 @@ export function registerPluginRoutes(app: Express, deps: RegisterPluginRoutesDep
       return helpers.handleAppliedPluginExport(req, res);
     },
   );
-  app.post('/api/applied-plugins/prune', helpers.requireLocalDaemonRequest, async (req, res) => { try { const body = req.body && typeof req.body === 'object' ? req.body : {}; const before = typeof body.before === 'number' ? body.before : undefined; const result = plugins.pruneExpiredSnapshots(db, before ? { before } : {}); if (result.removed > 0) { try { const { recordPluginEvent } = await import('../../plugins/events.js'); recordPluginEvent({ kind: 'plugin.snapshot-pruned', pluginId: '', details: { removed: result.removed, ...(before ? { before } : {}) } }); } catch {} } res.json({ ok: true, removed: result.removed, ids: result.ids }); } catch (err) { res.status(500).json({ error: String(err) }); } });
+  app.post('/api/applied-plugins/prune', helpers.requireLocalDaemonRequest, async (req, res) => { try { const body = req.body && typeof req.body === 'object' ? req.body : {}; const before = typeof body.before === 'number' ? body.before : undefined; const allRows = db.prepare(`SELECT id FROM applied_plugin_snapshots`).all() as SqliteRowId[]; const allowedIds = deps.resourceOwnerRegistry ? await deps.resourceOwnerRegistry.filterVisibleIds('plugin_snapshot', allRows.map((row) => row.id)) : undefined; const result = plugins.pruneExpiredSnapshots(db, { ...(before ? { before } : {}), ...(allowedIds ? { allowedIds } : {}) }); if (deps.resourceOwnerRegistry) { for (const id of result.ids) await deps.resourceOwnerRegistry.softDelete('plugin_snapshot', id); } if (result.removed > 0) { try { const { recordPluginEvent } = await import('../../plugins/events.js'); recordPluginEvent({ kind: 'plugin.snapshot-pruned', pluginId: '', details: { removed: result.removed, ...(before ? { before } : {}) } }); } catch {} } res.json({ ok: true, removed: result.removed, ids: result.ids }); } catch (err) { res.status(500).json({ error: String(err) }); } });
 }
 
 export function registerProjectPluginRoutes(app: Express, deps: RegisterPluginRoutesDeps): void {

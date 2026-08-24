@@ -24,7 +24,8 @@
 // trigger an entries re-fetch on every phase update.
 
 import { randomUUID } from 'node:crypto';
-import { memoryEvents } from './memory.js';
+import { memoryEvents, persistMemoryExtraction } from './memory.js';
+import { scopeMemoryEvent } from './memory-events-scope.js';
 
 const MAX_RECORDS = 20;
 const PREVIEW_CAP = 120;
@@ -45,13 +46,19 @@ function trimError(s) {
 }
 
 function emit(record) {
+  if (record && ['running', 'success', 'failed', 'skipped'].includes(record.phase)) {
+    // Exactly one durable write per observable phase. pushNewest only mutates
+    // the bounded UX cache; persisting there as well double-upserted every new
+    // extraction attempt.
+    persistMemoryExtraction(clone(record));
+  }
   // Defer the emit so the caller can append a synchronous follow-up
   // update without firing two events back-to-back in the same tick.
   // Cheaper than debouncing and good enough — the SSE path on the
   // server flushes on the next event-loop turn anyway.
   setImmediate(() => {
     try {
-      memoryEvents.emit('extraction', { ...record });
+      memoryEvents.emit('extraction', scopeMemoryEvent({ ...record }));
     } catch {
       // SSE failures are not the extractor's problem.
     }
@@ -203,7 +210,7 @@ export function removeExtraction(id) {
   const [removed] = records.splice(idx, 1);
   setImmediate(() => {
     try {
-      memoryEvents.emit('extraction', { ...removed, phase: 'deleted' });
+      memoryEvents.emit('extraction', scopeMemoryEvent({ ...removed, phase: 'deleted' }));
     } catch {
       // SSE failures are not the extractor's problem.
     }
@@ -220,12 +227,12 @@ export function clearExtractions() {
   if (removed > 0) {
     setImmediate(() => {
       try {
-        memoryEvents.emit('extraction', {
+        memoryEvents.emit('extraction', scopeMemoryEvent({
           id: 'all',
           phase: 'cleared',
           startedAt: Date.now(),
           finishedAt: Date.now(),
-        });
+        }));
       } catch {
         // SSE failures are not the extractor's problem.
       }

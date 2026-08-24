@@ -46,6 +46,8 @@
 // can show running / skipped / success / failed states in real time.
 
 import { MEMORY_TYPES } from '@open-design/contracts';
+import type { TrustedMemoryScope } from './memory-scope.js';
+import { isProjectLifecycleError } from './project-lifecycle-gate.js';
 import {
   composeMemoryBody,
   listMemoryEntries,
@@ -76,6 +78,9 @@ import {
 } from './agents.js';
 import { agentCliEnvForAgent, readAppConfig } from './app-config.js';
 import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
+import { getRequestContext } from './request-context.js';
+import { extractionConfigFromProviderConfig } from './runtime-provider-config.js';
+import { getPlatformDefaultExtractionConfig } from './platform-default-provider-config.js';
 
 const SYSTEM_PROMPT = `You are a memory extractor for a personal AI design assistant.
 
@@ -96,11 +101,16 @@ A fact is NOT worth remembering when ANY of these is true:
 Output STRICT JSON in this exact shape — nothing else, no prose, no markdown fences:
 {
   "entries": [
-    { "type": "user|feedback|project|reference", "name": "short title (≤ 60 chars)", "description": "one-line summary (≤ 140 chars)", "body": "the actual remembered fact, 1-3 sentences" }
+    { "type": "user|feedback|project|reference", "scope": "global|project", "name": "short title (≤ 60 chars)", "description": "one-line summary (≤ 140 chars)", "body": "the actual remembered fact, 1-3 sentences" }
   ]
 }
 
 If there's nothing worth remembering, return: {"entries": []}
+
+Scope rules:
+- global: stable user preferences, identity, and facts useful across projects
+- project: facts useful only while working on the current loaded project
+- Never output a project id; the server maps project scope from trusted run context.
 
 Type rules:
 - user: who they are, role, expertise, long-term goals
@@ -129,7 +139,7 @@ Generalize the wording so it is not tied to this one element, page, or run.
 Output STRICT JSON in this exact shape — nothing else, no prose, no markdown fences:
 {
   "entries": [
-    { "type": "feedback|rule", "name": "short title (≤ 60 chars)", "description": "one-line summary (≤ 140 chars)", "body": "the remembered preference/rule" }
+    { "type": "feedback|rule", "scope": "global|project", "name": "short title (≤ 60 chars)", "description": "one-line summary (≤ 140 chars)", "body": "the remembered preference/rule" }
   ]
 }
 
@@ -430,7 +440,24 @@ async function hasUnsupportedMediaProviderConfig(projectRoot) {
 // through from the web app on a per-call basis (the daemon never
 // persists BYOK creds, so this is the only signal we have for that
 // mode).
-async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider, chatModel) {
+async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider, chatModel, trustedProviderConfig) {
+  // Managed SaaS never consults process-global/local credentials: use the
+  // authenticated request's BYOK snapshot, or the backend global default for
+  // header-less background work. This prevents cross-tenant credential drift.
+  if (process.env.OD_BACKEND_URL) {
+    const requestProvider = extractionConfigFromProviderConfig(
+      trustedProviderConfig ?? getRequestContext()?.providerConfig,
+    );
+    const trusted = requestProvider ?? await getPlatformDefaultExtractionConfig();
+    if (!trusted) return null;
+    return {
+      kind: trusted.provider === 'anthropic' ? 'anthropic' : 'openai',
+      apiKey: trusted.apiKey,
+      model: trusted.model,
+      baseUrl: trusted.baseUrl,
+      credentialSource: requestProvider ? 'request-byok' : 'platform-default',
+    };
+  }
   const chatProtocol = chatProtocolFromAgentId(chatAgentId);
   const normalizedChatAgentId =
     typeof chatAgentId === 'string' ? chatAgentId.trim().toLowerCase() : '';
@@ -1147,25 +1174,39 @@ function parseEntries(rawText) {
         typeof e.name === 'string' &&
         e.name.trim().length > 0 &&
         typeof e.body === 'string' &&
-        e.body.trim().length > 0,
+        e.body.trim().length > 0 &&
+        (e.scope === undefined || e.scope === 'global' || e.scope === 'project'),
     )
+    .map((entry) => ({ ...entry, scope: entry.scope ?? 'global' }))
     .slice(0, 6); // hard cap so a confused model can't flood the store
 }
 
-function alreadyKnown(existing, candidate) {
+function alreadyKnown(existing, candidate, trustedScope?: TrustedMemoryScope) {
   const candKey = `${candidate.type}::${candidate.name.toLowerCase().trim()}`;
+  const postgres = (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase() === 'postgres';
+  const candidateProjectId = candidate.scope === 'project' && postgres
+    ? trustedScope?.projectId
+    : null;
   for (const e of existing) {
+    if ((e.projectId ?? null) !== candidateProjectId) continue;
     if (`${e.type}::${e.name.toLowerCase().trim()}` === candKey) return true;
   }
   return false;
 }
 
-function toMemoryDraft(candidate) {
+function toMemoryDraft(candidate, trustedScope?: TrustedMemoryScope) {
+  const postgres = (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase() === 'postgres';
+  // PostgreSQL must never widen a model-selected project fact. SQLite has no
+  // scope storage and deliberately preserves its legacy global-write behavior.
+  if (candidate.scope === 'project' && postgres && !trustedScope) return null;
   return {
     type: candidate.type,
     name: String(candidate.name).trim().slice(0, 80),
     description: String(candidate.description || '').trim().slice(0, 200),
     body: String(candidate.body).trim(),
+    ...(postgres ? {
+      projectId: candidate.scope === 'project' ? trustedScope!.projectId : null,
+    } : {}),
   };
 }
 
@@ -1273,6 +1314,7 @@ async function collectProposedEntries(dataDir, input, options) {
     chatAgentId,
     chatProvider,
     chatModel,
+    options?.trustedProviderConfig,
   );
   if (!provider) {
     const reason =
@@ -1297,7 +1339,7 @@ async function collectProposedEntries(dataDir, input, options) {
   let existingEntries = [];
   try {
     [currentMemory, existingEntries] = await Promise.all([
-      composeMemoryBody(dataDir),
+      composeMemoryBody(dataDir, options?.trustedMemoryScope),
       listMemoryEntries(dataDir),
     ]);
   } catch {
@@ -1461,11 +1503,15 @@ export async function extractWithLLM(dataDir, input, options) {
 
   const written = [];
   for (const cand of proposed) {
-    if (alreadyKnown(existingEntries, cand)) continue;
+    if (alreadyKnown(existingEntries, cand, options?.trustedMemoryScope)) continue;
+    const draft = toMemoryDraft(cand, options?.trustedMemoryScope);
+    // A model can choose project scope, but cannot create or supply its id.
+    // Without a run-derived trusted scope we discard rather than widening.
+    if (!draft) continue;
     try {
       const entry = await upsertMemoryEntry(
         dataDir,
-        toMemoryDraft(cand),
+        draft,
         // Suppress per-entry events; we batch a single 'extract' below
         // so the toast says "Memory updated (3 · LLM)" once.
         { silent: true, source: changeSource },
@@ -1475,10 +1521,15 @@ export async function extractWithLLM(dataDir, input, options) {
         name: entry.name,
         description: entry.description,
         type: entry.type,
+        ...(Object.prototype.hasOwnProperty.call(entry, 'projectId') ? { projectId: entry.projectId } : {}),
         updatedAt: entry.updatedAt,
       });
     } catch (err) {
-      console.warn('[memory-llm] write failed', err?.message ?? err);
+      // A pending model response landing after project deletion was marked is
+      // intentionally discarded, not reported as an extraction failure.
+      if (!isProjectLifecycleError(err)) {
+        console.warn('[memory-llm] write failed', err?.message ?? err);
+      }
     }
   }
 

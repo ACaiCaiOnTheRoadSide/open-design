@@ -15,6 +15,8 @@ import type {
 } from '@open-design/contracts';
 import { eventsEndedWithUnfinishedWork } from '@open-design/contracts';
 import { migrateCollabSyncSnapshots } from './collab/sync-snapshot-store.js';
+import { markProjectActive } from './project-lifecycle-gate.js';
+import { getRequestContext } from './request-context.js';
 import { migrateCommentRelayOutbox } from './collab/comment-relay-outbox.js';
 import { migratePublicFilePublications } from './collab/public-file-publication-store.js';
 import {
@@ -34,6 +36,19 @@ type ChatSessionMode = 'design' | 'chat' | 'plan';
 let dbInstance: SqliteDb | null = null;
 let dbFile: string | null = null;
 
+export interface BusinessProjectFactsSink {
+  projectCreated(db: SqliteDb, project: DbRow): void;
+  projectUpdated(db: SqliteDb, project: DbRow): void;
+  projectDeleted(db: SqliteDb, project: DbRow): void;
+  projectDiscarded(db: SqliteDb, project: DbRow): void;
+}
+let businessProjectFactsSink: BusinessProjectFactsSink | null = null;
+
+/** Process-wide daemon persistence hook; tests may reset it with null. */
+export function setBusinessProjectFactsSink(sink: BusinessProjectFactsSink | null): void {
+  businessProjectFactsSink = sink;
+}
+
 function row(value: unknown): DbRow | null {
   return value && typeof value === 'object' ? value as DbRow : null;
 }
@@ -42,9 +57,14 @@ function rows(value: unknown[]): DbRow[] {
   return value.map((item) => row(item) ?? {});
 }
 
-export function openDatabase(projectRoot: string, { dataDir }: { dataDir?: string } = {}): SqliteDb {
+export function databaseFilePath(projectRoot: string, dataDir?: string): string {
   const dir = dataDir ? path.resolve(dataDir) : path.join(projectRoot, '.od');
-  const file = path.join(dir, 'app.sqlite');
+  return path.join(dir, 'app.sqlite');
+}
+
+export function openDatabase(projectRoot: string, { dataDir }: { dataDir?: string } = {}): SqliteDb {
+  const file = databaseFilePath(projectRoot, dataDir);
+  const dir = path.dirname(file);
   if (dbInstance && dbFile === file) return dbInstance;
   if (dbInstance) closeDatabase();
   fs.mkdirSync(dir, { recursive: true });
@@ -73,6 +93,8 @@ function migrate(db: SqliteDb): void {
       design_system_id TEXT,
       pending_prompt TEXT,
       metadata_json TEXT,
+      fact_tenant_id TEXT,
+      fact_creator_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -230,6 +252,34 @@ function migrate(db: SqliteDb): void {
     CREATE INDEX IF NOT EXISTS idx_messages_conv
       ON messages(conversation_id, position);
 
+    -- Durable retry queue for PostgreSQL business fact projection failures.
+    -- Payloads contain only verified principal ids and numeric usage counters.
+    CREATE TABLE IF NOT EXISTS business_fact_outbox (
+      id TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    );
+
+    -- Crash-durable FIFO for PostgreSQL memory extraction/verification history.
+    CREATE TABLE IF NOT EXISTS memory_history_outbox (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      payload_json TEXT NOT NULL,
+      projection_version INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    );
+
+    -- Survives an empty outbox/restart so post-delete events remain newer than
+    -- PostgreSQL tombstone cutoffs even when wall-clock milliseconds tie.
+    CREATE TABLE IF NOT EXISTS memory_history_projection_clock (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      projection_version INTEGER NOT NULL
+    );
+
     -- Agent streams write small immutable batches while a run is active. The
     -- batches are folded into messages.events_json once, at the terminal
     -- boundary, so a long thinking stream never rewrites its full history on
@@ -333,6 +383,8 @@ function migrate(db: SqliteDb): void {
       skill_id TEXT,
       agent_id TEXT,
       context_json TEXT,
+      fact_tenant_id TEXT,
+      fact_creator_id TEXT,
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -373,6 +425,12 @@ function migrate(db: SqliteDb): void {
   }
   if (!cols.some((c: DbRow) => c.name === 'custom_instructions')) {
     db.exec(`ALTER TABLE projects ADD COLUMN custom_instructions TEXT`);
+  }
+  if (!cols.some((c: DbRow) => c.name === 'fact_tenant_id')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN fact_tenant_id TEXT`);
+  }
+  if (!cols.some((c: DbRow) => c.name === 'fact_creator_id')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN fact_creator_id TEXT`);
   }
   const workspaceProjectCols = db.prepare(`PRAGMA table_info(workspace_projects)`).all() as DbRow[];
   if (!workspaceProjectCols.some((c: DbRow) => c.name === 'resource_hub_resource_id')) {
@@ -442,6 +500,13 @@ function migrate(db: SqliteDb): void {
   }
   if (!messageCols.some((c: DbRow) => c.name === 'telemetry_finalized_at')) {
     db.exec(`ALTER TABLE messages ADD COLUMN telemetry_finalized_at INTEGER`);
+  }
+  const factRoutineCols = db.prepare(`PRAGMA table_info(routines)`).all() as DbRow[];
+  if (!factRoutineCols.some((c: DbRow) => c.name === 'fact_tenant_id')) {
+    db.exec(`ALTER TABLE routines ADD COLUMN fact_tenant_id TEXT`);
+  }
+  if (!factRoutineCols.some((c: DbRow) => c.name === 'fact_creator_id')) {
+    db.exec(`ALTER TABLE routines ADD COLUMN fact_creator_id TEXT`);
   }
   const routineRunCols = db.prepare(`PRAGMA table_info(routine_runs)`).all() as DbRow[];
   if (!routineRunCols.some((c: DbRow) => c.name === 'error_code')) {
@@ -1044,6 +1109,42 @@ export function listUnboundProjects(db: SqliteDb) {
     )
     .all() as DbRow[];
   return rows.map(normalizeProject);
+}
+
+/** Hosted catalog view: unbound projects are visible only to their durable owner. */
+export function listOwnedUnboundProjects(
+  db: SqliteDb,
+  principal: Readonly<{ tenantId: string; userId: string }>,
+) {
+  const rows = db
+    .prepare(
+      `SELECT p.id, p.name, p.skill_id AS skillId,
+              p.design_system_id AS designSystemId,
+              p.pending_prompt AS pendingPrompt,
+              p.metadata_json AS metadataJson,
+              p.applied_plugin_snapshot_id AS appliedPluginSnapshotId,
+              p.custom_instructions AS customInstructions,
+              p.created_at AS createdAt,
+              p.updated_at AS updatedAt
+         FROM projects p
+         LEFT JOIN workspace_projects wp ON wp.project_id = p.id
+        WHERE wp.project_id IS NULL
+          AND p.fact_tenant_id = ?
+          AND p.fact_creator_id = ?
+        ORDER BY p.updated_at DESC`,
+    )
+    .all(principal.tenantId, principal.userId) as DbRow[];
+  return rows.map(normalizeProject);
+}
+
+export function getProjectFactOwner(db: SqliteDb, projectId: string) {
+  const row = db.prepare(
+    `SELECT fact_tenant_id AS tenantId, fact_creator_id AS userId
+       FROM projects WHERE id = ?`,
+  ).get(projectId) as { tenantId?: string | null; userId?: string | null } | undefined;
+  return row?.tenantId && row.userId
+    ? { tenantId: row.tenantId, userId: row.userId }
+    : null;
 }
 
 export function getWorkspaceProject(db: SqliteDb, workspaceId: string, projectId: string) {
@@ -1820,23 +1921,45 @@ export function getProject(db: SqliteDb, id: string) {
 }
 
 export function insertProject(db: SqliteDb, p: DbRow) {
-  db.prepare(
-    `INSERT INTO projects
-       (id, name, skill_id, design_system_id, pending_prompt,
-        metadata_json, custom_instructions, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    p.id,
-    p.name,
-    p.skillId ?? null,
-    p.designSystemId ?? null,
-    p.pendingPrompt ?? null,
-    p.metadata ? JSON.stringify(p.metadata) : null,
-    p.customInstructions ?? null,
-    p.createdAt,
-    p.updatedAt,
-  );
-  return getProject(db, p.id);
+  const factPrincipal = p.factPrincipal ?? getRequestContext();
+  const persist = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO projects
+         (id, name, skill_id, design_system_id, pending_prompt,
+          metadata_json, custom_instructions, fact_tenant_id, fact_creator_id,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      p.id,
+      p.name,
+      p.skillId ?? null,
+      p.designSystemId ?? null,
+      p.pendingPrompt ?? null,
+      p.metadata ? JSON.stringify(p.metadata) : null,
+      p.customInstructions ?? null,
+      factPrincipal?.tenantId ?? null,
+      factPrincipal?.userId ?? null,
+      p.createdAt,
+      p.updatedAt,
+    );
+    const created = getProject(db, p.id);
+    if (!created) throw new Error(`Project ${String(p.id)} was not persisted`);
+    businessProjectFactsSink?.projectCreated(db, { ...created, factPrincipal });
+  });
+  persist();
+  const project = getProject(db, p.id);
+  // better-sqlite3 transactions commit only after their callback returns. Wait
+  // until the current synchronous transaction stack has unwound, then clear a
+  // tombstone only when the inserted row survived a possible outer rollback.
+  queueMicrotask(() => {
+    try {
+      if (getProject(db, String(p.id))) markProjectActive(String(p.id));
+    } catch {
+      // A concurrent deletion keeps ownership of the lifecycle state, and a
+      // closing/broken database must not surface as an unhandled microtask.
+    }
+  });
+  return project;
 }
 
 export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
@@ -1847,31 +1970,57 @@ export function updateProject(db: SqliteDb, id: string, patch: DbRow) {
     ...patch,
     updatedAt: nextUpdatedAt(patch.updatedAt, existing.updatedAt),
   };
-  db.prepare(
-    `UPDATE projects
-        SET name = ?,
-            skill_id = ?,
-            design_system_id = ?,
-            pending_prompt = ?,
-            metadata_json = ?,
-            custom_instructions = ?,
-            updated_at = ?
-      WHERE id = ?`,
-  ).run(
-    merged.name,
-    merged.skillId ?? null,
-    merged.designSystemId ?? null,
-    merged.pendingPrompt ?? null,
-    merged.metadata ? JSON.stringify(merged.metadata) : null,
-    merged.customInstructions ?? null,
-    merged.updatedAt,
-    id,
-  );
+  const persist = db.transaction(() => {
+    db.prepare(
+      `UPDATE projects
+          SET name = ?,
+              skill_id = ?,
+              design_system_id = ?,
+              pending_prompt = ?,
+              metadata_json = ?,
+              custom_instructions = ?,
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(
+      merged.name,
+      merged.skillId ?? null,
+      merged.designSystemId ?? null,
+      merged.pendingPrompt ?? null,
+      merged.metadata ? JSON.stringify(merged.metadata) : null,
+      merged.customInstructions ?? null,
+      merged.updatedAt,
+      id,
+    );
+    const updated = getProject(db, id);
+    if (updated) businessProjectFactsSink?.projectUpdated(db, updated);
+  });
+  persist();
   return getProject(db, id);
 }
 
-export function deleteProject(db: SqliteDb, id: string) {
-  db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
+export function deleteProject(
+  db: SqliteDb,
+  id: string,
+  options: { facts?: 'delete' | 'discard' | 'none' } = {},
+) {
+  const existing = getProject(db, id);
+  if (!existing) return;
+  const owner = db.prepare(
+    `SELECT fact_tenant_id AS tenantId, fact_creator_id AS userId FROM projects WHERE id = ?`,
+  ).get(id) as { tenantId?: string | null; userId?: string | null } | undefined;
+  const projectWithOwner = {
+    ...existing,
+    ...(owner?.tenantId && owner.userId
+      ? { factTenantId: owner.tenantId, factCreatorId: owner.userId }
+      : {}),
+  };
+  const persist = db.transaction(() => {
+    db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
+    if (options.facts === 'none') return;
+    if (options.facts === 'delete') businessProjectFactsSink?.projectDeleted(db, projectWithOwner);
+    else businessProjectFactsSink?.projectDiscarded(db, projectWithOwner);
+  });
+  persist();
 }
 
 function normalizeProject(row: DbRow) {
@@ -4179,7 +4328,8 @@ const ROUTINE_COLS = `id, name, prompt,
   schedule_json AS scheduleJson,
   project_mode AS projectMode, project_id AS projectId,
   skill_id AS skillId, agent_id AS agentId,
-  context_json AS contextJson,
+  context_json AS contextJson, fact_tenant_id AS factTenantId,
+  fact_creator_id AS factCreatorId,
   enabled, created_at AS createdAt, updated_at AS updatedAt`;
 
 const ROUTINE_RUN_COLS = `id, routine_id AS routineId, trigger, status,
@@ -4205,9 +4355,9 @@ export function insertRoutine(db: SqliteDb, r: DbRow) {
   db.prepare(
     `INSERT INTO routines
        (id, name, prompt, schedule_kind, schedule_value, schedule_json,
-        project_mode, project_id, skill_id, agent_id, context_json, enabled,
-        created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        project_mode, project_id, skill_id, agent_id, context_json,
+        fact_tenant_id, fact_creator_id, enabled, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     r.id,
     r.name,
@@ -4220,6 +4370,8 @@ export function insertRoutine(db: SqliteDb, r: DbRow) {
     r.skillId ?? null,
     r.agentId ?? null,
     r.contextJson ?? null,
+    r.factPrincipal?.tenantId ?? getRequestContext()?.tenantId ?? null,
+    r.factPrincipal?.userId ?? getRequestContext()?.userId ?? null,
     r.enabled ? 1 : 0,
     r.createdAt,
     r.updatedAt,
@@ -4241,7 +4393,7 @@ export function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
             schedule_kind = ?, schedule_value = ?, schedule_json = ?,
             project_mode = ?, project_id = ?,
             skill_id = ?, agent_id = ?, context_json = ?,
-            enabled = ?, updated_at = ?
+            fact_tenant_id = ?, fact_creator_id = ?, enabled = ?, updated_at = ?
       WHERE id = ?`,
   ).run(
     merged.name,
@@ -4254,6 +4406,8 @@ export function updateRoutine(db: SqliteDb, id: string, patch: DbRow) {
     merged.skillId ?? null,
     merged.agentId ?? null,
     merged.contextJson ?? null,
+    merged.factTenantId ?? null,
+    merged.factCreatorId ?? null,
     merged.enabled ? 1 : 0,
     merged.updatedAt,
     id,
@@ -4279,6 +4433,8 @@ function normalizeRoutine(row: DbRow) {
     skillId: row.skillId ?? null,
     agentId: row.agentId ?? null,
     contextJson: row.contextJson ?? null,
+    factTenantId: row.factTenantId ?? null,
+    factCreatorId: row.factCreatorId ?? null,
     enabled: Number(row.enabled) === 1,
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt),

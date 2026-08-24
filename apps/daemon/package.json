@@ -22,10 +22,12 @@
   "files": [
     "bin",
     "dist",
+    "migrations",
     "package.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && pnpm run build:od-cli",
+    "build:od-cli": "esbuild src/od-cli.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/od-cli.mjs",
     "daemon": "pnpm run build && node dist/cli.js --no-open",
     "dev": "pnpm run build && node dist/cli.js --no-open",
     "start": "pnpm run build && node dist/cli.js",
@@ -58,6 +60,7 @@
     "multer": "2.2.0",
     "node-pty": "1.1.0",
     "pdf-lib": "1.17.1",
+    "pg": "8.22.0",
     "postcss": "8.5.15",
     "posthog-node": "5.34.6",
     "pptxgenjs": "4.0.1",
@@ -71,6 +74,8 @@
     "@types/express": "5.0.6",
     "@types/multer": "2.1.0",
     "@types/node": "20.19.39",
+    "@types/pg": "8.20.0",
+    "esbuild": "0.28.0",
     "jsdom": "29.1.1",
     "typescript": "5.9.3",
     "vitest": "4.1.6"

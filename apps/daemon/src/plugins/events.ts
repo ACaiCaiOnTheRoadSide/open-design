@@ -14,6 +14,7 @@
 //
 // No SQLite, no FS — pure in-memory state. A daemon restart
 // resets the buffer (events survive the run, not the restart).
+import { getRequestContext } from '../request-context.js';
 
 export type PluginEventKind =
   | 'plugin.installed'
@@ -36,6 +37,8 @@ export interface PluginEvent {
   // (marketplace-refreshed) have no plugin id; they pass
   // pluginId='' so consumers can filter consistently.
   pluginId:  string;
+  /** Internal SaaS partition captured from verified ALS at production time. */
+  tenantId?: string;
   // Optional structured payload — installer ships
   // { source, version }, uninstaller ships { reason }, etc.
   details?:  Record<string, unknown>;
@@ -53,11 +56,13 @@ class PluginEventBuffer {
   private nextId = 1;
 
   record(input: Omit<PluginEvent, 'id' | 'at'>): PluginEvent {
+    const tenantId = getRequestContext()?.tenantId;
     const event: PluginEvent = {
       id:       this.nextId++,
       at:       Date.now(),
       kind:     input.kind,
       pluginId: input.pluginId,
+      ...(tenantId ? { tenantId } : {}),
       ...(input.details ? { details: input.details } : {}),
     };
     this.buffer.push(event);

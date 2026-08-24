@@ -79,7 +79,7 @@ function normalizeExtensionOrigin(raw: string): string | null {
 }
 
 export type ConfirmPairingResult =
-  | { ok: true; token: string; label: string }
+  | { ok: true; token: string; tokenHash: string; label: string }
   | { ok: false; error: string };
 
 export function confirmPairing(
@@ -101,8 +101,9 @@ export function confirmPairing(
   }
   const token = `odlt_${randomBytes(32).toString('base64url')}`;
   const label = (opts.label ?? '').trim() || 'Browser Extension';
+  const hash = tokenHash(token);
   insertLibraryToken(db, {
-    tokenHash: tokenHash(token),
+    tokenHash: hash,
     label,
     extensionOrigin: origin,
     createdAt: now,
@@ -110,7 +111,7 @@ export function confirmPairing(
   });
   extensionOrigins.add(origin);
   pendingPairing = null;
-  return { ok: true, token, label };
+  return { ok: true, token, tokenHash: hash, label };
 }
 
 export function validateLibraryToken(

@@ -63,6 +63,7 @@ import { amrProfileBadgeLabel } from '../runtime/amr-guidance';
 import { deepSeekHarnessNeedsSetup, isVisibleLocalCliAgent } from '../utils/visibleAgents';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
+import { confirm as confirmDialog } from './confirm-dialog-host';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
 import {
   CUSTOM_MODEL_SENTINEL,
@@ -134,8 +135,8 @@ import {
   liveArtifactPreviewUrl,
   openExternalUrl,
 } from '../providers/registry';
-import { MEDIA_PROVIDERS } from '../media/models';
-import { useByokImageModelOptions, useByokVideoModelOptions, useByokSpeechModelOptions } from '../media/aihubmix-image-models';
+import { AUDIO_MODELS_BY_KIND, MEDIA_PROVIDERS } from '../media/models';
+import { useByokSpeechModelOptions } from '../media/aihubmix-image-models';
 import { isVisualStabilityMode } from '../utils/visualStability';
 import { byokProviderRequiresApiKey } from '../utils/byokProvider';
 import { XaiOAuthControl } from './XaiOAuthControl';
@@ -175,6 +176,7 @@ import { canShowWorkspaceSettings } from '../collab/settings-access';
 import { ConnectorsBrowser } from './ConnectorsBrowser';
 import { MemoryModelInline } from './MemoryModelInline';
 import { MemorySection } from './MemorySection';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 import { ByokConnectionTestControl } from './byok/ByokConnectionTestControl';
 import { ByokKeyField } from './byok/ByokKeyField';
 import { ByokModelField } from './byok/ByokModelField';
@@ -204,6 +206,7 @@ import {
   applyAppearanceToDocument,
   resolveAccentColor,
 } from '../state/appearance';
+import { AccentColorPicker } from './AppearanceControls';
 import { isAutosaveDraftOnlyChange } from '../App';
 import {
   FAILURE_SOUNDS,
@@ -1627,7 +1630,10 @@ export function SettingsDialog({
       ? { [initial.apiProtocol ?? 'anthropic']: byokProviderKeyForConfig(initial) }
       : {},
   );
-  const [activeSection, setActiveSection] = useState<SettingsSection>(() => normalizeSettingsSection(initialSection));
+  const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
+    const normalized = normalizeSettingsSection(initialSection);
+    return WHITE_LABEL_SAAS && normalized === 'memory' ? 'general' : normalized;
+  });
   // Workspace region gating (E-frontend, D4.3). One shared read of the workspace
   // context; the Workspace section only renders for a team workspace whose
   // viewer may see workspace settings. Gate on the folded permission bits,
@@ -1894,6 +1900,7 @@ export function SettingsDialog({
   const [clearUpdaterCacheBusy, setClearUpdaterCacheBusy] = useState(false);
 
   useEffect(() => {
+    if (WHITE_LABEL_SAAS) return;
     let mounted = true;
     const unsubscribe = subscribeToUpdaterStatus((status) => {
       if (!mounted) return;
@@ -3782,10 +3789,6 @@ export function SettingsDialog({
     ),
     [fetchedApiModelOptions, suggestedApiModelIds],
   );
-  // Shared hook: live AIHubMix catalogue for aihubmix, static registry for
-  // other providers (same list the chat composer's image picker uses).
-  const byokImageModelOptions = useByokImageModelOptions(apiProtocol);
-  const byokVideoModelOptions = useByokVideoModelOptions(apiProtocol);
   const byokSpeechModelOptions = useByokSpeechModelOptions(apiProtocol);
   const apiModelIds = useMemo(
     () => apiModelOptions.map((m) => m.id),
@@ -4341,7 +4344,7 @@ export function SettingsDialog({
                 <small>{t('settings.instructionsNavSub')}</small>
               </span>
             </button>
-            <button
+            {!WHITE_LABEL_SAAS ? <button
               type="button"
               className={`settings-nav-item${activeSection === 'memory' ? ' active' : ''}`}
               onClick={() => setActiveSection('memory')}
@@ -4351,7 +4354,7 @@ export function SettingsDialog({
                 <strong>{t('settings.memory')}</strong>
                 <small>{t('settings.memoryHint')}</small>
               </span>
-            </button>
+            </button> : null}
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'media' ? ' active' : ''}`}
@@ -5273,7 +5276,7 @@ export function SettingsDialog({
                   !knownModelIds.includes(configuredModel)
                     ? selected.models?.[0]?.id ?? ''
                     : configuredModel ?? selected.models?.[0]?.id ?? '';
-                return (
+                return WHITE_LABEL_SAAS ? null : (
                   <details className="agent-cli-env settings-memory-advanced">
                     <summary className="agent-cli-env-summary">
                       <span className="agent-cli-env-summary-title">
@@ -5664,7 +5667,7 @@ export function SettingsDialog({
                   updateApiConfig({ model: nextValue });
                 }}
               />
-              <details className="agent-cli-env settings-memory-advanced">
+              {!WHITE_LABEL_SAAS ? <details className="agent-cli-env settings-memory-advanced">
                 <summary className="agent-cli-env-summary">
                   <span className="agent-cli-env-summary-title">
                     {t('settings.memoryModelInlineLabel')}
@@ -5681,7 +5684,7 @@ export function SettingsDialog({
                     apiModelOptions={apiModelOptions}
                   />
                 </div>
-              </details>
+              </details> : null}
               {apiProtocol === 'azure' ? (
                 <label className="field">
                   <span className="field-label">{t('settings.apiVersion')}</span>
@@ -5692,60 +5695,6 @@ export function SettingsDialog({
                     onBlur={commitProviderModelsInputs}
                     onChange={(e) => updateApiConfig({ apiVersion: e.target.value.trim() })}
                   />
-                </label>
-              ) : null}
-              {apiProtocol === 'senseaudio' || apiProtocol === 'aihubmix' ? (
-                <label className="field">
-                  <span className="field-label">{t('settings.byokImageModel')}</span>
-                  <SearchableModelSelect
-                    className="inline-switcher__select settings-model-select settings-model-select--byok"
-                    aria-label={t('settings.byokImageModel')}
-                    searchPlaceholder={t('designs.searchPlaceholder')}
-                    popoverClassName="settings-byok-select-popover"
-                    minSearchableOptions={Number.POSITIVE_INFINITY}
-                    // Live catalogue from the shared hook: AIHubMix's image
-                    // models for aihubmix, the static SenseAudio registry
-                    // otherwise. The default-empty option (first entry) resolves
-                    // to the registry default on the daemon side.
-                    models={[
-                      {
-                        id: '',
-                        label: byokImageModelOptions[0]?.label
-                          ? `${byokImageModelOptions[0].label} (${t('settings.byokModelDefaultOption')})`
-                          : t('settings.byokModelDefaultOption'),
-                      },
-                      ...byokImageModelOptions.map((m) => ({ id: m.id, label: m.label })),
-                    ]}
-                    value={cfg.byokImageModel ?? ''}
-                    onChange={(value) =>
-                      updateApiConfig({ byokImageModel: value })
-                    }
-                  />
-                </label>
-              ) : null}
-              {apiProtocol === 'aihubmix' ? (
-                <label className="field">
-                  <span className="field-label">{t('settings.byokVideoModel')}</span>
-                  <select
-                    value={cfg.byokVideoModel ?? ''}
-                    onChange={(e) =>
-                      updateApiConfig({ byokVideoModel: e.target.value })
-                    }
-                  >
-                    {/* Empty resolves to the default video model on the daemon
-                        side. The LLM can still override per-call via the tool's
-                        `model` arg. */}
-                    <option value="">
-                      {byokVideoModelOptions[0]?.label
-                        ? `${byokVideoModelOptions[0].label} (${t('settings.byokModelDefaultOption')})`
-                        : t('settings.byokModelDefaultOption')}
-                    </option>
-                    {byokVideoModelOptions.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
                 </label>
               ) : null}
               {apiProtocol === 'aihubmix' ? (
@@ -5895,6 +5844,22 @@ export function SettingsDialog({
 
               <div className="settings-general-block">
                 <div className="settings-general-block-head">
+                  <h3>{t('settings.accentColor')}</h3>
+                  <p className="hint">{t('settings.accentColorHint')}</p>
+                </div>
+                <AccentColorPicker
+                  className="settings-accent-swatches"
+                  value={cfg.accentColor}
+                  onChange={(accentColor) => {
+                    const next = { ...cfg, accentColor };
+                    setCfg(next);
+                    applyAppearanceToDocument(next);
+                  }}
+                />
+              </div>
+
+              <div className="settings-general-block">
+                <div className="settings-general-block-head">
                   <h3>{t('settings.systemPrefsTitle')}</h3>
                   <p className="hint">{t('settings.systemPrefsHint')}</p>
                 </div>
@@ -5908,12 +5873,12 @@ export function SettingsDialog({
                 <PetSettings cfg={cfg} setCfg={setCfg} />
               </div>
 
-              <div className="settings-general-block">
+              {!WHITE_LABEL_SAAS ? <div className="settings-general-block">
                 <div className="settings-general-block-head">
                   <h3>{t('settings.projectLocations')}</h3>
                 </div>
                 <ProjectLocationsSection cfg={cfg} setCfg={setCfg} onProjectsRefresh={onProjectsRefresh} />
-              </div>
+              </div> : null}
 
               <div className="settings-general-block">
                 <CritiqueTheaterSection
@@ -5961,7 +5926,7 @@ export function SettingsDialog({
             </section>
           ) : null}
 
-          {activeSection === 'memory' ? (
+          {!WHITE_LABEL_SAAS && activeSection === 'memory' ? (
             <MemorySection
               onOpenConnectors={() => setActiveSection('composio')}
               chatAgentId={cfg.mode === 'daemon' ? cfg.agentId ?? null : null}
@@ -5982,15 +5947,15 @@ export function SettingsDialog({
                       <div className="settings-about-version-left">
                         <dt>{t('settings.appVersion')}</dt>
                         <span className="settings-about-version-num">{appVersionInfo.version}</span>
-                        <dd
+                        {!WHITE_LABEL_SAAS ? <dd
                           aria-live="polite"
                           className={`settings-about-update-status settings-about-update-status--${aboutUpdateControl.statusTone}`}
                         >
                           {t(aboutUpdateControl.statusKey, aboutUpdateControl.statusVars)}
-                        </dd>
+                        </dd> : null}
                       </div>
                     </div>
-                    <div className="settings-about-update-actions">
+                    {!WHITE_LABEL_SAAS ? <div className="settings-about-update-actions">
                       {aboutUpdateControl.primaryLabelKey ? (
                         <button
                           type="button"
@@ -6022,7 +5987,7 @@ export function SettingsDialog({
                           {t('settings.updateViewReleases')}
                         </button>
                       ) : null}
-                    </div>
+                    </div> : null}
                   </div>
                   <div>
                     <dt>{t('settings.appChannel')}</dt>
@@ -6048,7 +6013,7 @@ export function SettingsDialog({
               ) : (
                 <div className="empty-card">{t('settings.versionUnavailable')}</div>
               )}
-              <div className="settings-about-diagnostics settings-about-silent-updates">
+              {!WHITE_LABEL_SAAS ? <div className="settings-about-diagnostics settings-about-silent-updates">
                 <label className="settings-about-toggle">
                   <input
                     checked={cfg.allowSilentUpdates === true}
@@ -6115,8 +6080,8 @@ export function SettingsDialog({
                     <span className="hint">{t('settings.allowSilentUpdatesDesc')}</span>
                   </span>
                 </label>
-              </div>
-              {aboutUpdaterModel.environment === 'desktop'
+              </div> : null}
+              {!WHITE_LABEL_SAAS && aboutUpdaterModel.environment === 'desktop'
                 && aboutUpdaterModel.supported
                 && appVersionInfo?.packaged !== false ? (
                 <div className="settings-about-diagnostics">
@@ -7603,6 +7568,11 @@ function OrbitSection({
   );
 }
 
+const RETAINED_MEDIA_PROVIDER_IDS = new Set([
+  ...Object.values(AUDIO_MODELS_BY_KIND).flatMap((models) => models.map((model) => model.provider)),
+  'tavily',
+]);
+
 function MediaProvidersSection({
   cfg,
   setCfg,
@@ -7639,9 +7609,9 @@ function MediaProvidersSection({
       return next.size === current.size ? current : next;
     });
   }, [cfg.mediaProviders]);
-  const visibleProviders = MEDIA_PROVIDERS.filter(
-    (p) => p.settingsVisible !== false,
-  );
+  const visibleProviders = MEDIA_PROVIDERS.filter((provider) => (
+    provider.settingsVisible !== false && RETAINED_MEDIA_PROVIDER_IDS.has(provider.id)
+  ));
   // Split the catalog into two surfaces:
   //   - "Available" — daemon ships a real client, user can paste a key
   //     and it works. Rendered as full editable cards.
@@ -7744,14 +7714,10 @@ function MediaProvidersSection({
   const activeProvider = availableProviders.find((p) => p.id === activeProviderId)
     ?? availableProviders[0]
     ?? null;
-  // Capability chip copy is derived from the provider's marketing hint —
-  // deliberately English tags ("Image · Audio · Custom configuration"), matching
-  // the reference design.
+  // Native visual capabilities stay configured but are omitted from this UI.
   const providerCapabilityLabel = (provider: MediaProvider) => {
     const hint = provider.hint.toLowerCase();
     const parts: string[] = [];
-    if (/image|imagen|flux|dall|banana|leonardo|gpt-image|seedream/.test(hint)) parts.push('Image');
-    if (/video|sora|veo|wan|seedance|grok-imagine/.test(hint)) parts.push('Video');
     if (/voice|speech|audio|sfx|tts|clone/.test(hint) || provider.id === 'senseaudio') parts.push('Audio');
     if (/research|search/.test(hint)) parts.push('Research');
     if (provider.supportsCustomModel) parts.push('Custom configuration');
@@ -7884,7 +7850,7 @@ function MediaProvidersSection({
                   </span>
                 ) : null}
               </div>
-              <p>{activeProvider.hint || providerCapabilityLabel(activeProvider)}</p>
+              <p>{providerCapabilityLabel(activeProvider)}</p>
             </div>
             <div className="media-provider-badges">
               <span className="media-provider-badge integrated">
@@ -7994,7 +7960,7 @@ function MediaProvidersSection({
               type="button"
               className="ghost"
               disabled={!activeClearable}
-              onClick={() => {
+              onClick={async () => {
                 trackSettingsMediaProvidersClick(analytics.track, {
                   page_name: 'settings',
                   area: 'media_providers',
@@ -8006,18 +7972,12 @@ function MediaProvidersSection({
                   // dashboard cares about the intent signal.
                   is_configured: activeClearable,
                 });
-                // Match the existing window.confirm guard the rest of
-                // the app uses for destructive actions (conversation
-                // delete, design delete, file delete in FileWorkspace).
-                // Without this a stray click on the Clear button wipes
-                // the saved key with no recovery. Issue #737.
-                if (
-                  !confirm(
-                    t('settings.mediaProviderClearConfirm', {
-                      name: activeProvider.label,
-                    }),
-                  )
-                ) {
+                if (!await confirmDialog({
+                  message: t('settings.mediaProviderClearConfirm', { name: activeProvider.label }),
+                  confirmLabel: t('common.clear'),
+                  cancelLabel: t('common.cancel'),
+                  danger: true,
+                })) {
                   return;
                 }
                 updateProvider(activeProvider, {

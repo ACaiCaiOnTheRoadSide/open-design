@@ -19,6 +19,7 @@ import {
 import { listInstalledPlugins } from '../src/plugins/registry.js';
 import { addMarketplace, resolvePluginInMarketplaces } from '../src/plugins/marketplaces.js';
 import type { InstalledPluginRecord } from '@open-design/contracts';
+import { runWithRequestContext } from '../src/request-context.js';
 
 let tmpRoot: string;
 let pluginsRoot: string;
@@ -58,6 +59,44 @@ afterEach(async () => {
 });
 
 describe('installFromLocalFolder', () => {
+  it('stores equal public slugs independently for two tenant principals', async () => {
+    const installFor = async (tenantId: string, version: string) =>
+      runWithRequestContext({ tenantId, userId: `${tenantId}-user` }, async () => {
+        await writeFile(
+          path.join(sourceFolder, 'open-design.json'),
+          JSON.stringify({ name: 'sample-plugin', version, title: `Plugin ${version}` }),
+        );
+        let installed: InstalledPluginRecord | null = null;
+        for await (const event of installFromLocalFolder(db, {
+          source: sourceFolder,
+          roots: { userPluginsRoot: pluginsRoot },
+        })) {
+          if (event.kind === 'error') throw new Error(event.message);
+          if (event.kind === 'success') installed = event.plugin;
+        }
+        return installed;
+      });
+
+    const first = await installFor('tenant-a', '1.0.0');
+    const second = await installFor('tenant-b', '2.0.0');
+    expect(first?.id).toBe('sample-plugin');
+    expect(second?.id).toBe('sample-plugin');
+    expect(first?.fsPath).not.toBe(second?.fsPath);
+
+    await runWithRequestContext({ tenantId: 'tenant-a', userId: 'a' }, async () => {
+      expect(listInstalledPlugins(db).map((plugin) => plugin.version)).toEqual(['1.0.0']);
+      expect((await uninstallPlugin(db, 'sample-plugin', { userPluginsRoot: pluginsRoot })).ok).toBe(true);
+      expect(listInstalledPlugins(db)).toEqual([]);
+    });
+    await runWithRequestContext({ tenantId: 'tenant-b', userId: 'b' }, async () => {
+      expect(listInstalledPlugins(db).map((plugin) => plugin.version)).toEqual(['2.0.0']);
+    });
+
+    // The two rows have distinct physical primary keys while retaining one
+    // public manifest identity.
+    expect(db.prepare('SELECT COUNT(*) AS count FROM installed_plugins').get()).toEqual({ count: 1 });
+  });
+
   it('copies the folder and writes installed_plugins', async () => {
     const events: string[] = [];
     let installedRecord: InstalledPluginRecord | null = null;
@@ -113,6 +152,44 @@ describe('installFromLocalFolder', () => {
     });
     expect(await readFile(installedManifest, 'utf8')).toBe(before);
     expect(listInstalledPlugins(db)[0]?.version).toBe('1.0.0');
+  });
+
+  it('checks expectedPluginId before overwriting an existing different plugin', async () => {
+    await writeFile(
+      path.join(sourceFolder, 'open-design.json'),
+      JSON.stringify({ name: 'other', version: '1.0.0', title: 'Existing Other' }),
+    );
+    for await (const event of installFromLocalFolder(db, {
+      source: sourceFolder,
+      roots: { userPluginsRoot: pluginsRoot },
+    })) {
+      if (event.kind === 'error') throw new Error(event.message);
+    }
+    const existingManifest = path.join(pluginsRoot, 'other', 'open-design.json');
+    const before = await readFile(existingManifest, 'utf8');
+
+    const mismatchFolder = path.join(tmpRoot, 'mismatch-source');
+    await mkdir(mismatchFolder, { recursive: true });
+    await writeFile(
+      path.join(mismatchFolder, 'open-design.json'),
+      JSON.stringify({ name: 'other', version: '9.9.9', title: 'Must Not Replace' }),
+    );
+    const events = [];
+    for await (const event of installFromLocalFolder(db, {
+      source: mismatchFolder,
+      expectedPluginId: 'expected',
+      roots: { userPluginsRoot: pluginsRoot },
+    })) {
+      events.push(event);
+    }
+
+    expect(events.at(-1)).toMatchObject({
+      kind: 'error',
+      code: 'INVALID_MANIFEST',
+      message: 'Plugin manifest id "other" does not match expected id "expected"',
+    });
+    expect(await readFile(existingManifest, 'utf8')).toBe(before);
+    expect(listInstalledPlugins(db)).toMatchObject([{ id: 'other', version: '1.0.0' }]);
   });
 
   it('rejects symbolic links inside the source tree', async () => {

@@ -5782,6 +5782,63 @@ describe('FileViewer SVG artifacts', () => {
     );
   });
 
+  it('keeps a successful public link when all business-stat retries return 503', async () => {
+    const context = teamWorkspaceContext();
+    const publicUrl = 'https://pub.example/published-despite-stats';
+    const statsCalls: Array<{ event: string; eventKey: string }> = [];
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/workspace/context')) {
+          return new Response(JSON.stringify({ context }), { status: 200 });
+        }
+        if (url.includes('/stats-events')) {
+          statsCalls.push(JSON.parse(String(init?.body)) as { event: string; eventKey: string });
+          return new Response(JSON.stringify({ error: 'temporarily unavailable' }), { status: 503 });
+        }
+        if (url.includes('publish-public')) {
+          if ((init?.method ?? 'GET').toUpperCase() === 'GET') {
+            return new Response(JSON.stringify({ publication: null }), { status: 200 });
+          }
+          return new Response(
+            JSON.stringify({ url: publicUrl, slug: 'published-despite-stats', fileName: 'index.html' }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+      }),
+    );
+
+    const { container } = renderWithProjectWorkspace(
+      <FileViewer projectId="project-1" projectKind="prototype" file={publicPublishFile()}
+        liveHtml="<html><body><h1>Hello</h1></body></html>"
+      />,
+      context,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /share/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Get a share link/i }));
+
+    // The irreversible publish response is presented immediately and never enters
+    // the publish-failed branch merely because its independent statistic is down.
+    expect(await screen.findByText(publicUrl)).toBeTruthy();
+    expect(container.querySelector('.chrome-publish-error')).toBeNull();
+    expect(screen.getByRole('button', { name: /Stop sharing/i })).toBeTruthy();
+
+    await waitFor(() => expect(statsCalls).toHaveLength(3), { timeout: 2_000 });
+    expect(statsCalls.every((body) => body.event === 'publish')).toBe(true);
+    expect(new Set(statsCalls.map((body) => body.eventKey)).size).toBe(1);
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith(
+        '[business-stats] publish succeeded but durable fact recording failed',
+        expect.any(Error),
+      );
+    });
+    expect(container.querySelector('.chrome-publish-error')).toBeNull();
+  });
+
   it('exposes Stop sharing when publication persistence and compensation both fail', async () => {
     const context = teamWorkspaceContext();
     const publicUrl =
@@ -6316,6 +6373,62 @@ describe('FileViewer SVG artifacts', () => {
     }
   });
 
+  it('delegates renderer-501 PPTX without reporting a download success', async () => {
+    const delegated = vi.fn(async () => true);
+    const statsBodies: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/export/pptx')) {
+        return new Response(JSON.stringify({ error: { message: 'renderer unavailable' } }), {
+          status: 501,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/stats-events')) {
+        statsBodies.push(JSON.parse(String(init?.body)));
+        return new Response('{}', { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    const file = baseFile({
+      name: 'slides.html',
+      path: 'slides.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Slides',
+        entry: 'slides.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml='<deck-stage><section data-screen-label="One">One</section></deck-stage>'
+        onExportPptxViaAgent={delegated}
+      />,
+    );
+    await openUnifiedExportTab();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Export as PPTX/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Export as PPTX/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Export$/i }));
+
+    await waitFor(() => expect(delegated).toHaveBeenCalledWith({
+      fileName: 'slides.html',
+      title: 'slides',
+      editable: true,
+    }));
+    expect(await screen.findByText(/Handed to the AI agent/i)).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(statsBodies).toEqual([]);
+  });
+
   it('uses the shared exportable-deck detector for version history preview options', () => {
     const deckSource =
       '<deck-stage><section data-screen-label="01 Cover">A</section>' +
@@ -6800,7 +6913,7 @@ describe('FileViewer SVG artifacts', () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/projects/project-1/export/pdf',
+        '/api/projects/project-1/export/pdf-image',
         expect.objectContaining({ method: 'POST' }),
       );
     });

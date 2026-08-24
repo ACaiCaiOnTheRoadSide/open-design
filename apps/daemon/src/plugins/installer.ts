@@ -32,6 +32,8 @@ import {
   type ResolveOptions,
   type RegistryRoots,
 } from './registry.js';
+import { currentPluginStorageId } from './storage-identity.js';
+import { getRequestContext } from '../request-context.js';
 import { deleteWorkspaceResourceByResourceId } from '../db.js';
 import { resolveGithubRepositoryUrl } from '../github-install-source.js';
 import type {
@@ -77,6 +79,10 @@ export type PluginInstallErrorCode =
 
 export interface InstallOptions {
   source: string;
+  // Internal desired-state installs pin the identity before any existing
+  // destination bytes or SQLite row may be touched. Ordinary user/CLI installs
+  // omit this and retain manifest-driven identity semantics.
+  expectedPluginId?: string;
   // Forwarded from daemon runtime context; defaults to defaultRegistryRoots()
   // so daemon tests can point at a sandboxed data root.
   roots?: RegistryRoots;
@@ -88,6 +94,9 @@ export interface InstallOptions {
   // Pluggable network fetcher for tests. Production injects globalThis.fetch.
   // The contract: returns a ReadableStream of the gzipped tar bytes.
   fetcher?: ArchiveFetcher;
+  // Cancels remote materialization during daemon shutdown. Existing callers
+  // need not provide one; the normal CLI/API semantics stay unchanged.
+  signal?: AbortSignal;
   // Plan §3.JJ1 — emit 'plugin.installed' (default) or
   // 'plugin.upgraded' from the producer hook. The upgrade route
   // sets this to 'upgraded' so consumers can distinguish the two
@@ -357,7 +366,7 @@ async function* installFromGithubContents(
   contentsUrl: string,
 ): AsyncGenerator<InstallEvent, void, void> {
   if (!candidate.subpath) return;
-  const fetcher = opts.fetcher ?? defaultFetcher;
+  const fetcher = opts.fetcher ?? ((url) => defaultFetcher(url, opts.signal));
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'od-plugin-github-contents-'));
   const stagingFolder = path.join(tmpRoot, 'plugin');
@@ -525,7 +534,7 @@ async function* installFromArchiveUrl(
   url: string,
   subpath: string | undefined,
 ): AsyncGenerator<InstallEvent, void, void> {
-  const fetcher = opts.fetcher ?? defaultFetcher;
+  const fetcher = opts.fetcher ?? ((url) => defaultFetcher(url, opts.signal));
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'od-plugin-archive-'));
   try {
@@ -651,8 +660,8 @@ async function* installFromArchiveUrl(
   }
 }
 
-async function defaultFetcher(url: string): ReturnType<ArchiveFetcher> {
-  const response = await safeExternalFetch(url);
+async function defaultFetcher(url: string, signal?: AbortSignal): ReturnType<ArchiveFetcher> {
+  const response = await safeExternalFetch(url, signal ? { signal } : {});
   return {
     ok: response.ok,
     status: response.status,
@@ -771,11 +780,20 @@ export async function* installFromLocalFolder(
   }
   warnings.push(...probe.warnings);
   const pluginId = probe.record.id;
+  if (opts.expectedPluginId !== undefined && pluginId !== opts.expectedPluginId) {
+    yield {
+      kind: 'error',
+      message: `Plugin manifest id "${pluginId}" does not match expected id "${opts.expectedPluginId}"`,
+      warnings,
+      code: 'INVALID_MANIFEST',
+    };
+    return;
+  }
   if (!SAFE_BASENAME.test(pluginId)) {
     yield { kind: 'error', message: `Plugin id '${pluginId}' is not a safe folder name`, warnings };
     return;
   }
-  const destFolder = path.join(roots.userPluginsRoot, pluginId);
+  const destFolder = path.join(roots.userPluginsRoot, currentPluginStorageId(pluginId, recordedSourceKind));
 
   if (fs.existsSync(destFolder) || getInstalledPlugin(db, pluginId)) {
     const replacement = opts.allowReplacePlugin?.(pluginId);
@@ -888,6 +906,7 @@ export async function uninstallPlugin(
   if (!isSafePluginId(id)) {
     return { ok: false, warning: `Plugin id '${id}' is not a safe folder name` };
   }
+  const installed = getInstalledPlugin(db, id);
   const removed = deleteInstalledPlugin(db, id);
   // Clean up the workspace_resources binding row too — this table has no
   // FOREIGN KEY ... ON DELETE CASCADE (a resource_id can point at any of
@@ -903,11 +922,11 @@ export async function uninstallPlugin(
   // mirrors the same "table may not exist yet" tolerance server.ts's
   // `collectBundledScenarios` already uses for `installed_plugins`.
   try {
-    deleteWorkspaceResourceByResourceId(db, 'plugin', id);
+    if (!getRequestContext()) deleteWorkspaceResourceByResourceId(db, 'plugin', id);
   } catch {
     // Table not present in this db — nothing to clean up.
   }
-  const folder = path.join(roots.userPluginsRoot, id);
+  const folder = installed?.fsPath ?? path.join(roots.userPluginsRoot, currentPluginStorageId(id));
   // Defence in depth: even a SAFE_BASENAME-passing id must resolve to a direct
   // child of the registry root. If normalization lands anywhere else, refuse.
   const registryRoot = path.resolve(roots.userPluginsRoot);

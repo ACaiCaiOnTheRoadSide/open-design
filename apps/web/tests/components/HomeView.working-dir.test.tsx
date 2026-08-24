@@ -7,6 +7,7 @@ vi.mock('../../src/components/home-hero/PlaceholderCarousel', () => ({
   PlaceholderCarousel: () => null,
 }));
 
+import { WHITE_LABEL_SAAS } from '../../src/features/whiteLabel';
 import { HomeView } from '../../src/components/HomeView';
 import { isOpenDesignHostAvailable, pickHostWorkingDir } from '@open-design/host';
 import { openFolderDialog } from '../../src/providers/registry';
@@ -62,7 +63,7 @@ describe('HomeView working-dir picker host fallback', () => {
   // we must NOT fall back to the browser folder dialog: that path yields a raw
   // path with no host token, so the later working-dir POST would be rejected by
   // the desktop auth gate and surface as a confusing late create-time failure.
-  it('surfaces the host error instead of falling back to the browser dialog when the host pick fails', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('surfaces the host error instead of falling back to the browser dialog when the host pick fails', async () => {
     mockedIsHostAvailable.mockReturnValue(true);
     mockedPickHostWorkingDir.mockResolvedValue({
       ok: false,
@@ -82,7 +83,7 @@ describe('HomeView working-dir picker host fallback', () => {
 
   // The pure web path (no desktop host) has no token gate, so the raw browser
   // folder path is the expected input and the dialog fallback is correct.
-  it('uses the browser folder dialog on the pure web path', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('uses the browser folder dialog on the pure web path', async () => {
     mockedIsHostAvailable.mockReturnValue(false);
     mockedOpenFolderDialog.mockResolvedValue('/Users/me/web-folder');
 
@@ -98,7 +99,7 @@ describe('HomeView working-dir picker host fallback', () => {
   });
 
   // An explicit cancel of the host picker must not pop a second dialog.
-  it('does not fall back to the browser dialog when the user cancels the host picker', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('does not fall back to the browser dialog when the user cancels the host picker', async () => {
     mockedIsHostAvailable.mockReturnValue(true);
     mockedPickHostWorkingDir.mockResolvedValue({ ok: false, canceled: true });
 

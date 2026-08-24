@@ -31,6 +31,7 @@ import {
   deleteLibraryAsset,
   getLibraryAsset,
   listLibraryAssets,
+  listLibraryTokens,
   updateLibraryAsset,
   type LibraryAssetRecord,
 } from '../library-store.js';
@@ -53,10 +54,11 @@ import {
   sendCreatedProjectWorkspaceError,
 } from '../collab/created-project-workspace.js';
 import type { BoundWorkspaceResourceMutationGate } from '../collab/workspace-resource-mutation.js';
+import type { ResourceOwnerRegistry } from '../storage/resource-owner-registry.js';
+import { getRequestContext } from '../request-context.js';
 import type { WorkspaceDirectoryFetchResult } from '../collab/vela-workspace-context.js';
 import {
   confirmPairing,
-  libraryConnectionStatus,
   startPairing,
   validateLibraryToken,
 } from '../library-tokens.js';
@@ -67,6 +69,7 @@ export interface RegisterLibraryRoutesDeps
   > {
   fetchProjectCreationWorkspaceDirectory?: () => Promise<WorkspaceDirectoryFetchResult>;
   enforceWorkspaceProjectMutation?: BoundWorkspaceResourceMutationGate;
+  resourceOwnerRegistry?: ResourceOwnerRegistry;
 }
 
 const MAX_REMOTE_BYTES = 25 * 1024 * 1024;
@@ -182,6 +185,10 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   const { writeProjectFile } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { authorizeToolRequest } = ctx.auth;
+  const assetVisible = async (id: string): Promise<boolean> => !ctx.resourceOwnerRegistry
+    || ctx.resourceOwnerRegistry.isVisible('library_asset', id);
+  const ownedAsset = async (id: string): Promise<LibraryAssetRecord | null> =>
+    await assetVisible(id) ? getLibraryAsset(db, id) : null;
   async function enforceProjectWrite(req: Request, res: Response, projectId: string) {
     if (!ctx.enforceWorkspaceProjectMutation) return true;
     return ctx.enforceWorkspaceProjectMutation(
@@ -249,8 +256,8 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // in-flight pass is shared by concurrent callers. `force` (the Sync button /
   // `od library sync`) bypasses the throttle.
   const RECONCILE_THROTTLE_MS = 10_000;
-  let lastReconcileAt = 0;
-  let reconcileInFlight: Promise<ReconcileLibraryResult> | null = null;
+  const lastReconcileAt = new Map<string, number>();
+  const reconcileInFlight = new Map<string, Promise<ReconcileLibraryResult>>();
   const EMPTY_RECONCILE: ReconcileLibraryResult = {
     designSystems: 0,
     projectAssets: 0,
@@ -258,19 +265,37 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     total: 0,
   };
   async function runReconcile(force: boolean): Promise<ReconcileLibraryResult> {
-    if (reconcileInFlight) return reconcileInFlight;
-    if (!force && Date.now() - lastReconcileAt < RECONCILE_THROTTLE_MS) {
+    const tenantKey = getRequestContext()?.tenantId ?? '__local__';
+    const active = reconcileInFlight.get(tenantKey);
+    if (active) return active;
+    if (!force && Date.now() - (lastReconcileAt.get(tenantKey) ?? 0) < RECONCILE_THROTTLE_MS) {
       return EMPTY_RECONCILE;
     }
-    reconcileInFlight = reconcileLibrary(db, {
+    const before = new Set(listLibraryAssets(db).map((asset) => asset.id));
+    const work = reconcileLibrary(db, {
       LIBRARY_DIR,
       PROJECTS_DIR,
       USER_DESIGN_SYSTEMS_DIR,
+    }).then(async (summary) => {
+      if (ctx.resourceOwnerRegistry) {
+        for (const asset of listLibraryAssets(db)) {
+          if (before.has(asset.id)) continue;
+          await ctx.resourceOwnerRegistry.registerUser({
+            kind: 'library_asset', id: asset.id,
+            sourceKind: 'local',
+            localPath: asset.filePath ?? path.join(LIBRARY_DIR, asset.contentHash),
+            projectId: asset.originProjectId ?? null,
+            metadata: { storage: asset.storage, reconciled: true },
+          });
+        }
+      }
+      return summary;
     }).finally(() => {
-      lastReconcileAt = Date.now();
-      reconcileInFlight = null;
+      lastReconcileAt.set(tenantKey, Date.now());
+      reconcileInFlight.delete(tenantKey);
     });
-    return reconcileInFlight;
+    reconcileInFlight.set(tenantKey, work);
+    return work;
   }
 
   // Live ingest/enrichment feed. Clipper captures flow through this route, so
@@ -301,7 +326,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     applyExtensionCors(req, res);
     res.status(204).end();
   });
-  app.post('/api/library/pair/confirm', (req, res) => {
+  app.post('/api/library/pair/confirm', async (req, res) => {
     applyExtensionCors(req, res);
     const body = req.body ?? {};
     const code = String(body.code ?? '');
@@ -313,12 +338,26 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (!result.ok) {
       return sendApiError(res, 401, 'PAIRING_FAILED', result.error);
     }
+    await ctx.resourceOwnerRegistry?.registerUser({
+      kind: 'library_token', id: result.tokenHash,
+      metadata: { extensionOrigin, label: result.label },
+    });
     res.json({ token: result.token, label: result.label });
   });
 
   // Loopback-only: web UI connection status.
-  app.get('/api/library/connection', requireLocalDaemonRequest, (_req, res) => {
-    res.json(libraryConnectionStatus(db));
+  app.get('/api/library/connection', requireLocalDaemonRequest, async (_req, res) => {
+    const rows = listLibraryTokens(db);
+    const visibleIds = ctx.resourceOwnerRegistry
+      ? await ctx.resourceOwnerRegistry.filterVisibleIds('library_token', rows.map((row) => row.tokenHash))
+      : new Set(rows.map((row) => row.tokenHash));
+    const tokens = rows.filter((row) => visibleIds.has(row.tokenHash)).map((row) => ({
+      label: row.label,
+      extensionOrigin: row.extensionOrigin,
+      createdAt: row.createdAt,
+      lastUsedAt: row.lastUsedAt,
+    }));
+    res.json({ paired: tokens.length > 0, tokens });
   });
 
   // --- ingest --------------------------------------------------------------
@@ -338,7 +377,10 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     const isExtensionOrigin =
       origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
     let sourceKind: LibrarySourceKind;
-    if (isExtensionOrigin || validateLibraryToken(db, bearerToken(req)).ok) {
+    const tokenValidation = validateLibraryToken(db, bearerToken(req));
+    const ownedExtensionToken = tokenValidation.ok && (!ctx.resourceOwnerRegistry
+      || await ctx.resourceOwnerRegistry.isVisible('library_token', tokenValidation.row.tokenHash));
+    if ((isExtensionOrigin && ownedExtensionToken) || (!isExtensionOrigin && tokenValidation.ok && ownedExtensionToken)) {
       sourceKind = 'clipper';
     } else if (isLocalSameOrigin(req, resolvedPortRef.current)) {
       sourceKind = 'manual-upload';
@@ -428,7 +470,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     }
 
     try {
-      const result = await registerLibraryAsset({
+      const registrationInput = {
         db,
         libraryDir: LIBRARY_DIR,
         storage: 'owned',
@@ -442,12 +484,41 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
         tags: Array.isArray(body.tags) ? body.tags.filter((t: unknown) => typeof t === 'string') : undefined,
         metadata,
         source: { sourceKind },
-      });
+      } as const;
+      let result = await registerLibraryAsset(registrationInput);
+      let assetRecord = result.asset;
+
+      // The SQLite row/file is created before PostgreSQL ownership can be
+      // claimed. A concurrent final-owner DELETE may therefore have been
+      // waiting on the same resource advisory lock and can remove that first
+      // row before registerUser returns. Once our owner row is active no later
+      // release may physically delete the asset, so verify after the claim and
+      // recreate/reclaim only when that narrow race actually occurred.
+      while (ctx.resourceOwnerRegistry) {
+        await ctx.resourceOwnerRegistry.registerUser({
+          kind: 'library_asset',
+          id: assetRecord.id,
+          sourceKind: 'upload',
+          localPath: assetRecord.filePath ?? path.join(LIBRARY_DIR, assetRecord.contentHash),
+          projectId: assetRecord.originProjectId ?? null,
+          metadata: { storage: assetRecord.storage, sourceKind },
+        });
+        const claimedAsset = getLibraryAsset(db, assetRecord.id);
+        if (claimedAsset) {
+          assetRecord = claimedAsset;
+          break;
+        }
+        // Do not leave an unreachable owner row for the identity that lost the
+        // race. No physical callback is needed: the deleting request already
+        // removed its SQLite row/file while holding the advisory lock.
+        await ctx.resourceOwnerRegistry.release('library_asset', assetRecord.id);
+        result = await registerLibraryAsset(registrationInput);
+        assetRecord = result.asset;
+      }
 
       // Persist derived sidecars (idempotent overwrite). On dedup the registrar
       // ignores `metadata`, so stamp the marker explicitly when an existing
       // asset gains a capture it didn't have before.
-      let assetRecord = result.asset;
       if (figmaIr) {
         await writeFigmaSidecar(LIBRARY_DIR, assetRecord.contentHash, figmaIr);
         if (result.deduped && !assetRecord.metadata?.figmaCapture && figmaMeta) {
@@ -467,6 +538,11 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
         }
       }
 
+      if (result.taskId) {
+        await ctx.resourceOwnerRegistry?.registerUser({
+          kind: 'library_task', id: result.taskId, metadata: { assetId: assetRecord.id },
+        });
+      }
       const asset = toPublicAsset(assetRecord);
       emit('ingest', { assetId: asset.id, deduped: result.deduped });
       res.json({ asset, taskId: result.taskId, deduped: result.deduped });
@@ -500,7 +576,11 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (str(q.projectId)) filter.projectId = str(q.projectId)!;
     if (str(q.designSystemId)) filter.designSystemId = str(q.designSystemId)!;
     if (q.limit) filter.limit = Number(q.limit);
-    const assets = listLibraryAssets(db, filter).map(toPublicAsset);
+    const records = listLibraryAssets(db, filter);
+    const visibleIds = ctx.resourceOwnerRegistry
+      ? await ctx.resourceOwnerRegistry.filterVisibleIds('library_asset', records.map((asset) => asset.id))
+      : new Set(records.map((asset) => asset.id));
+    const assets = records.filter((asset) => visibleIds.has(asset.id)).map(toPublicAsset);
     res.json({ assets });
   });
 
@@ -516,29 +596,38 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     }
   });
 
-  app.get('/api/library/assets/:id', (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+  app.get('/api/library/assets/:id', async (req, res) => {
+    const asset = await ownedAsset(req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     res.json({ asset: toPublicAsset(asset) });
   });
 
   app.delete('/api/library/assets/:id', requireLocalDaemonRequest, async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await ownedAsset(req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
-    // Only unlink bytes we own and that live under LIBRARY_DIR.
-    if (asset.storage === 'owned' && asset.filePath) {
-      const abs = path.resolve(asset.filePath);
-      if (abs.startsWith(path.resolve(LIBRARY_DIR))) {
-        await unlink(abs).catch(() => {});
+    const physicallyDelete = async () => {
+      // Delete the row before best-effort unlinking so a SQLite failure leaves
+      // both the PostgreSQL owner and bytes intact after transaction rollback.
+      deleteLibraryAsset(db, asset.id);
+      if (asset.storage === 'owned' && asset.filePath) {
+        const abs = path.resolve(asset.filePath);
+        if (abs.startsWith(path.resolve(LIBRARY_DIR))) await unlink(abs).catch(() => {});
       }
-    }
-    deleteLibraryAsset(db, asset.id);
+    };
+    // Content-addressed assets share one SQLite row and one file across owners.
+    // The final-owner callback runs while the registry's per-resource advisory
+    // transaction lock is still held, so another owner attach cannot slip into
+    // the gap between the ownership decision and physical deletion.
+    const release = ctx.resourceOwnerRegistry
+      ? await ctx.resourceOwnerRegistry.release('library_asset', asset.id, undefined, physicallyDelete)
+      : (await physicallyDelete(), { deleted: true, hasActiveOwners: false });
+    if (!release.deleted) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     emit('delete', { assetId: asset.id });
     res.json({ ok: true });
   });
 
   app.get('/api/library/assets/:id/raw', async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await ownedAsset(req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const abs = resolveAssetBytesPath(asset, PROJECTS_DIR);
     if (!abs) return sendApiError(res, 404, 'NOT_FOUND', 'asset bytes not available');
@@ -561,7 +650,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // downloadable JSON, importable via the OD Figma plugin. Reads ride loopback
   // same-origin like /raw; the clipper downloads its own captures directly.
   app.get('/api/library/assets/:id/figma', async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await ownedAsset(req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const sidecar = resolveAssetFigmaSidecarPath(asset, LIBRARY_DIR);
     if (!sidecar) return sendApiError(res, 404, 'NOT_FOUND', 'no figma capture for this asset');
@@ -584,7 +673,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // Serve the outerHTML sidecar of an element-pick screenshot. Read on demand
   // by the Library preview's "Element HTML" panel.
   app.get('/api/library/assets/:id/element', async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await ownedAsset(req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const sidecar = resolveAssetElementSidecarPath(asset, LIBRARY_DIR);
     if (!sidecar) return sendApiError(res, 404, 'NOT_FOUND', 'no element markup for this asset');
@@ -605,7 +694,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // --- apply to project (web / Insert from Library) ------------------------
 
   app.post('/api/library/assets/:id/apply', requireLocalDaemonRequest, async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await ownedAsset(req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const projectId = typeof req.body?.projectId === 'string' ? req.body.projectId : '';
     if (!projectId) return sendApiError(res, 400, 'BAD_REQUEST', 'projectId is required');
@@ -629,7 +718,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
   // user can edit it (srcDoc bridge + agent surgical edits) right away. This is
   // the clipper "capture → editable OD page" exit, driven from the Library.
   app.post('/api/library/assets/:id/edit-as-page', requireLocalDaemonRequest, async (req, res) => {
-    const asset = getLibraryAsset(db, req.params.id);
+    const asset = await ownedAsset(req.params.id);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     if (asset.kind !== 'html') {
       return sendApiError(res, 400, 'NOT_HTML', 'only html captures can be opened as an editable page');
@@ -707,7 +796,11 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (typeof body.kind === 'string') filter.kind = body.kind as LibraryAssetKind;
     if (typeof body.date === 'string') filter.date = body.date;
     filter.limit = Number.isFinite(body.limit) ? Number(body.limit) : 20;
-    const results = listLibraryAssets(db, filter).map((asset) => ({ asset: toPublicAsset(asset), score: 0 }));
+    const records = listLibraryAssets(db, filter);
+    const visibleIds = ctx.resourceOwnerRegistry
+      ? await ctx.resourceOwnerRegistry.filterVisibleIds('library_asset', records.map((asset) => asset.id))
+      : new Set(records.map((asset) => asset.id));
+    const results = records.filter((asset) => visibleIds.has(asset.id)).map((asset) => ({ asset: toPublicAsset(asset), score: 0 }));
     res.json({ results, semantic: false });
   });
 
@@ -716,7 +809,7 @@ export function registerLibraryRoutes(app: Express, ctx: RegisterLibraryRoutesDe
     if (!grant) return;
     const assetId = typeof req.body?.assetId === 'string' ? req.body.assetId : '';
     if (!assetId) return sendApiError(res, 400, 'BAD_REQUEST', 'assetId is required');
-    const asset = getLibraryAsset(db, assetId);
+    const asset = await ownedAsset(assetId);
     if (!asset) return sendApiError(res, 404, 'NOT_FOUND', 'asset not found');
     const projectId = grant.projectId ?? (typeof req.body?.projectId === 'string' ? req.body.projectId : '');
     if (!projectId) return sendApiError(res, 400, 'BAD_REQUEST', 'projectId is required');

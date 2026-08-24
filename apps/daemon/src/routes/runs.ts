@@ -28,6 +28,11 @@ import {
 } from '@open-design/contracts/analytics';
 import type { OdNativeEvent } from '@open-design/agui-adapter';
 import { newInsertId, readAnalyticsContext } from '../analytics.js';
+import {
+  assertProjectActive,
+  isProjectLifecycleError,
+  markProjectActive,
+} from '../project-lifecycle-gate.js';
 import type { AnalyticsContext } from '../analytics.js';
 import { spawnEnvForAgent } from '../agents.js';
 import { agentCliEnvForAgent, readAppConfig } from '../app-config.js';
@@ -42,6 +47,8 @@ import {
   readCodexRolloutFirstCall,
 } from '../codex-rollout-usage.js';
 import type { ConnectorService } from '../connectors/service.js';
+import type { BusinessFactsStore } from '../storage/business-facts.js';
+import type { BusinessFactsOutbox } from '../storage/business-facts-outbox.js';
 import {
   conversationTurnIndexForRun,
   getFirstProjectConversation,
@@ -108,6 +115,7 @@ import { deriveRunErrorCode, runResultFromStatus } from '../run-result.js';
 import type { RunStatusForAnalytics } from '../run-result.js';
 import {
   parseRunToolBundleForRequest,
+  rejectsClientMcpServers,
   validateRunToolBundleForAgent,
 } from '../run-tool-bundle.js';
 import type { DetectedAgent, RuntimeAgentDef } from '../runtimes/types.js';
@@ -476,6 +484,8 @@ interface RunProjectKindInput {
 
 export interface RegisterRunRoutesDeps {
   db: SqliteDb;
+  businessFacts?: BusinessFactsStore;
+  businessFactsOutbox?: BusinessFactsOutbox;
   design: RunRoutesDesignService;
   http: {
     createSseResponse: (res: Response) => SseResponse;
@@ -1217,6 +1227,14 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     if (!toolBundle.ok) {
       return sendApiError(res, 400, 'BAD_REQUEST', toolBundle.message);
     }
+    if (rejectsClientMcpServers() && toolBundle.bundle.mcpServers.length > 0) {
+      return sendApiError(
+        res,
+        400,
+        'BAD_REQUEST',
+        'Client-supplied MCP servers are not accepted in managed mode',
+      );
+    }
     if (!hasCompleteByokOpenCodeConfig(requestBody)) {
       return sendApiError(
         res,
@@ -1385,10 +1403,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     if (typeof meta.projectId === 'string' && meta.projectId) {
       try {
         runProject = toProjectRecord(getProject(db, meta.projectId));
+        // insertProject clears tombstones in a microtask so outer SQLite
+        // rollbacks cannot reactivate a missing project. A real row is also
+        // authoritative here, allowing an immediately-started same-id rebuild
+        // without opening a window for a deleted id that has no row.
+        if (runProject) markProjectActive(meta.projectId);
         assertSandboxProjectRootAvailable(runProject?.metadata);
       } catch (err) {
         if (err instanceof SandboxImportedProjectError) {
           return sendApiError(res, 400, 'BAD_REQUEST', err.message);
+        }
+        if (isProjectLifecycleError(err)) {
+          return sendApiError(res, 409, err.code, err.message);
         }
         throw err;
       }
@@ -1749,6 +1775,19 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       meta,
       resolvedSnapshot?.ok ? resolvedSnapshot.snapshot : null,
     );
+    // This check and run registration are in one synchronous turn. Once it
+    // passes, deletion cannot mark the project until createOrReuse has made the
+    // run visible to cancelRunsOwnedBy.
+    if (typeof meta.projectId === 'string' && meta.projectId) {
+      try {
+        assertProjectActive(meta.projectId);
+      } catch (error) {
+        if (isProjectLifecycleError(error)) {
+          return sendApiError(res, 409, error.code, error.message);
+        }
+        throw error;
+      }
+    }
     const creation = design.runs.createOrReuse(meta);
     if (creation.kind === 'conflict') {
       return sendApiError(
@@ -1855,6 +1894,23 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           'RUN_IN_PROGRESS',
           'assistantMessageId is already bound to an active run',
         );
+      }
+    }
+    if (run.projectId && run.conversationId && run.assistantMessageId) {
+      const projectedAt = Date.now();
+      try {
+        await ctx.businessFacts?.upsertMessage({
+          id: run.assistantMessageId,
+          conversationId: run.conversationId,
+          projectId: run.projectId,
+          runStatus: run.status,
+          createdAt: projectedAt,
+          updatedAt: projectedAt,
+        });
+      } catch (error) {
+        // A run must not start when its durable status fact cannot be written.
+        if (creation.kind === 'created') design.runs.drop(run);
+        throw error;
       }
     }
     const declaredClient = String(req.get('x-od-client') ?? '').toLowerCase();
@@ -2334,6 +2390,36 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           reqBody.model,
           userQueryTokens,
         );
+        if (run.projectId && run.conversationId && run.assistantMessageId) {
+          const projectedAt = Date.now();
+          await (ctx.businessFactsOutbox?.recordMessage({
+            id: run.assistantMessageId,
+            conversationId: run.conversationId,
+            projectId: run.projectId,
+            runStatus: status.status,
+            createdAt: run.createdAt,
+            updatedAt: projectedAt,
+          }, {
+            model: usageAnalytics.agent_reported_model
+              ?? (typeof reqBody.model === 'string' ? reqBody.model : null),
+            ...(usageAnalytics.input_tokens !== undefined ? { inputTokens: usageAnalytics.input_tokens } : {}),
+            ...(usageAnalytics.output_tokens !== undefined ? { outputTokens: usageAnalytics.output_tokens } : {}),
+            ...(usageAnalytics.thought_tokens !== undefined ? { reasoningTokens: usageAnalytics.thought_tokens } : {}),
+            ...(usageAnalytics.cache_read_input_tokens !== undefined ? { cacheReadTokens: usageAnalytics.cache_read_input_tokens } : {}),
+            ...(usageAnalytics.cache_creation_input_tokens !== undefined ? { cacheWriteTokens: usageAnalytics.cache_creation_input_tokens } : {}),
+            ...(usageAnalytics.total_tokens !== undefined ? { totalTokens: usageAnalytics.total_tokens } : {}),
+            ...(usageAnalytics.cost_usd !== undefined ? { costUsd: usageAnalytics.cost_usd } : {}),
+            ...(usageAnalytics.duration_ms !== undefined ? { durationMs: usageAnalytics.duration_ms } : {}),
+            createdAt: projectedAt,
+          }) ?? ctx.businessFacts?.upsertMessage({
+            id: run.assistantMessageId,
+            conversationId: run.conversationId,
+            projectId: run.projectId,
+            runStatus: status.status,
+            createdAt: run.createdAt,
+            updatedAt: projectedAt,
+          }));
+        }
         // Whether this run is a non-first turn in its conversation — i.e. a
         // prior completed assistant turn exists (excluding this run's own
         // placeholder). The session-reuse cache win only applies to follow-up
@@ -3078,6 +3164,14 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     if (!toolBundle.ok) {
       return sendApiError(res, 400, 'BAD_REQUEST', toolBundle.message);
     }
+    if (rejectsClientMcpServers() && toolBundle.bundle.mcpServers.length > 0) {
+      return sendApiError(
+        res,
+        400,
+        'BAD_REQUEST',
+        'Client-supplied MCP servers are not accepted in managed mode',
+      );
+    }
     let chatProject: ProjectRecord | null = null;
     if (typeof requestBody.projectId === 'string' && requestBody.projectId) {
       try {
@@ -3224,6 +3318,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       )
     ) return;
     meta.requestFingerprint = runRequestFingerprint(meta);
+    // Keep the lifecycle check adjacent to synchronous registration; no
+    // deletion mark can interleave between these statements.
+    if (typeof meta.projectId === 'string' && meta.projectId) {
+      try {
+        assertProjectActive(meta.projectId);
+      } catch (error) {
+        if (isProjectLifecycleError(error)) {
+          return sendApiError(res, 409, error.code, error.message);
+        }
+        throw error;
+      }
+    }
     const creation = design.runs.createOrReuse(meta);
     if (creation.kind === 'conflict') {
       return sendApiError(

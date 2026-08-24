@@ -1345,6 +1345,16 @@ async function consumeDaemonRun({
 
           const event = parsed as unknown as ChatSseEvent;
 
+          if (event.event === 'queued') {
+            const ahead = Math.max(0, Number(event.data.ahead ?? event.data.position - 1) || 0);
+            handlers.onAgentEvent({
+              kind: 'status',
+              label: '任务队列较忙，正在排队',
+              detail: ahead > 0 ? `前面还有 ${ahead} 个任务` : '即将开始',
+            });
+            continue;
+          }
+
           if (event.event === 'stdout') {
             const chunk = String(event.data.chunk ?? '');
             acc += chunk;
@@ -1418,6 +1428,14 @@ async function consumeDaemonRun({
             // hitting the exit-code/signal safety net later.
             serverDeclaredSuccess = event.data.status === 'succeeded';
             endStatus = isChatRunStatus(event.data.status) ? event.data.status : 'succeeded';
+            if (event.data.reason?.code) {
+              handlers.onAgentEvent({
+                kind: 'status',
+                label: 'run_end',
+                code: event.data.reason.code,
+                ...(event.data.reason.detail ? { detail: event.data.reason.detail } : {}),
+              });
+            }
             onRunStatus?.(endStatus);
           }
         }
@@ -1430,6 +1448,14 @@ async function consumeDaemonRun({
           exitCode = status.exitCode ?? null;
           exitSignal = status.signal ?? null;
           serverDeclaredSuccess = status.status === 'succeeded';
+          if (status.endReason?.code) {
+            handlers.onAgentEvent({
+              kind: 'status',
+              label: 'run_end',
+              code: status.endReason.code,
+              ...(status.endReason.detail ? { detail: status.endReason.detail } : {}),
+            });
+          }
           if (status.resumable === true) endResumable = true;
           // Carry the daemon failure classification off this terminal status
           // too — this error-frame-then-status recovery path breaks before the

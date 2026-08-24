@@ -329,7 +329,7 @@ describe('AssistantMessage tool status', () => {
     expect(container.querySelector('.op-status-done')).toBeNull();
   });
 
-  it('shows Canceled instead of Done when a canceled run has no activity card', () => {
+  it('shows the persisted manual-stop reason when a canceled run has no activity card', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -344,7 +344,7 @@ describe('AssistantMessage tool status', () => {
       />,
     );
 
-    expect(container.querySelector('.assistant-label')?.textContent).toBe('Canceled');
+    expect(container.querySelector('.assistant-label')?.textContent).toBe('Stopped manually');
   });
 
   it.each(['no_result', 'delivery_failed'] as const)(

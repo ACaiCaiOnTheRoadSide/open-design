@@ -22,7 +22,8 @@ import type {
   MemoryVerifyResult,
   MemoryVerifyRecord,
 } from '@open-design/contracts';
-import { memoryEvents } from './memory.js';
+import { memoryEvents, persistMemoryVerification } from './memory.js';
+import { scopeMemoryEvent } from './memory-events-scope.js';
 
 export interface ActiveRuleForVerify {
   name: string;
@@ -148,7 +149,7 @@ type VerifyEmit =
 function emit(record: VerifyEmit): void {
   setImmediate(() => {
     try {
-      memoryEvents.emit('verify', { ...record });
+      memoryEvents.emit('verify', scopeMemoryEvent({ ...record }));
     } catch {
       // SSE failures are not the enforcer's problem.
     }
@@ -172,6 +173,7 @@ export function recordVerify(
   };
   records.unshift(record);
   if (records.length > MAX_RECORDS) records.length = MAX_RECORDS;
+  persistMemoryVerification(record as unknown as Record<string, unknown>);
   emit(record);
   return record;
 }

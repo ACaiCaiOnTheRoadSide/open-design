@@ -16,6 +16,7 @@ import type {
   TrackingDesignSystemStatusValue,
 } from '@open-design/contracts/analytics';
 import { useI18n } from '../i18n';
+import { navigate } from '../router';
 import { useWorkspaceContext } from '../collab/useWorkspaceContext';
 import {
   beginWorkspaceResourceScopedRead,
@@ -53,6 +54,7 @@ import { useDesignKit } from '../runtime/design-kit';
 import { DesignKitView, HeaderActionsMenu, type DesignKitActionFeedbackTone, type HeaderMenuAction } from './DesignKitView';
 import { designSystemLogoHost, isUserSystem } from './design-system-metadata';
 import { Icon } from './Icon';
+import { confirm } from './confirm-dialog-host';
 import { Toast } from './Toast';
 import type { DesignSystemDetail, DesignSystemSummary, ProjectTemplate, Surface } from '../types';
 import styles from './DesignSystemsTab.module.css';
@@ -743,7 +745,12 @@ export function DesignSystemsTab({
 
   async function deleteSystem(system: DesignSystemSummary) {
     if (busyAction) return;
-    const ok = window.confirm(t('dsManager.deleteConfirm', { title: system.title }));
+    const ok = await confirm({
+      message: t('dsManager.deleteConfirm', { title: system.title }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
     if (!ok) {
       trackDesignSystemStatusResult(analytics.track, {
         page_name: 'design_systems',
@@ -917,6 +924,15 @@ export function DesignSystemsTab({
       <>
       <header className={styles.pageHeader} data-testid="design-systems-page-header">
         <div className={styles.pageTitleBlock}>
+          <button
+            type="button"
+            className={styles.backHome}
+            onClick={() => navigate({ kind: 'home', view: 'home' })}
+            aria-label={t('entry.backToHome')}
+            title={t('entry.backToHome')}
+          >
+            <Icon name="arrow-left" size={16} />
+          </button>
           <h1 className={styles.pageTitle}>{t('entry.navDesignSystems')}</h1>
         </div>
         <div className={styles.headerTools} data-testid="design-systems-header-tools" aria-hidden>
@@ -995,6 +1011,15 @@ export function DesignSystemsTab({
           button leaves the sidebar so the list column starts at the tabs. */}
       <header className={styles.pageHeader} data-testid="design-systems-page-header">
         <div className={styles.pageTitleBlock}>
+          <button
+            type="button"
+            className={styles.backHome}
+            onClick={() => navigate({ kind: 'home', view: 'home' })}
+            aria-label={t('entry.backToHome')}
+            title={t('entry.backToHome')}
+          >
+            <Icon name="arrow-left" size={16} />
+          </button>
           <h1 className={styles.pageTitle}>{t('entry.navDesignSystems')}</h1>
         </div>
         <div className={styles.headerTools} data-testid="design-systems-header-tools">

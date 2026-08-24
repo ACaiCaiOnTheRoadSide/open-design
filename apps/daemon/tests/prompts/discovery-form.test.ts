@@ -56,6 +56,13 @@ describe('discovery.ts — on-demand clarification policy', () => {
     );
   });
 
+  it('keeps the Pinterest design-reference pagination and selection contract', () => {
+    expect(DISCOVERY_AND_PHILOSOPHY).toContain('--max-sources 20 --providers pinterest');
+    expect(DISCOVERY_AND_PHILOSOPHY).toContain('<design-references>');
+    expect(DISCOVERY_AND_PHILOSOPHY).toContain('"pageSize":3');
+    expect(DISCOVERY_AND_PHILOSOPHY).toContain('[design reference selected — none — 都不喜欢]');
+  });
+
   it('emits a complete form before tools only after clarification is needed', () => {
     expect(DISCOVERY_AND_PHILOSOPHY).toContain(
       'When a form is needed, emit the complete block before TodoWrite, file writes, Bash, or other native tools',

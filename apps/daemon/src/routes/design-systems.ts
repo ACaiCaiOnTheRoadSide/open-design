@@ -29,6 +29,9 @@ import {
   type WorkspaceResourceAccessInput,
 } from '../collab/workspace-resource-mutation.js';
 import type { Project, ProjectFile } from '@open-design/contracts';
+import { captureVerifiedPrincipal, type BrandDesignSystemRegistry } from '../storage/brand-design-system-registry.js';
+import type { VerifiedPrincipal } from '../request-context.js';
+import type { SyncResourceNamespace } from '../sync/engine.js';
 
 type DbHandle = ReturnType<typeof openDatabase>;
 
@@ -157,6 +160,12 @@ export interface RegisterDesignSystemRoutesDeps extends RouteDeps<'db' | 'paths'
      */
     unshareTeamDesignSystemIfShared: (id: string, req: any) => Promise<boolean>;
   };
+  registry?: BrandDesignSystemRegistry;
+  resourceSync?: {
+    hydrate: (namespace: SyncResourceNamespace, id: string, options?: { ifMissing?: boolean }) => Promise<unknown>;
+    markDirty: (namespace: SyncResourceNamespace, id: string) => void;
+    dropState: (namespace: SyncResourceNamespace, id: string) => Promise<void>;
+  };
   generationJobs: {
     get: (jobId: string) => DesignSystemGenerationJob | null;
     rebuildTokenContract: (input: DesignSystemTokenContractRebuildInput) => DesignSystemGenerationJob;
@@ -226,9 +235,26 @@ export function registerDesignSystemRoutes(
     updateUserDesignSystemRevisionStatus,
   } = ctx.designSystems;
   const designSystemGenerationJobs = ctx.generationJobs;
+  const registry = ctx.registry;
+  const sync = ctx.resourceSync;
+  const isUserDesignSystem = (id: string) => id.startsWith('user:');
+  const principalAtAdmission = (): Readonly<VerifiedPrincipal> | undefined =>
+    registry?.enabled ? captureVerifiedPrincipal() : undefined;
+  const ensureRegistryRead = async (res: Response, id: string, principal?: Readonly<VerifiedPrincipal>) => {
+    if (!registry?.enabled || !isUserDesignSystem(id)) return true;
+    if (await registry.owns('design_system', id, principal)) return true;
+    res.status(404).json({ error: 'design system not found' });
+    return false;
+  };
+  const hydrateForRead = async (id: string) => {
+    if (sync && isUserDesignSystem(id)) await sync.hydrate('design-system', id.slice('user:'.length), { ifMissing: true });
+  };
+  const markDesignSystemDirty = (id: string) => {
+    if (sync && isUserDesignSystem(id)) sync.markDirty('design-system', id.slice('user:'.length));
+  };
   const generationJobScopes = new Map<
     string,
-    { workspaceId: string; workspaceMemberId: string } | null
+    { workspaceId: string; workspaceMemberId: string; tenantId?: string } | { tenantId: string } | null
   >();
 
   const getBoundDesignSystem = (
@@ -285,6 +311,9 @@ export function registerDesignSystemRoutes(
     id: string,
     allowNavigationQuery = false,
   ): Promise<boolean> {
+    const principal = principalAtAdmission();
+    if (!(await ensureRegistryRead(res, id, principal))) return false;
+    await hydrateForRead(id);
     const scopedRequest = allowNavigationQuery
       ? requestWithWorkspaceNavigationScope(req)
       : req;
@@ -380,6 +409,9 @@ export function registerDesignSystemRoutes(
     res: Response,
     id: string,
   ): Promise<boolean> {
+    const principal = principalAtAdmission();
+    if (!(await ensureRegistryRead(res, id, principal))) return false;
+    await hydrateForRead(id);
     const resolution = resolveOptionalLocalWorkspaceRequestAuthority(req);
     if (!resolution.ok) {
       res.status(resolution.status).json({
@@ -478,12 +510,18 @@ export function registerDesignSystemRoutes(
   ): Promise<boolean> {
     const scope = generationJobScopes.get(job.id);
     if (scope) {
+      const principal = principalAtAdmission();
+      if ('tenantId' in scope && principal?.tenantId !== scope.tenantId) {
+        res.status(404).json({ error: 'design system generation job not found' });
+        return false;
+      }
       const resolution = await resolveGenerationJobScope(req, res);
       if (resolution === 'denied') return false;
       if (
-        !resolution
+        'workspaceId' in scope
+        && (!resolution
         || resolution.workspaceId !== scope.workspaceId
-        || resolution.workspaceMemberId !== scope.workspaceMemberId
+        || resolution.workspaceMemberId !== scope.workspaceMemberId)
       ) {
         res.status(403).json({ error: 'WORKSPACE_DESIGN_SYSTEM_PERMISSION_DENIED' });
         return false;
@@ -515,12 +553,23 @@ export function registerDesignSystemRoutes(
   }
 
   app.post('/api/design-systems', async (req, res) => {
+    const principal = principalAtAdmission();
     try {
       const created = await createUserDesignSystem(
         USER_DESIGN_SYSTEMS_DIR,
         req.body || {},
         req,
       );
+      try {
+        await registry?.register({
+          resourceType: 'design_system', resourceId: created.id,
+          slug: created.id.replace(/^user:/u, ''), name: created.title,
+        }, principal);
+      } catch (error) {
+        await deleteUserDesignSystem(USER_DESIGN_SYSTEMS_DIR, created.id);
+        throw error;
+      }
+      markDesignSystemDirty(created.id);
       res.status(201).json({ ...created as object, designSystem: created });
     } catch (err) {
       if (sendWorkspaceScopeError(res, err)) return;
@@ -529,14 +578,24 @@ export function registerDesignSystemRoutes(
   });
 
   app.post('/api/design-systems/generation-jobs', async (req, res) => {
+    const principal = principalAtAdmission();
     try {
       const scope = await resolveGenerationJobScope(req, res);
       if (scope === 'denied') return;
+      const tenantScope = principal?.tenantId ? { ...(scope ?? {}), tenantId: principal.tenantId } : scope;
       const job = designSystemGenerationJobs.start(
         req.body || {},
-        (root, input) => createUserDesignSystem(root, input, req),
+        async (root, input) => {
+          const created = await createUserDesignSystem(root, input, req);
+          await registry?.register({
+            resourceType: 'design_system', resourceId: created.id,
+            slug: created.id.replace(/^user:/u, ''), name: created.title,
+          }, principal);
+          markDesignSystemDirty(created.id);
+          return created;
+        },
       );
-      generationJobScopes.set(job.id, scope);
+      generationJobScopes.set(job.id, tenantScope);
       res.status(202).json({ job });
     } catch (err) {
       res.status(400).json({ error: String(err) });
@@ -561,6 +620,8 @@ export function registerDesignSystemRoutes(
       if (!(await authorizeDesignSystemMutation(req, res, req.params.id))) return;
       const scope = await resolveGenerationJobScope(req, res);
       if (scope === 'denied') return;
+      const principal = principalAtAdmission();
+      const tenantScope = principal?.tenantId ? { ...(scope ?? {}), tenantId: principal.tenantId } : scope;
       const storage = resolveDesignSystemStorage(req, req.params.id);
       const feedback = typeof req.body?.feedback === 'string' ? req.body.feedback : '';
       if (!feedback.trim()) return res.status(400).json({ error: 'feedback is required' });
@@ -571,7 +632,8 @@ export function registerDesignSystemRoutes(
         sectionTitle: typeof req.body?.sectionTitle === 'string' ? req.body.sectionTitle : undefined,
         body: typeof req.body?.body === 'string' ? req.body.body : undefined,
       });
-      generationJobScopes.set(job.id, scope);
+      generationJobScopes.set(job.id, tenantScope);
+      markDesignSystemDirty(req.params.id);
       res.status(202).json({ job });
     } catch (err) {
       res.status(400).json({ error: String(err) });
@@ -583,6 +645,8 @@ export function registerDesignSystemRoutes(
       if (!(await authorizeDesignSystemMutation(req, res, req.params.id))) return;
       const scope = await resolveGenerationJobScope(req, res);
       if (scope === 'denied') return;
+      const principal = principalAtAdmission();
+      const tenantScope = principal?.tenantId ? { ...(scope ?? {}), tenantId: principal.tenantId } : scope;
       const storage = resolveDesignSystemStorage(req, req.params.id);
       const preparation = await prepareDesignTokenContractRebuild(
         storage.root,
@@ -601,7 +665,8 @@ export function registerDesignSystemRoutes(
         decision: preparation.decision,
         ...preparation.revision,
       });
-      generationJobScopes.set(job.id, scope);
+      generationJobScopes.set(job.id, tenantScope);
+      markDesignSystemDirty(req.params.id);
       res.status(202).json({ decision: preparation.decision, job });
     } catch (err) {
       res.status(400).json({ error: String(err) });
@@ -652,6 +717,7 @@ export function registerDesignSystemRoutes(
       if (!revision) {
         return res.status(404).json({ error: 'design system revision not found' });
       }
+      markDesignSystemDirty(req.params.id);
       res.json({ revision });
     } catch (err) {
       res.status(400).json({ error: String(err) });
@@ -898,6 +964,8 @@ export function registerDesignSystemRoutes(
       if (!updated) {
         return res.status(404).json({ error: 'editable design system not found' });
       }
+      await registry?.rename('design_system', req.params.id, updated.title, principalAtAdmission());
+      markDesignSystemDirty(req.params.id);
       res.json({ ...updated as object, designSystem: updated });
     } catch (err) {
       res.status(400).json({ error: String(err) });
@@ -938,6 +1006,7 @@ export function registerDesignSystemRoutes(
         // write and run-end.
         return res.json({ synced: [] });
       }
+      markDesignSystemDirty(req.params.id);
       res.json({ synced: outcome.synced });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -968,6 +1037,11 @@ export function registerDesignSystemRoutes(
       // aborts before `deleteUserDesignSystem` runs, matching "unshare must
       // succeed before the local delete proceeds".
       await unshareTeamDesignSystemIfShared(id, req);
+      const principal = principalAtAdmission();
+      if (registry?.enabled && !(await registry.softDelete('design_system', id, principal))) {
+        res.status(404).json({ error: 'editable design system not found' });
+        return false;
+      }
       const ok = await deleteUserDesignSystem(storage.root, id);
       if (!ok) {
         res.status(404).json({ error: 'editable design system not found' });
@@ -979,6 +1053,7 @@ export function registerDesignSystemRoutes(
       // no ON DELETE CASCADE, so skipping this leaves an orphan row pointing
       // at a design system that no longer exists on disk.
       deleteWorkspaceResourceByResourceId(db, 'design_system', storage.bindingResourceId);
+      if (sync && isUserDesignSystem(id)) await sync.dropState('design-system', id.slice('user:'.length));
       return true;
     } catch (err) {
       if (sendWorkspaceScopeError(res, err)) return false;

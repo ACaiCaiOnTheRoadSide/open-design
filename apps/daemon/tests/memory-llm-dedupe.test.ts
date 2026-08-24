@@ -6,7 +6,7 @@ import {
   extractWithLLM,
   __resetMemoryTurnDedupeForTests,
 } from '../src/memory-llm.js';
-import { memoryDir, writeMemoryConfig } from '../src/memory.js';
+import { listMemoryEntries, memoryDir, readMemoryEntry, writeMemoryConfig } from '../src/memory.js';
 import { __resetExtractionsForTests } from '../src/memory-extractions.js';
 import { createClaudeStreamHandler } from '../src/runtimes/claude-stream.js';
 
@@ -141,6 +141,27 @@ describe('memory-llm chat extraction: duplicate-turn gate + reply serialization'
     await extractWithLLM(dataDir, turn, { projectRoot: process.cwd() });
 
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps legacy SQLite behavior when the model selects project scope', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ entries: [{
+        type: 'project', scope: 'project', name: 'Legacy project fact',
+        description: 'SQLite remains global', body: 'Persist this legacy fact.',
+      }] }) } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+
+    const written = await extractWithLLM(dataDir, {
+      userMessage: 'Remember this project fact.', assistantMessage: 'Understood.',
+    }, { projectRoot: process.cwd(), conversationId: 'sqlite-project-scope' });
+    expect(written).toHaveLength(1);
+    expect(written[0]).not.toHaveProperty('projectId');
+    const entries = await listMemoryEntries(dataDir);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).not.toHaveProperty('projectId');
+    const detail = await readMemoryEntry(dataDir, entries[0]!.id);
+    expect(detail?.body).toContain('Persist this legacy fact.');
+    expect(detail).not.toHaveProperty('projectId');
   });
 
   it('feeds the rendered reply — not raw stream transport — as "## Assistant reply"', async () => {

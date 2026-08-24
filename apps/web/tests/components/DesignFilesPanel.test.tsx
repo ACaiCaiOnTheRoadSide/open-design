@@ -10,6 +10,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 
+vi.mock("../../src/providers/raw-token", () => ({ useRawToken: () => null }));
+
 import { CollabProvider } from "../../src/collab/collab-context";
 import {
   DesignFilesPanel,

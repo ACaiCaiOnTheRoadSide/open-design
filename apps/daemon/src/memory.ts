@@ -23,8 +23,27 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import type Database from 'better-sqlite3';
 import { MEMORY_TYPES, PROFILE_MEMORY_ID, parseFormAnswers } from '@open-design/contracts';
 import { parseFrontmatter } from './design-systems/frontmatter.js';
+import { MemoryInputError, MemoryNotFoundError } from './memory-errors.js';
+import { validateMemoryProjectId, type TrustedMemoryScope } from './memory-scope.js';
+import { scopeMemoryEvent } from './memory-events-scope.js';
+import {
+  isProjectLifecycleError,
+  runProjectMemoryWrite,
+} from './project-lifecycle-gate.js';
+export { MemoryInputError, MemoryNotFoundError, ProjectMemoryScopeUnverifiedError } from './memory-errors.js';
+export { TrustedMemoryScope } from './memory-scope.js';
+import {
+  createPostgresMemoryStore,
+  type PostgresMemoryStore,
+} from './storage/postgres-memory-store.js';
+import { requireRequestContext } from './request-context.js';
+import {
+  createMemoryHistoryOutbox,
+  type MemoryHistoryOutbox,
+} from './storage/memory-history-outbox.js';
 // Imported lazily through the memory-extractions module by the call
 // sites below so a future test-only build of memory.ts that stubs the
 // store can still tree-shake the ring buffer. We use a static import
@@ -86,7 +105,7 @@ const VALID_SOURCES = new Set<string>([
 ]);
 
 function emitChange(event: Omit<MemoryChangeEvent, 'at'>): void {
-  memoryEvents.emit('change', { ...event, at: Date.now() });
+  memoryEvents.emit('change', scopeMemoryEvent({ ...event, at: Date.now() }));
 }
 
 const INDEX_FILE = 'MEMORY.md';
@@ -106,6 +125,111 @@ new chats; the underlying fact file stays on disk so you can paste it
 back if you change your mind.
 
 `;
+
+let postgresMemoryStore: PostgresMemoryStore | undefined;
+let memoryHistoryOutbox: MemoryHistoryOutbox | undefined;
+
+function usePostgresMemory(): boolean {
+  return (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase() === 'postgres';
+}
+
+function pgMemoryStore(): PostgresMemoryStore {
+  postgresMemoryStore ??= createPostgresMemoryStore();
+  return postgresMemoryStore;
+}
+
+/** Test seam for the exported persistence boundary; passing undefined restores production laziness. */
+export function __setPostgresMemoryStoreForTests(store: PostgresMemoryStore | undefined): void {
+  postgresMemoryStore = store;
+}
+
+export function configureMemoryHistoryOutbox(db: Database.Database): void {
+  memoryHistoryOutbox?.stop();
+  memoryHistoryOutbox = createMemoryHistoryOutbox(db, pgMemoryStore());
+}
+
+export function persistMemoryExtraction(record: Record<string, unknown>): Promise<void> {
+  if (!usePostgresMemory()) return Promise.resolve();
+  if (!memoryHistoryOutbox) throw new Error('Memory history outbox is not configured');
+  memoryHistoryOutbox.enqueue('extraction', requireRequestContext(), record);
+  return Promise.resolve();
+}
+
+export function persistMemoryVerification(record: Record<string, unknown>): Promise<void> {
+  if (!usePostgresMemory()) return Promise.resolve();
+  if (!memoryHistoryOutbox) throw new Error('Memory history outbox is not configured');
+  memoryHistoryOutbox.enqueue('verification', requireRequestContext(), record);
+  return Promise.resolve();
+}
+
+/** Project durable FIFO rows before the shared pool is closed. */
+export async function drainMemoryHistoryWrites(): Promise<void> {
+  await memoryHistoryOutbox?.drain();
+}
+
+export function stopMemoryHistoryOutbox(): void {
+  memoryHistoryOutbox?.stop();
+  memoryHistoryOutbox = undefined;
+}
+
+export async function listPersistedMemoryExtractions(options: {
+  limit?: number; cursor?: string; phase?: string;
+} = {}) {
+  return pgMemoryStore().listExtractions(options);
+}
+
+export async function removePersistedMemoryExtraction(id: string): Promise<number> {
+  if (!memoryHistoryOutbox) throw new Error('Memory history outbox is not configured');
+  return memoryHistoryOutbox.enqueueDelete('extraction', requireRequestContext(), id);
+}
+
+export async function clearPersistedMemoryExtractions(): Promise<number> {
+  if (!memoryHistoryOutbox) throw new Error('Memory history outbox is not configured');
+  return memoryHistoryOutbox.enqueueClear('extraction', requireRequestContext());
+}
+
+export async function listPersistedMemoryVerifications(options: {
+  limit?: number; cursor?: string; status?: string;
+} = {}) {
+  return pgMemoryStore().listVerifications(options);
+}
+
+export async function removePersistedMemoryVerification(id: string): Promise<number> {
+  if (!memoryHistoryOutbox) throw new Error('Memory history outbox is not configured');
+  return memoryHistoryOutbox.enqueueDelete('verification', requireRequestContext(), id);
+}
+
+export async function clearPersistedMemoryVerifications(): Promise<number> {
+  if (!memoryHistoryOutbox) throw new Error('Memory history outbox is not configured');
+  return memoryHistoryOutbox.enqueueClear('verification', requireRequestContext());
+}
+
+/**
+ * Project-lifecycle cleanup. SQLite is deliberately a strict no-op: it neither
+ * validates project ids nor derives/touches any memory filesystem path.
+ */
+export async function deleteProjectMemoryForCurrentPrincipal(projectIds: readonly string[]): Promise<void> {
+  if (!usePostgresMemory()) return;
+  await pgMemoryStore().deleteProjectEntriesAndIndexForCurrentPrincipal(projectIds);
+}
+
+function publicMemoryEntry(entry) {
+  return {
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    type: entry.type,
+    ...(entry.source === undefined ? {} : { source: entry.source }),
+    ...(Object.prototype.hasOwnProperty.call(entry, 'projectId') ? { projectId: entry.projectId ?? null } : {}),
+    updatedAt: entry.updatedAt,
+    body: entry.body,
+  };
+}
+
+function publicMemorySummary(entry) {
+  const { body: _body, createdAt: _createdAt, ...summary } = publicMemoryEntry(entry);
+  return summary;
+}
 
 export function memoryDir(dataDir) {
   return path.join(dataDir, 'memory');
@@ -144,6 +268,24 @@ export function deriveMemoryId(type, name) {
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return `${safeType}_n${h.toString(36)}`;
+}
+
+function scopedProjectMemoryId(type, name, projectId) {
+  const base = deriveMemoryId(type, name);
+  const stableHash = (value) => {
+    let h = 0x811c9dc5 >>> 0;
+    for (let i = 0; i < value.length; i++) {
+      h = (h ^ value.charCodeAt(i)) >>> 0;
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(36);
+  };
+  // Keep the readable prefix, but hash both the untruncated logical name and
+  // the project. This prevents same-project collisions when two names share
+  // deriveMemoryId's 48-character prefix. Hashes also avoid disclosing ids.
+  const nameHash = stableHash(`${type}\0${String(name ?? '')}`);
+  const projectHash = stableHash(String(projectId));
+  return `${base.slice(0, 76)}_n${nameHash}_p${projectHash}`.slice(0, 96);
 }
 
 function entryPath(dataDir, id) {
@@ -195,7 +337,30 @@ function normalizeExtractionPatch(input) {
   return out;
 }
 
+const DEFAULT_MEMORY_CONFIG = {
+  enabled: true,
+  chatExtractionEnabled: false,
+  profileEnabled: true,
+  rewriteEnabled: true,
+  verifyEnabled: true,
+  extraction: null,
+};
+
+function normalizeMemoryConfig(parsed) {
+  return {
+    enabled: parsed?.enabled !== false,
+    chatExtractionEnabled: parsed?.chatExtractionEnabled === true,
+    profileEnabled: parsed?.profileEnabled !== false,
+    rewriteEnabled: parsed?.rewriteEnabled !== false,
+    verifyEnabled: parsed?.verifyEnabled !== false,
+    extraction: normalizeExtractionPatch(parsed?.extraction),
+  };
+}
+
 export async function readMemoryConfig(dataDir) {
+  if (usePostgresMemory()) {
+    return normalizeMemoryConfig(await pgMemoryStore().readConfig());
+  }
   try {
     const raw = await fsp.readFile(configPath(dataDir), 'utf8');
     const parsed = JSON.parse(raw);
@@ -239,6 +404,26 @@ export async function readMemoryConfig(dataDir) {
 // untouched. The three per-hook booleans default-on and only flip when an
 // explicit boolean is supplied.
 export async function writeMemoryConfig(dataDir, patch) {
+  if (usePostgresMemory()) {
+    const atomicPatch = {};
+    for (const key of ['enabled', 'chatExtractionEnabled', 'profileEnabled', 'rewriteEnabled', 'verifyEnabled']) {
+      if (typeof patch?.[key] === 'boolean') atomicPatch[key] = patch[key];
+    }
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'extraction')) {
+      atomicPatch.extraction = patch.extraction === null ? null : normalizeExtractionPatch(patch.extraction);
+    }
+    const result = await pgMemoryStore().patchConfig(atomicPatch, DEFAULT_MEMORY_CONFIG);
+    const current = normalizeMemoryConfig(result.previous);
+    const next = normalizeMemoryConfig(result.config);
+    if (
+      current.enabled !== next.enabled
+      || current.chatExtractionEnabled !== next.chatExtractionEnabled
+      || current.profileEnabled !== next.profileEnabled
+      || current.rewriteEnabled !== next.rewriteEnabled
+      || current.verifyEnabled !== next.verifyEnabled
+    ) emitChange({ kind: 'config', enabled: next.enabled });
+    return next;
+  }
   const current = await readMemoryConfig(dataDir);
   const next = {
     enabled:
@@ -312,6 +497,7 @@ export function maskMemoryExtractionConfig(extraction) {
 }
 
 export async function readMemoryIndex(dataDir) {
+  if (usePostgresMemory()) return (await pgMemoryStore().readIndex()) ?? DEFAULT_INDEX;
   try {
     return await fsp.readFile(indexPath(dataDir), 'utf8');
   } catch {
@@ -320,8 +506,12 @@ export async function readMemoryIndex(dataDir) {
 }
 
 export async function writeMemoryIndex(dataDir, body, options) {
-  await ensureDir(memoryDir(dataDir));
-  await fsp.writeFile(indexPath(dataDir), String(body ?? ''));
+  if (usePostgresMemory()) {
+    await pgMemoryStore().writeIndex(String(body ?? ''));
+  } else {
+    await ensureDir(memoryDir(dataDir));
+    await fsp.writeFile(indexPath(dataDir), String(body ?? ''));
+  }
   if (!options?.silent) emitChange({ kind: 'index' });
 }
 
@@ -344,6 +534,9 @@ function summarize(id, raw, mtime) {
 }
 
 export async function listMemoryEntries(dataDir) {
+  if (usePostgresMemory()) {
+    return (await pgMemoryStore().listEntries()).map(publicMemorySummary);
+  }
   const dir = memoryDir(dataDir);
   let names = [];
   try {
@@ -383,8 +576,13 @@ function memoryTreeFolderId(type) {
   return `folder:${type}`;
 }
 
-function memoryTreeScopeForType(type) {
-  return type === 'project' ? 'project' : 'global';
+function memoryTreeScopeForEntry(entry) {
+  // PostgreSQL always exposes projectId (null means global). SQLite omits it,
+  // preserving the legacy type-derived tree semantics byte-for-byte.
+  if (Object.prototype.hasOwnProperty.call(entry, 'projectId')) {
+    return entry.projectId ? 'project' : 'global';
+  }
+  return entry.type === 'project' ? 'project' : 'global';
 }
 
 function toIsoTime(ms) {
@@ -427,7 +625,7 @@ export async function buildMemoryTree(dataDir) {
       description: `${capitalize(type)} memory`,
       kind: 'folder',
       type,
-      scope: memoryTreeScopeForType(type),
+      scope: type === 'project' ? 'project' : 'global',
       sourcePacketIds: [],
       proposalIds: [],
       createdAt: toIsoTime(folderUpdatedAt),
@@ -445,7 +643,7 @@ export async function buildMemoryTree(dataDir) {
         description: entry.description,
         kind: 'entry',
         type: entry.type,
-        scope: memoryTreeScopeForType(entry.type),
+        scope: memoryTreeScopeForEntry(entry),
         sourcePacketIds: extractAutomationRefs(detailBody, 'Source packet'),
         proposalIds: extractAutomationRefs(detailBody, 'Proposal'),
         createdAt: toIsoTime(entry.updatedAt),
@@ -458,6 +656,10 @@ export async function buildMemoryTree(dataDir) {
 }
 
 export async function readMemoryEntry(dataDir, id) {
+  if (usePostgresMemory()) {
+    const entry = await pgMemoryStore().readEntry(id);
+    return entry ? publicMemoryEntry(entry) : null;
+  }
   let raw;
   let stat;
   try {
@@ -482,12 +684,12 @@ function renderEntryFile(name, description, type, body, source) {
   return `---\nname: ${safeName}\ndescription: ${safeDesc}\ntype: ${safeType}\nsource: ${safeSource}\n---\n\n${trimmedBody}\n`;
 }
 
-export async function updateMemoryTreeNode(dataDir, id, patch) {
+export async function updateMemoryTreeNode(dataDir, id, patch, options = {}) {
   if (typeof id !== 'string' || id.startsWith('folder:')) {
-    throw new Error('memory tree folders are derived and cannot be edited');
+    throw new MemoryInputError('memory tree folders are derived and cannot be edited');
   }
   const current = await readMemoryEntry(dataDir, id);
-  if (!current) throw new Error('memory not found');
+  if (!current) throw new MemoryNotFoundError();
   const nextType = isValidType(patch?.type) ? patch.type : current.type;
   return upsertMemoryEntry(dataDir, {
     id,
@@ -501,17 +703,77 @@ export async function updateMemoryTreeNode(dataDir, id, patch) {
         : current.description,
     type: nextType,
     body: typeof patch?.body === 'string' ? patch.body : current.body,
+    // Omission is preserved through to PostgreSQL so the conflict update can
+    // resolve scope from the row it has actually locked.
+    ...(Object.prototype.hasOwnProperty.call(patch ?? {}, 'projectId') ? { projectId: patch.projectId } : {}),
+  }, {
+    ...options,
+    ...(typeof current.projectId === 'string' ? { lifecycleProjectId: current.projectId } : {}),
   });
 }
 
-export async function upsertMemoryEntry(dataDir, input, options) {
+export async function upsertMemoryEntry(dataDir, input, options = {}) {
   const { name, description, type, body } = input || {};
   if (!name || !isValidType(type)) {
-    throw new Error('memory entry requires `name` and a valid `type`');
+    throw new MemoryInputError('memory entry requires `name` and a valid `type`');
   }
-  const id = input?.id && /^[a-z0-9_]+$/.test(input.id)
-    ? input.id
-    : deriveMemoryId(type, name);
+  const explicitId = input?.id && /^[a-z0-9_]+$/.test(input.id) ? input.id : null;
+  const hasRequestedProjectId = Object.prototype.hasOwnProperty.call(input ?? {}, 'projectId');
+  const requestedProjectId = hasRequestedProjectId
+    ? (input.projectId === null || input.projectId === undefined
+      ? null
+      : validateMemoryProjectId(input.projectId))
+    : undefined;
+  const id = explicitId
+    ?? (usePostgresMemory() && requestedProjectId
+      ? scopedProjectMemoryId(type, name, requestedProjectId)
+      : deriveMemoryId(type, name));
+  if (usePostgresMemory()) {
+    const store = pgMemoryStore();
+    // Omission means "keep" on conflict and null on insert. PostgreSQL resolves
+    // that distinction while holding the conflicting row lock.
+    const projectId = hasRequestedProjectId ? requestedProjectId : null;
+    const now = Date.now();
+    const safeName = String(name || 'Untitled').replace(/\r?\n/g, ' ').trim();
+    const safeDescription = String(description || '').replace(/\r?\n/g, ' ').trim();
+    const source = VALID_SOURCES.has(options?.source) ? options.source : 'manual';
+    const line = safeDescription
+      ? `- [${safeName}](${id}.md) — ${safeDescription}`
+      : `- [${safeName}](${id}.md)`;
+    const write = () => store.upsertEntryAndIndex({
+      id,
+      name: safeName,
+      description: safeDescription,
+      type,
+      source,
+      projectId,
+      body: String(body || '').replace(/^\s+/, ''),
+      createdAt: now,
+      updatedAt: now,
+    }, line, DEFAULT_INDEX, {
+      preserveScope: !hasRequestedProjectId,
+      requireGlobalExisting: options?.requireGlobalExisting === true,
+    });
+    // Explicit project scope takes precedence. Updates that preserve or remove
+    // an existing project scope can provide its lifecycle id separately without
+    // copying that scope into the input (preserveScope must remain atomic).
+    const lifecycleProjectId = typeof requestedProjectId === 'string'
+      ? requestedProjectId
+      : typeof options?.lifecycleProjectId === 'string'
+        ? options.lifecycleProjectId
+        : null;
+    const saved = lifecycleProjectId
+      ? await runProjectMemoryWrite(lifecycleProjectId, write)
+      : await write();
+    const entry = publicMemoryEntry(saved);
+    if (!options?.silent) {
+      emitChange({
+        kind: 'upsert', id: entry.id, name: entry.name,
+        description: entry.description, type: entry.type, projectId: entry.projectId, source,
+      });
+    }
+    return entry;
+  }
   await ensureDir(memoryDir(dataDir));
   await fsp.writeFile(
     entryPath(dataDir, id),
@@ -533,7 +795,14 @@ export async function upsertMemoryEntry(dataDir, input, options) {
   return entry;
 }
 
-export async function deleteMemoryEntry(dataDir, id) {
+export async function deleteMemoryEntry(dataDir, id, options = {}) {
+  if (usePostgresMemory()) {
+    await pgMemoryStore().deleteEntryAndIndex(id, DEFAULT_INDEX, {
+      requireGlobal: options?.requireGlobal === true,
+    });
+    emitChange({ kind: 'delete', id });
+    return;
+  }
   try {
     await fsp.unlink(entryPath(dataDir, id));
   } catch {
@@ -617,15 +886,32 @@ async function removeIndexLine(dataDir, id) {
 // disk (paste the line back in the settings panel to re-enable it).
 // Without this filter, deleted index lines had no effect — the daemon
 // kept reading every entry file and the index editor was cosmetic only.
-export async function composeMemoryBody(dataDir) {
-  const cfg = await readMemoryConfig(dataDir);
+export async function composeMemoryBody(dataDir, scope?: TrustedMemoryScope) {
+  let cfg;
+  let allEntries;
+  let indexBody;
+  let snapshotBodies = null;
+  if (usePostgresMemory()) {
+    const snapshot = await pgMemoryStore().readCompositionSnapshot(
+      scope ? { projectId: scope.projectId } : {},
+    );
+    cfg = normalizeMemoryConfig(snapshot.config);
+    allEntries = snapshot.entries;
+    indexBody = snapshot.index ?? DEFAULT_INDEX;
+    snapshotBodies = new Map(snapshot.entries.map((entry) => [entry.id, entry.body]));
+  } else {
+    cfg = await readMemoryConfig(dataDir);
+    allEntries = await listMemoryEntries(dataDir);
+    indexBody = await readMemoryIndex(dataDir);
+  }
   if (!cfg.enabled) return '';
-  const allEntries = await listMemoryEntries(dataDir);
   if (allEntries.length === 0) return '';
-  const indexBody = await readMemoryIndex(dataDir);
   const linkedIds = parseIndexLinkIds(indexBody);
   const entries = allEntries.filter((e) => linkedIds.has(e.id));
   if (entries.length === 0) return '';
+  const readComposedBody = (id) => snapshotBodies === null
+    ? readEntryBodyById(dataDir, id)
+    : Promise.resolve(snapshotBodies.get(id) ?? '');
   const grouped = new Map();
   for (const e of entries) {
     const list = grouped.get(e.type) ?? [];
@@ -651,7 +937,7 @@ export async function composeMemoryBody(dataDir) {
       // `**name** — description` shape the other buckets use.
       parts.push('### Profile');
       for (const e of grouped.get(type) ?? []) {
-        const body = await readEntryBodyById(dataDir, e.id);
+        const body = await readComposedBody(e.id);
         if (!body) continue;
         const lines = body.trim().split(/\r?\n/);
         for (const line of lines) {
@@ -667,7 +953,7 @@ export async function composeMemoryBody(dataDir) {
       // from its body so the verifier can score the output against the Check.
       parts.push('### Verified rules');
       for (const e of grouped.get(type) ?? []) {
-        const body = await readEntryBodyById(dataDir, e.id);
+        const body = await readComposedBody(e.id);
         if (!body) continue;
         parts.push(`- **${e.name}** — ${e.description || '(no description)'}`);
         const indented = body
@@ -682,7 +968,7 @@ export async function composeMemoryBody(dataDir) {
     }
     parts.push(`### ${capitalize(type)}`);
     for (const e of grouped.get(type) ?? []) {
-      const body = await readEntryBodyById(dataDir, e.id);
+      const body = await readComposedBody(e.id);
       if (!body) continue;
       parts.push(`- **${e.name}** — ${e.description || '(no description)'}`);
       const indented = body
@@ -1065,6 +1351,7 @@ async function captureProfileFromForm(dataDir, parsed) {
       description:
         'Role, audience, domain, and delivery defaults captured at onboarding.',
       body: renderProfileBody(merged),
+      ...(usePostgresMemory() ? { projectId: null } : {}),
     },
     // Silence the per-entry event; the batched 'extract' emit in
     // extractFromMessage produces exactly one toast for the turn.
@@ -1079,7 +1366,7 @@ async function captureProfileFromForm(dataDir, parsed) {
   };
 }
 
-export async function extractFromMessage(dataDir, userMessage) {
+export async function extractFromMessage(dataDir, userMessage, scope?: TrustedMemoryScope) {
   // Mirror the LLM extractor's skip surface so the settings panel shows
   // both extractors for the same turn — even when there's nothing to
   // record. Without this, a turn with memory disabled or an empty
@@ -1141,7 +1428,10 @@ export async function extractFromMessage(dataDir, userMessage) {
     // captured phrase (rather than the stable display name) lets two
     // "我是" matches — e.g. "我是张三" then "我是软件工程师" — coexist
     // instead of overwriting one another.
-    const id = deriveMemoryId(pattern.type, trimmedCaptured);
+    const projectId = pattern.type === 'project' && scope ? scope.projectId : null;
+    const id = usePostgresMemory() && projectId
+      ? scopedProjectMemoryId(pattern.type, trimmedCaptured, projectId)
+      : deriveMemoryId(pattern.type, trimmedCaptured);
     try {
       const entry = await upsertMemoryEntry(
         dataDir,
@@ -1151,6 +1441,7 @@ export async function extractFromMessage(dataDir, userMessage) {
           name: pattern.name,
           description,
           body,
+          ...(usePostgresMemory() ? { projectId } : {}),
         },
         // Silence the per-entry upsert event so the batched 'extract'
         // emit below produces exactly one frontend toast.
@@ -1161,10 +1452,15 @@ export async function extractFromMessage(dataDir, userMessage) {
         name: entry.name,
         description: entry.description,
         type: entry.type,
+        ...(Object.prototype.hasOwnProperty.call(entry, 'projectId') ? { projectId: entry.projectId } : {}),
         updatedAt: entry.updatedAt,
       });
     } catch (err) {
-      console.warn('[memory] auto-extract write failed', err);
+      // Deletion intentionally wins over a background extraction. Do not turn
+      // that expected discard into user-visible extraction failure noise.
+      if (!isProjectLifecycleError(err)) {
+        console.warn('[memory] auto-extract write failed', err);
+      }
     }
   }
   if (changed.length > 0) {

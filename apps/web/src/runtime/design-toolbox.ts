@@ -121,32 +121,11 @@ export const DESIGN_TOOLBOX_ACTIONS: DesignToolboxAction[] = [
     searchTerms: ['polish', 'critique', 'audit', 'harden', 'responsive', 'accessibility', '润色', '审稿', '交付'],
   },
   {
-    id: 'image-gen',
-    icon: 'image',
-    preferredSkillIds: ['imagegen-frontend-web', 'fal-generate', 'imagen', 'venice-image-generate', 'image-enhancer'],
-    categoryHints: ['image-generation'],
-    searchTerms: ['image', 'generate image', 'visual reference', 'moodboard', 'section image', '生图', '配图', '视觉参考'],
-  },
-  {
     id: 'chart-gen',
     icon: 'grid',
     preferredSkillIds: ['echarts', 'data-viz', 'chart-design', 'react-flow', 'deckgl'],
     categoryHints: ['web-artifacts', 'image-generation'],
     searchTerms: ['chart', 'data visualization', 'echarts', 'react flow', 'diagram', 'flowchart', 'relationship graph', 'dashboard', '图表', '数据可视化', '关系图', '流程图', '雷达图'],
-  },
-  {
-    id: 'logo-gen',
-    icon: 'palette',
-    preferredSkillIds: ['logo-explorer', 'imagegen', 'imagegen-frontend-web', 'creative-director'],
-    categoryHints: ['image-generation', 'creative-direction'],
-    searchTerms: ['logo', 'wordmark', 'mark', 'brand identity', 'lockup', 'logo generation', 'logo design', '标志', 'logo 生成', '品牌标识', '字标'],
-  },
-  {
-    id: 'video-gen',
-    icon: 'play',
-    preferredSkillIds: ['video-hyperframes', 'sora', 'fal-video-edit', 'venice-video', 'replicate'],
-    categoryHints: ['video-generation'],
-    searchTerms: ['video', 'sora', 'remotion', 'hyperframes', 'storyboard', '生视频', '视频', '分镜'],
   },
 ];
 
@@ -222,21 +201,34 @@ export function skillMatchesQuery(
     .includes(q);
 }
 
+export function isNativeVisualGenerationSkill(skill: SkillSummary): boolean {
+  // Older daemon payloads omitted `source` for bundled skills. Only an
+  // explicit user origin is allowed through for visual-generation categories.
+  if (skill.source === 'user') return false;
+  return skill.mode === 'image'
+    || skill.mode === 'video'
+    || skill.surface === 'image'
+    || skill.surface === 'video'
+    || skill.category === 'image-generation'
+    || skill.category === 'video-generation';
+}
+
 export function findDesignToolboxSkill(
   action: DesignToolboxAction,
   skills: SkillSummary[],
 ): SkillSummary | null {
+  const visibleSkills = skills.filter((skill) => !isNativeVisualGenerationSkill(skill));
   for (const id of action.preferredSkillIds) {
-    const exact = skills.find((skill) => skill.id === id || skill.name === id);
+    const exact = visibleSkills.find((skill) => skill.id === id || skill.name === id);
     if (exact) return exact;
   }
   const categoryHintSet = new Set(action.categoryHints);
-  const categoryMatch = skills.find((skill) =>
+  const categoryMatch = visibleSkills.find((skill) =>
     skill.category ? categoryHintSet.has(skill.category) : false,
   );
   if (categoryMatch) return categoryMatch;
   return (
-    skills.find((skill) =>
+    visibleSkills.find((skill) =>
       action.searchTerms.some((term) => skillMatchesQuery(skill, term)),
     ) ?? null
   );

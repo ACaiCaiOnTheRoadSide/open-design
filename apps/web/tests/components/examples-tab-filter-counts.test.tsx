@@ -8,6 +8,7 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WHITE_LABEL_SAAS } from '../../src/features/whiteLabel';
 import { ExamplesTab } from '../../src/components/ExamplesTab';
 import { fetchSkillExample } from '../../src/providers/registry';
 import type { SkillSummary } from '../../src/types';
@@ -78,7 +79,7 @@ describe('ExamplesTab filter counts', () => {
     expect(within(scenarioFilters).getByRole('button', { name: /^Product\s*1$/ })).toBeTruthy();
   });
 
-  it('uses media tags for media examples so visible tags do not imply zero-count prototype types', () => {
+  it.skipIf(WHITE_LABEL_SAAS)('uses media tags for media examples so visible tags do not imply zero-count prototype types', () => {
     renderExamples([
       skill({ id: 'web-prototype', name: 'Web prototype' }),
       skill({

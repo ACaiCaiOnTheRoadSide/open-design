@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { resolvePrincipalAuthConfig, runWithStaticPrincipalContext } from '../src/principal-auth.js';
+import { requireRequestContext } from '../src/request-context.js';
 import {
   nextRunAtForSchedule,
   RoutineService,
@@ -454,6 +456,51 @@ describe('RoutineService scheduled run idempotency', () => {
     } finally {
       service.stop();
       errors.mockRestore();
+    }
+  });
+
+  it('runs a background routine under the validated static principal across async memory work', async () => {
+    const persistence = new SharedRoutinePersistence([fixtureRoutine()]);
+    const service = new RoutineService(persistence);
+    const config = resolvePrincipalAuthConfig({
+      OD_DAEMON_DB: 'postgres',
+      OD_PRINCIPAL_SOURCE: 'static',
+      OD_PRINCIPAL_TENANT_ID: 'tenant-routine',
+      OD_PRINCIPAL_USER_ID: 'user-routine',
+    });
+    let observed: Readonly<{ tenantId: string; userId: string }> | undefined;
+
+    service.setRunHandler((input) => runWithStaticPrincipalContext(config, async () => {
+      expect(input.routine.id).toBe('routine-1');
+      await Promise.resolve();
+      observed = requireRequestContext();
+      return {
+        projectId: 'project-1', conversationId: 'conversation-1', agentRunId: 'agent-run-1',
+        completion: Promise.resolve({ status: 'succeeded' as const }),
+      };
+    }));
+
+    await service.runNow('routine-1');
+    expect(observed).toEqual({ tenantId: 'tenant-routine', userId: 'user-routine' });
+  });
+
+  it('does not arm an ineligible background timer but still allows an authorized manual run', async () => {
+    const persistence = new SharedRoutinePersistence([fixtureRoutine()]);
+    const service = new RoutineService(persistence);
+    let calls = 0;
+    service.setRunHandler(async () => {
+      calls += 1;
+      return handlerStart(`agent-${calls}`);
+    });
+    service.setScheduleEligibility(() => false);
+    service.start();
+
+    try {
+      expect(service.nextRunAt('routine-1')).toBeNull();
+      await service.runNow('routine-1');
+      expect(calls).toBe(1);
+    } finally {
+      service.stop();
     }
   });
 

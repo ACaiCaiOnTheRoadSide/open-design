@@ -59,6 +59,7 @@ import { formatPickAndImportFailure } from '../utils/pickAndImportError';
 import { useBrandsByDesignSystemId } from '../runtime/brands';
 import { BrandPreviewCard } from './BrandPreviewCard';
 import { Icon } from './Icon';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 import { Skeleton } from './Loading';
 import { Toast } from './Toast';
 import { useOpenFolderImport } from './useOpenFolderImport';
@@ -243,6 +244,7 @@ const MEDIA_SURFACE_LABEL_KEYS: Record<MediaSurface, keyof Dict> = {
   video: 'newproj.surfaceVideo',
   audio: 'newproj.surfaceAudio',
 };
+const VISIBLE_MEDIA_SURFACES: readonly MediaSurface[] = ['audio'];
 
 export function defaultDesignSystemSelection(
   defaultDesignSystemId: string | null,
@@ -322,7 +324,7 @@ export function NewProjectPanel({
   // which set of options + skill resolution applies; submission still maps
   // back to the existing image/video/audio ProjectKind branches so the
   // backend contract is unchanged.
-  const [mediaSurface, setMediaSurface] = useState<MediaSurface>('image');
+  const [mediaSurface, setMediaSurface] = useState<MediaSurface>('audio');
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const [tabScroll, setTabScroll] = useState({ left: false, right: false });
   const [name, setName] = useState('');
@@ -916,7 +918,7 @@ export function NewProjectPanel({
           />
         </div>
 
-        <div className="newproj-working-dir-row">
+        {!WHITE_LABEL_SAAS ? <div className="newproj-working-dir-row">
           <button
             type="button"
             className={`ghost newproj-working-dir od-tooltip${workingDir ? ' picked' : ''}`}
@@ -947,7 +949,7 @@ export function NewProjectPanel({
               <Icon name="close" size={14} />
             </button>
           ) : null}
-        </div>
+        </div> : null}
 
         {showDesignSystemPicker ? (
           <DesignSystemPicker
@@ -967,7 +969,7 @@ export function NewProjectPanel({
             role="tablist"
             aria-label={t('newproj.tabMedia')}
           >
-            {(Object.keys(MEDIA_SURFACE_LABEL_KEYS) as MediaSurface[]).map((surface) => (
+            {VISIBLE_MEDIA_SURFACES.map((surface) => (
               <button
                 key={surface}
                 type="button"
@@ -983,23 +985,6 @@ export function NewProjectPanel({
           </div>
         ) : null}
 
-        {tab === 'media' && mediaSurface === 'image' ? (
-          <PromptTemplatePicker
-            surface="image"
-            templates={promptTemplates}
-            value={imagePromptTemplate}
-            onChange={handleImagePromptTemplate}
-          />
-        ) : null}
-
-        {tab === 'media' && mediaSurface === 'video' ? (
-          <PromptTemplatePicker
-            surface="video"
-            templates={promptTemplates}
-            value={videoPromptTemplate}
-            onChange={handleVideoPromptTemplate}
-          />
-        ) : null}
 
         {tab === 'prototype' || tab === 'live-artifact' || tab === 'template' || tab === 'other' ? (
           <PlatformPicker value={platformTargets} onChange={setPlatformTargets} />
@@ -1054,29 +1039,6 @@ export function NewProjectPanel({
           </>
         ) : null}
 
-        {tab === 'media' && mediaSurface === 'image' ? (
-          <MediaProjectOptions
-            surface="image"
-            imageModel={imageModel}
-            imageAspect={imageAspect}
-            mediaProviders={mediaProviders}
-            onImageModel={setImageModel}
-            onImageAspect={setImageAspect}
-          />
-        ) : null}
-
-        {tab === 'media' && mediaSurface === 'video' ? (
-          <MediaProjectOptions
-            surface="video"
-            videoModel={videoModel}
-            videoAspect={videoAspect}
-            videoLength={videoLength}
-            mediaProviders={mediaProviders}
-            onVideoModel={handleVideoModel}
-            onVideoAspect={setVideoAspect}
-            onVideoLength={setVideoLength}
-          />
-        ) : null}
 
         {tab === 'media' && mediaSurface === 'audio' ? (
           <MediaProjectOptions

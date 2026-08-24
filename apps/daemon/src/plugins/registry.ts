@@ -34,6 +34,12 @@ import type {
 import { defaultTrustForRecord, resolveCapabilitiesGranted } from './trust.js';
 import { getWorkspaceResourceByResourceId } from '../db.js';
 import type Database from 'better-sqlite3';
+import { getRequestContext } from '../request-context.js';
+import {
+  currentPluginStorageId,
+  currentPluginStoragePrefix,
+  tenantPluginStorageId,
+} from './storage-identity.js';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, unknown>;
@@ -193,6 +199,7 @@ export async function resolvePluginFolder(opts: ResolveOptions): Promise<Resolve
     capabilitiesGranted,
     manifest,
     fsPath: folder,
+    enabled: true,
     installedAt: now,
     updatedAt: now,
   };
@@ -207,7 +214,7 @@ export function rowToInstalledPlugin(row: DbRow): InstalledPluginRecord {
   const capabilitiesJson = typeof row['capabilities_granted'] === 'string' ? (row['capabilities_granted'] as string) : '[]';
   const capabilities = JSON.parse(capabilitiesJson) as string[];
   return {
-    id:                  String(row['id']),
+    id:                  String(row['public_id'] ?? row['id']),
     title:               String(row['title']),
     version:             String(row['version']),
     sourceKind:          row['source_kind'] as PluginSourceKind,
@@ -226,6 +233,7 @@ export function rowToInstalledPlugin(row: DbRow): InstalledPluginRecord {
     capabilitiesGranted: Array.isArray(capabilities) ? capabilities : [],
     manifest,
     fsPath:              String(row['fs_path']),
+    enabled:             Number(row['enabled'] ?? 1) !== 0,
     installedAt:         Number(row['installed_at']),
     updatedAt:           Number(row['updated_at']),
   };
@@ -254,6 +262,11 @@ function pluginVisibleFromWorkspace(
   workspaceMemberId: string | null | undefined,
 ): boolean {
   if (scope !== undefined && plugin.sourceKind === 'bundled') return true;
+  // In principal-authenticated SaaS requests the SQL query has already selected
+  // only the current tenant's physical rows. Legacy workspace_resources uses a
+  // globally keyed public slug and therefore cannot safely refine that result:
+  // another tenant may legitimately own the same slug.
+  if (getRequestContext()) return true;
   let binding: ReturnType<typeof getWorkspaceResourceByResourceId>;
   try {
     binding = getWorkspaceResourceByResourceId(db, 'plugin', plugin.id);
@@ -411,7 +424,12 @@ export function listInstalledPlugins(
   workspaceId?: string | null,
   workspaceMemberId?: string | null,
 ): InstalledPluginRecord[] {
-  const rows = db.prepare(`SELECT * FROM installed_plugins ORDER BY title ASC`).all() as DbRow[];
+  const principal = getRequestContext();
+  const rows = principal
+    ? db.prepare(`SELECT * FROM installed_plugins
+                   WHERE source_kind = 'bundled' OR id LIKE ?
+                   ORDER BY title ASC`).all(`${currentPluginStoragePrefix()}%`) as DbRow[]
+    : db.prepare(`SELECT * FROM installed_plugins ORDER BY title ASC`).all() as DbRow[];
   const records = rows.map(rowToInstalledPlugin);
   return records.filter((record) =>
     pluginVisibleFromWorkspace(db, record, workspaceId, workspaceMemberId),
@@ -419,21 +437,30 @@ export function listInstalledPlugins(
 }
 
 export function getInstalledPlugin(db: SqliteDb, id: string): InstalledPluginRecord | null {
-  const row = db.prepare(`SELECT * FROM installed_plugins WHERE id = ?`).get(id) as DbRow | undefined;
+  const principal = getRequestContext();
+  const storageId = principal ? tenantPluginStorageId(principal.tenantId, id) : id;
+  const row = principal
+    ? db.prepare(`SELECT * FROM installed_plugins
+                   WHERE id = ? OR (public_id = ? AND source_kind = 'bundled')
+                   ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1`)
+        .get(storageId, id, storageId) as DbRow | undefined
+    : db.prepare(`SELECT * FROM installed_plugins WHERE id = ? OR public_id = ? LIMIT 1`).get(id, id) as DbRow | undefined;
   return row ? rowToInstalledPlugin(row) : null;
 }
 
+
 export function upsertInstalledPlugin(db: SqliteDb, record: InstalledPluginRecord): void {
+  const storageId = currentPluginStorageId(record.id, record.sourceKind);
   db.prepare(`
     INSERT INTO installed_plugins (
-      id, title, version, source_kind, source, pinned_ref, source_digest,
+      id, public_id, title, version, source_kind, source, pinned_ref, source_digest,
       source_marketplace_id, source_marketplace_entry_name,
       source_marketplace_entry_version, marketplace_trust, resolved_source,
       resolved_ref, manifest_digest, archive_integrity,
       trust, capabilities_granted, manifest_json,
       fs_path, installed_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       version = excluded.version,
@@ -455,6 +482,7 @@ export function upsertInstalledPlugin(db: SqliteDb, record: InstalledPluginRecor
       fs_path = excluded.fs_path,
       updated_at = excluded.updated_at
   `).run(
+    storageId,
     record.id,
     record.title,
     record.version,
@@ -480,6 +508,13 @@ export function upsertInstalledPlugin(db: SqliteDb, record: InstalledPluginRecor
 }
 
 export function deleteInstalledPlugin(db: SqliteDb, id: string): boolean {
-  const info = db.prepare(`DELETE FROM installed_plugins WHERE id = ?`).run(id);
+  const info = db.prepare(`DELETE FROM installed_plugins WHERE id = ?`).run(currentPluginStorageId(id));
   return info.changes > 0;
+}
+
+export function setPluginEnabled(db: SqliteDb, id: string, enabled: boolean): InstalledPluginRecord | null {
+  const storageId = currentPluginStorageId(id);
+  const result = db.prepare(`UPDATE installed_plugins SET enabled = ?, updated_at = ? WHERE id = ?`)
+    .run(enabled ? 1 : 0, Date.now(), storageId);
+  return result.changes > 0 ? getInstalledPlugin(db, id) : null;
 }

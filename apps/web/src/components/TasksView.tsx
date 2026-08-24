@@ -16,6 +16,7 @@ import type {
 } from '@open-design/contracts';
 
 import { Icon, type IconName } from './Icon';
+import { confirm as confirmDialog } from './confirm-dialog-host';
 import { navigate } from '../router';
 import { useT } from '../i18n';
 import type { SkillSummary } from '../types';
@@ -651,7 +652,12 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm(t('automations.deleteConfirm')))
+    if (!await confirmDialog({
+      message: t('automations.deleteConfirm'),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    }))
       return;
     setBusyId(id);
     try {

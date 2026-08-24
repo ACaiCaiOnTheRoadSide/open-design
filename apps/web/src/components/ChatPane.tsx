@@ -43,6 +43,7 @@ import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 import { projectRawUrl } from '../providers/registry';
+import { patchProject } from '../state/projects';
 import { appendResourceQuery } from '../collab/workspace-identity';
 import { useProjectCollabContext } from '../collab/collab-context';
 import { takeComposerSeedFor } from '../state/libraryHandoff';
@@ -108,10 +109,19 @@ import {
   type ChatSendOutcome,
   type ChatSendMeta,
 } from './ChatComposer';
+import { TemplateRecommendCard } from './TemplateRecommendCard';
+import { TemplateRecommendTrigger } from './TemplateRecommendTrigger';
+import {
+  recommendTemplates,
+  templateRecommendUnavailable,
+  type TemplateRecommendResponse,
+  type TemplateRecommendation,
+} from '../state/templateRecommend';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { Icon, type IconName } from './Icon';
+import { confirm as confirmDialog } from './confirm-dialog-host';
 import { UserActionCard, type UserActionCardTone } from './UserActionCard';
 import { repoConnectCopy } from './design-system-github-evidence';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
@@ -312,11 +322,14 @@ function pickStarters(
   t: TranslateFn,
 ): StarterPrompt[] {
   const kind = metadata?.kind;
-  if (kind === 'image') return IMAGE_STARTERS;
+  // Native visual projects keep the full composer and its MCP/file controls,
+  // but do not advertise the built-in image/video generation path.
+  if (kind === 'image') return IMAGE_STARTERS.slice(0, 0);
   if (kind === 'video') {
-    return metadata?.videoModel === 'hyperframes-html'
+    const nativeVisualStarters = metadata?.videoModel === 'hyperframes-html'
       ? VIDEO_HYPERFRAMES_STARTERS
       : VIDEO_SEEDANCE_STARTERS;
+    return nativeVisualStarters.slice(0, 0);
   }
   if (kind === 'audio') return AUDIO_STARTERS;
   return DEFAULT_STARTER_KEYS.map((entry) => ({
@@ -618,6 +631,7 @@ interface Props {
   onboardingStarterPath?: ProductType | null;
   composerPlaceholder?: string;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
+  onSelectDesignReference?: (text: string) => void;
   questionFormSubmitDisabled?: boolean;
   onContinueRemainingTasks?: (
     assistantMessage: ChatMessage,
@@ -728,6 +742,8 @@ interface Props {
   workspaceContexts?: WorkspaceContextItem[];
   currentSkillId?: string | null;
   onProjectSkillChange?: (skillId: string | null) => void;
+  /** Backend recommendations are valid only for the primary project chat. */
+  templateRecommendEnabled?: boolean;
   researchAvailable?: boolean;
   // Immutable snapshot of the plugin pinned to this project. When set
   // we suppress the in-composer plugin rail (the user already picked a
@@ -931,6 +947,7 @@ export function ChatPane({
   onboardingStarterPath = null,
   composerPlaceholder,
   onSubmitQuestionForm,
+  onSelectDesignReference,
   questionFormSubmitDisabled = false,
   onContinueRemainingTasks,
   onAssistantFeedback,
@@ -982,6 +999,7 @@ export function ChatPane({
   workspaceContexts = [],
   currentSkillId = null,
   onProjectSkillChange,
+  templateRecommendEnabled = false,
   researchAvailable,
   activePluginSnapshot,
   skills = [],
@@ -1024,6 +1042,12 @@ export function ChatPane({
   const chatLogScrollIdleTimerRef = useRef<number | null>(null);
   const historyWrapRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerHandle | null>(null);
+  const [templateRecommendations, setTemplateRecommendations] = useState<TemplateRecommendResponse | null>(null);
+  const [templateRecommendLoading, setTemplateRecommendLoading] = useState(false);
+  const [templateRecommendAvailable, setTemplateRecommendAvailable] = useState(
+    () => !templateRecommendUnavailable(),
+  );
+  const templateRecommendationSeenRef = useRef<Set<string>>(new Set());
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
   const composerLayerRef = useRef<HTMLDivElement | null>(null);
   const pinnedTodoRef = useRef<HTMLDivElement | null>(null);
@@ -2379,10 +2403,57 @@ export function ChatPane({
     };
   }, [composerPortalRect, composerPortalTarget, tab]);
 
+  const templateRecommendationPrompt = [...messages]
+    .reverse()
+    .find((message) => message.role === 'user')?.content.trim() ?? '';
+
+  async function requestChatTemplateRecommendations() {
+    if (!templateRecommendationPrompt || templateRecommendLoading) return;
+    setTemplateRecommendLoading(true);
+    const result = await recommendTemplates({
+      prompt: templateRecommendationPrompt,
+      surface: 'project-chat',
+      excludeIds: [...templateRecommendationSeenRef.current],
+      topN: 5,
+    });
+    setTemplateRecommendLoading(false);
+    if (!result) {
+      if (templateRecommendUnavailable()) setTemplateRecommendAvailable(false);
+      return;
+    }
+    result.recommendations.forEach((item) => templateRecommendationSeenRef.current.add(item.id));
+    const recommendations = result.recommendations.filter((item) => item.kind === 'design-template');
+    setTemplateRecommendations(recommendations.length > 0 ? { ...result, recommendations } : null);
+  }
+
+  async function useChatTemplateRecommendation(recommendation: TemplateRecommendation) {
+    if (recommendation.kind !== 'design-template' || !onProjectSkillChange || !projectId) return;
+    const skillId = recommendation.id.replace(/^example-/, '');
+    const updated = await patchProject(projectId, { skillId }, workspaceContext);
+    if (!updated) return;
+    onProjectSkillChange(updated.skillId ?? skillId);
+    setTemplateRecommendations(null);
+    await onSend(
+      t('templateRec.continueWith', { name: recommendation.name_zh || recommendation.name }),
+      [],
+      [],
+    );
+  }
+
   const composerNode = (
     <>
       {/* 插件 / 设计百宝箱 live inside the composer's "+" menu (below 工作目录,
           hover to expand); they no longer sit as quick pills above the input. */}
+    {templateRecommendations ? (
+      <TemplateRecommendCard
+        recommendations={templateRecommendations.recommendations}
+        degraded={templateRecommendations.degraded}
+        busy={templateRecommendLoading}
+        onUse={(recommendation) => { void useChatTemplateRecommendation(recommendation); }}
+        onExhausted={() => { void requestChatTemplateRecommendations(); }}
+        onDismiss={() => setTemplateRecommendations(null)}
+      />
+    ) : null}
     <ChatComposer
       ref={composerRef}
       designSystemPicker={designSystemPicker}
@@ -2463,7 +2534,21 @@ export function ChatPane({
       onProjectSkillChange={onProjectSkillChange}
       pinnedPluginId={activePluginSnapshot?.pluginId ?? null}
       footerAccessory={composerFooterAccessory}
-      leadingAccessory={composerLeadingAccessory}
+      leadingAccessory={(
+        <>
+          {composerLeadingAccessory}
+          {templateRecommendEnabled && templateRecommendAvailable ? (
+            <TemplateRecommendTrigger
+              size="compact"
+              enabled={Boolean(templateRecommendationPrompt) && !streaming && templateRecommendations === null}
+              loading={templateRecommendLoading}
+              disabledHint={templateRecommendations ? t('templateRec.entryOpen') : undefined}
+              onClick={() => { void requestChatTemplateRecommendations(); }}
+              data-testid="chat-template-recommend"
+            />
+          ) : null}
+        </>
+      )}
       currentDesignSystemId={currentDesignSystemId}
       onActiveDesignSystemChange={onActiveDesignSystemChange}
       onShowToast={onShowToast}
@@ -2708,6 +2793,7 @@ export function ChatPane({
               ) : null}
               <ChatRows
                 messages={displayMessages}
+                fallbackAgentId={config?.agentId ?? null}
                 streaming={streaming}
                 liveToolInput={liveToolInput}
                 projectId={projectId}
@@ -2758,6 +2844,7 @@ export function ChatPane({
                 forkingMessageId={forkingMessageId}
                 t={t}
                 onSubmitQuestionForm={onSubmitQuestionForm}
+                onSelectDesignReference={onSelectDesignReference}
                 questionFormSubmitDisabled={questionFormSubmitDisabled}
                 scrollContainerRef={logRef}
                 highlightedUserMessageId={chatRailHighlightedMessageId}
@@ -3406,6 +3493,7 @@ function ChatConversationLoading({ t }: { t: TranslateFn }) {
 
 function ChatRows({
   messages,
+  fallbackAgentId,
   streaming,
   liveToolInput,
   projectId,
@@ -3456,11 +3544,13 @@ function ChatRows({
   forkingMessageId,
   t,
   onSubmitQuestionForm,
+  onSelectDesignReference,
   questionFormSubmitDisabled,
   scrollContainerRef,
   highlightedUserMessageId,
 }: {
   messages: ChatMessage[];
+  fallbackAgentId?: string | null;
   streaming: boolean;
   liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
   projectId: string | null;
@@ -3516,6 +3606,7 @@ function ChatRows({
   forkingMessageId?: string | null;
   t: TranslateFn;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
+  onSelectDesignReference?: (text: string) => void;
   questionFormSubmitDisabled: boolean;
   scrollContainerRef: MutableRefObject<HTMLDivElement | null>;
   highlightedUserMessageId?: string | null;
@@ -3627,6 +3718,7 @@ function ChatRows({
     return (
       <AssistantMessage
         message={m}
+        fallbackAgentId={fallbackAgentId}
         streaming={messageStreaming}
         // Only the streaming row consumes live tool input. Non-streaming rows
         // get a stable `undefined`, so adding `liveToolInput` to the memo
@@ -3667,6 +3759,7 @@ function ChatRows({
             : undefined
         }
         questionFormSubmitDisabled={questionFormSubmitDisabled}
+        onSelectDesignReference={onSelectDesignReference}
         onBrandBrowserAssistConfirm={
           onBrandBrowserAssistConfirm
             ? (card) => assistantCallbacksRef.current.onBrandBrowserAssistConfirm?.(card)
@@ -4640,11 +4733,12 @@ function ConversationRow({
         title={t('chat.deleteConversation')}
         onClick={(e) => {
           e.stopPropagation();
-          if (
-            confirm(t('chat.deleteConversationConfirm', { title: displayTitle }))
-          ) {
-            onDelete();
-          }
+          void confirmDialog({
+            message: t('chat.deleteConversationConfirm', { title: displayTitle }),
+            confirmLabel: t('common.delete'),
+            cancelLabel: t('common.cancel'),
+            danger: true,
+          }).then((ok) => { if (ok) onDelete(); });
         }}
       >
         <Icon name="close" size={12} />

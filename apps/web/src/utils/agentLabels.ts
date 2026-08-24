@@ -68,8 +68,14 @@ export function agentDisplayName(
 export function agentIconId(
   agentId?: string | null,
   fallbackName?: string | null,
+  fallbackAgentId?: string | null,
 ): string {
-  for (const raw of [agentId, fallbackName]) {
+  // Only use the app's effective agent when the message has no identity of its
+  // own; a real-but-unknown message agent must never be relabelled.
+  const candidates = agentId || fallbackName
+    ? [agentId, fallbackName]
+    : [agentId, fallbackName, fallbackAgentId];
+  for (const raw of candidates) {
     if (!raw) continue;
     const base = raw.split(' · ')[0]?.trim() || raw;
     const key = normalizeKey(base);
@@ -80,8 +86,8 @@ export function agentIconId(
       if (alias.includes(id)) return id;
     }
   }
-  const fallback = normalizeKey(agentId ?? fallbackName ?? '');
-  return fallback || 'claude';
+  const fallback = normalizeKey(agentId ?? fallbackName ?? fallbackAgentId ?? '');
+  return fallback || 'opencode';
 }
 
 export function exactAgentDisplayName(raw: string | null | undefined): string | null {

@@ -282,12 +282,14 @@ describe('resolveDaemonDbConfig', () => {
       OD_PG_SSL_MODE: 'disable',
     });
     expect(cfg.kind).toBe('postgres');
+    if (cfg.kind !== 'postgres') throw new Error('expected postgres config');
     expect(cfg.postgres).toEqual({
       host:     'pg.local',
       port:     6543,
       database: 'open_design',
       user:     'od',
       sslMode:  'disable',
+      poolMax:  10,
     });
   });
 

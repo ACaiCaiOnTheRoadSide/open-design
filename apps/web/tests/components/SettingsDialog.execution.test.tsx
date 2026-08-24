@@ -668,12 +668,7 @@ describe('SettingsDialog execution settings BYOK interactions', () => {
     expect(baseUrlInput.value).toBe('https://api.anthropic.com');
     expect(baseUrlInput.readOnly).toBe(true);
     expect(screen.getByText('Change this only if you use a proxy or compatible gateway.')).toBeTruthy();
-    const memoryModelDetails = screen
-      .getAllByText('Memory model')
-      .find((node) => node.closest('summary'))
-      ?.closest('details');
-    expect(memoryModelDetails?.hasAttribute('open')).toBe(false);
-    expect(within(memoryModelDetails!).queryByLabelText('Base URL')).toBeNull();
+    expect(screen.queryByText('Memory model')).toBeNull();
     expect(
       screen
         .getByRole('link', { name: 'Get key ↗' })
@@ -2991,7 +2986,7 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
     expect(screen.getByText(/No agents detected yet/i)).toBeTruthy();
   });
 
-  it('labels the memory model default with the selected Local CLI', async () => {
+  it('does not mount or fetch memory model controls in white-label SaaS', async () => {
     const agents: AgentInfo[] = [
       ...availableAgents,
       {
@@ -3003,7 +2998,7 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
         models: [{ id: 'default', label: 'Default (CLI config)' }],
       },
     ];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url === '/api/workspace/context') {
         return new Response(JSON.stringify({ context: null }), {
@@ -3011,14 +3006,9 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url === '/api/memory') {
-        return new Response(
-          JSON.stringify({ enabled: true, memories: [], extraction: null }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
-      }
       return new Response(JSON.stringify({}), { status: 404 });
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     renderSettingsDialog(
       { mode: 'daemon', agentId: 'claude' },
@@ -3027,9 +3017,8 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /Local CLI.*2 installed/i }));
 
-    const memoryModel = await screen.findByRole('combobox', { name: 'Memory model' });
-    expect(memoryModel.textContent).toBe('Same as chat (Claude Code)');
-    expect(screen.getByText(/anthropic is only the fallback provider family/i)).toBeTruthy();
+    expect(screen.queryByText('Memory model')).toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => input.toString() === '/api/memory')).toBe(false);
   });
 
   it('shows rescan loading, avoids duplicate rescans, and renders the success notice', async () => {
@@ -4229,7 +4218,7 @@ describe('SettingsDialog media providers interactions', () => {
     expect(pills[2]?.querySelector('.media-provider-chip-status.is-connected')).toBeFalsy();
   });
 
-  it('renders non-integrated providers in the coming-soon section without input fields', () => {
+  it.skip('renders non-integrated providers in the coming-soon section without input fields (hidden by SaaS media policy)', () => {
     renderSettingsDialog(
       { mode: 'daemon', agentId: 'codex' },
       { initialSection: 'media' },
@@ -4279,8 +4268,8 @@ describe('SettingsDialog media providers interactions', () => {
     const clearButtons = screen.getAllByRole('button', { name: 'Clear configuration' });
     fireEvent.click(clearButtons[0]!);
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect((screen.getByLabelText('OpenAI API key') as HTMLInputElement).value).toBe('');
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect((screen.getByLabelText('OpenAI API key') as HTMLInputElement).value).toBe(''));
     expect((screen.getByLabelText('OpenAI Base URL') as HTMLInputElement).value).toBe('');
 
     await waitForPersist(
@@ -4294,7 +4283,7 @@ describe('SettingsDialog media providers interactions', () => {
     confirmSpy.mockRestore();
   });
 
-  it('cancels Clear when the confirmation is dismissed (issue #737)', () => {
+  it('cancels Clear when the confirmation is dismissed (issue #737)', async () => {
     const { onPersist } = renderSettingsDialog(
       {
         mode: 'daemon',
@@ -4310,7 +4299,7 @@ describe('SettingsDialog media providers interactions', () => {
     const clearButtons = screen.getAllByRole('button', { name: 'Clear configuration' });
     fireEvent.click(clearButtons[0]!);
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
     // Saved key + base URL must stay intact when the user dismisses
     // the confirmation; without this guard a fat-fingered click on
     // Clear would silently wipe the key. Autosave should never fire
@@ -4356,7 +4345,7 @@ describe('SettingsDialog media providers interactions', () => {
     );
   });
 
-  it('re-masks a replacement media provider API key until reveal is used again', () => {
+  it('re-masks a replacement media provider API key until reveal is used again', async () => {
     renderSettingsDialog(
       {
         mode: 'daemon',
@@ -4379,7 +4368,7 @@ describe('SettingsDialog media providers interactions', () => {
     // the clear and leave this test asserting the wrong reveal state.
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     fireEvent.click(screen.getAllByRole('button', { name: 'Clear configuration' })[0]!);
-    expect(apiKeyInput.type).toBe('password');
+    await waitFor(() => expect(apiKeyInput.type).toBe('password'));
 
     fireEvent.change(apiKeyInput, { target: { value: 'sk-replacement' } });
     expect(apiKeyInput.type).toBe('password');
@@ -4390,7 +4379,7 @@ describe('SettingsDialog media providers interactions', () => {
     confirmSpy.mockRestore();
   });
 
-  it('supports providers with a custom model override field', async () => {
+  it.skip('supports providers with a custom model override field (hidden by SaaS media policy)', async () => {
     const { onPersist } = renderSettingsDialog(
       { mode: 'daemon', agentId: 'codex' },
       { initialSection: 'media' },
@@ -5701,6 +5690,7 @@ describe('SettingsDialog about interactions', () => {
     expect(second.onClose).toHaveBeenCalledTimes(1);
   });
 
+  describe.skip('upstream updater controls hidden by SaaS white-label policy', () => {
   it('shows development builds as unsupported for in-app updates', () => {
     renderSettingsDialog(
       { mode: 'daemon', agentId: 'codex' },
@@ -6150,6 +6140,7 @@ describe('SettingsDialog about interactions', () => {
       }),
       {},
     );
+  });
   });
 
   it('does not read event.currentTarget inside the silent-updates setCfg updater', async () => {

@@ -28,7 +28,7 @@ import { atomcodeAgentDef } from './defs/atomcode.js';
 import { readLocalAgentProfileDefs as readLocalAgentProfileDefsFromFile } from './local-profiles.js';
 import type { RuntimeAgentDef } from './types.js';
 
-const BASE_AGENT_DEFS: RuntimeAgentDef[] = [
+const ALL_AGENT_DEFS: RuntimeAgentDef[] = [
   amrAgentDef,
   claudeAgentDef,
   codexAgentDef,
@@ -58,16 +58,29 @@ const BASE_AGENT_DEFS: RuntimeAgentDef[] = [
   atomcodeAgentDef,
 ];
 
+// Unset/blank preserves local compatibility; a configured list is a strict
+// allowlist. Unknown ids produce an empty registry rather than widening access.
+const allowedRaw = (process.env.OD_ALLOWED_AGENTS ?? '').trim();
+const allowedIds = allowedRaw
+  ? new Set(allowedRaw.split(',').map((value) => value.trim()).filter(Boolean))
+  : null;
+const BASE_AGENT_DEFS = allowedIds
+  ? ALL_AGENT_DEFS.filter((definition) => allowedIds.has(definition.id))
+  : ALL_AGENT_DEFS;
+
 export function readLocalAgentProfileDefs(
   baseDefs: RuntimeAgentDef[] = BASE_AGENT_DEFS,
 ): RuntimeAgentDef[] {
   return readLocalAgentProfileDefsFromFile(baseDefs);
 }
 
-export const AGENT_DEFS: RuntimeAgentDef[] = [
+const discoveredAgentDefs: RuntimeAgentDef[] = [
   ...BASE_AGENT_DEFS,
   ...readLocalAgentProfileDefs(BASE_AGENT_DEFS),
 ];
+export const AGENT_DEFS: RuntimeAgentDef[] = allowedIds
+  ? discoveredAgentDefs.filter((definition) => allowedIds.has(definition.id))
+  : discoveredAgentDefs;
 
 const ids = new Set();
 for (const def of AGENT_DEFS) {

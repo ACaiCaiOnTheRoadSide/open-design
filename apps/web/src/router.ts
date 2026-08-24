@@ -260,6 +260,49 @@ let acceptedHistoryLocation: AcceptedHistoryLocation | null = null;
 let pendingHistoryRepair: AcceptedHistoryLocation | null = null;
 let approvedHistoryTraversal: ApprovedHistoryTraversal | null = null;
 
+const EMBED_PARENT_ORIGINS = new Set(
+  (process.env.NEXT_PUBLIC_OD_EMBED_PARENT_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => {
+      try {
+        return new URL(origin).origin === origin;
+      } catch {
+        return false;
+      }
+    }),
+);
+
+export function isTrustedEmbedParentOrigin(
+  parentOrigin: string,
+  currentOrigin: string,
+  configuredOrigins: ReadonlySet<string> = EMBED_PARENT_ORIGINS,
+): boolean {
+  return parentOrigin === currentOrigin || configuredOrigins.has(parentOrigin);
+}
+
+/** Notify only an explicitly trusted parent. The payload contains the
+ * canonical path (never query/hash/auth state) and a versioned envelope. */
+export function notifyParentRoute(path: string): void {
+  if (typeof window === 'undefined' || window.parent === window) return;
+  let parentOrigin: string | null = null;
+  try {
+    parentOrigin = document.referrer ? new URL(document.referrer).origin : null;
+  } catch {
+    return;
+  }
+  if (!parentOrigin) return;
+  if (!isTrustedEmbedParentOrigin(parentOrigin, window.location.origin)) return;
+  try {
+    window.parent.postMessage(
+      { type: 'od:route-change', version: 1, path },
+      parentOrigin,
+    );
+  } catch {
+    // Cross-window delivery is best effort; routing must remain authoritative.
+  }
+}
+
 export function registerNavigationGuard(guard: NavigationGuard): () => void {
   navigationGuards.add(guard);
   ensurePopstateCoordinator();
@@ -338,6 +381,7 @@ function repairHistoryTraversal(
 }
 
 function notifyRouteSubscribers(): void {
+  notifyParentRoute(acceptedHistoryLocation?.pathname ?? window.location.pathname);
   for (const subscriber of [...routeSubscribers]) subscriber();
 }
 

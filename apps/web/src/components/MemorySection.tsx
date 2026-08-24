@@ -9,6 +9,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Button } from '@open-design/components';
 import { Icon, type IconName } from './Icon';
+import { confirm as confirmDialog } from './confirm-dialog-host';
 import { ConnectorLogo, useResolvedTheme } from './ConnectorLogo';
 import { useT } from '../i18n';
 
@@ -1495,7 +1496,12 @@ export function MemorySection({
   }, [reloadExtractions]);
 
   const onClearExtractions = useCallback(async () => {
-    if (!window.confirm(t('settings.memoryExtractionsClearConfirm'))) return;
+    if (!await confirmDialog({
+      message: t('settings.memoryExtractionsClearConfirm'),
+      confirmLabel: t('common.clear'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    })) return;
     setExtractions([]);
     const ok = await clearExtractionHistory();
     if (!ok) {

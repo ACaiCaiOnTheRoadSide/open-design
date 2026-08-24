@@ -45,6 +45,9 @@ import {
   memoryToastSubscriptionMode,
 } from './components/MemoryToast';
 import { Toast } from './components/Toast';
+import { FeedbackQuickButton } from './components/FeedbackQuickButton';
+import { ThemeQuickMenu } from './components/ThemeQuickMenu';
+import { ConfirmDialogHost } from './components/confirm-dialog-host';
 import { CenteredLoader } from './components/Loading';
 import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
 import { buildPetTaskCenter } from './components/pet/taskCenter';
@@ -164,8 +167,13 @@ import {
   syncMediaProvidersToDaemon,
 } from './state/config';
 import { createSilentUpdatePreferenceWriter } from './state/silent-update-preference';
-import { applyAppearanceToDocument } from './state/appearance';
+import {
+  applyAppearanceToDocument,
+  resolveAccentColor,
+  resolveAppTheme,
+} from './state/appearance';
 import { isMacPlatform } from './utils/platform';
+import { WHITE_LABEL_SAAS } from './features/whiteLabel';
 import { randomUUID } from './utils/uuid';
 import { summarizeProjectNameFromPrompt } from './utils/projectName';
 import { armCompletionFeedbackOnFirstGesture } from './utils/notifications';
@@ -1862,6 +1870,7 @@ function AppInner() {
   // the modal-backdrop layer in index.css so opening Settings does not hide
   // it.
   const showPrivacyConsent =
+    !WHITE_LABEL_SAAS &&
     daemonConfigLoaded &&
     config.privacyDecisionAt == null &&
     config.onboardingCompleted === true;
@@ -2699,6 +2708,34 @@ function AppInner() {
   const handleSettingsDraftChange = useCallback((draft: AppConfig) => {
     settingsDraftConfigRef.current = draft;
   }, []);
+
+  const persistQuickAppearance = useCallback((patch: Pick<AppConfig, 'theme' | 'accentColor'>) => {
+    const next: AppConfig = {
+      ...latestPersistedConfigRef.current,
+      ...patch,
+      theme: resolveAppTheme(patch.theme),
+      accentColor: resolveAccentColor(patch.accentColor),
+    };
+    latestPersistedConfigRef.current = next;
+    applyAppearanceToDocument(next);
+    saveConfig(next);
+    setConfig(next);
+    void syncConfigToDaemon(next);
+  }, []);
+
+  const handleQuickThemeChange = useCallback((theme: NonNullable<AppConfig['theme']>) => {
+    persistQuickAppearance({
+      theme,
+      accentColor: latestPersistedConfigRef.current.accentColor,
+    });
+  }, [persistQuickAppearance]);
+
+  const handleQuickAccentColorChange = useCallback((accentColor: string) => {
+    persistQuickAppearance({
+      theme: latestPersistedConfigRef.current.theme,
+      accentColor,
+    });
+  }, [persistQuickAppearance]);
 
   const handlePrivacyConsentChoice = useCallback((share: boolean) => {
     const base = settingsDraftConfigRef.current ?? latestPersistedConfigRef.current;
@@ -5430,6 +5467,15 @@ function AppInner() {
           dockLine
         />
       )}
+      <div className="quick-entry-cluster">
+        <ThemeQuickMenu
+          config={config}
+          onThemeChange={handleQuickThemeChange}
+          onAccentColorChange={handleQuickAccentColorChange}
+          showThemeModes={false}
+        />
+        <FeedbackQuickButton />
+      </div>
       <TooltipLayer />
       <UpdateDialog />
       {/* Mounted at shell level, outside the route views, so a survey armed by
@@ -5468,22 +5514,24 @@ function AppInner() {
         renderSettingsSurface('modal')
       ) : null}
       </AnimatePresence>
-      <MemoryToast
-        onOpenMemory={() => openSettings('memory')}
-        subscriptionMode={memoryToastSubscriptionMode({
-          routeKind: route.kind,
-          projectRunActive:
-            route.kind === 'project'
-            && projectRunActivity.projectId === route.projectId
-            && projectRunActivity.active,
-          memorySurfaceOpen:
-            settingsInitialSection === 'memory'
-            && (
-              settingsOpen
-              || (route.kind === 'home' && route.view === 'settings')
-            ),
-        })}
-      />
+      {!WHITE_LABEL_SAAS ? (
+        <MemoryToast
+          onOpenMemory={() => openSettings('memory')}
+          subscriptionMode={memoryToastSubscriptionMode({
+            routeKind: route.kind,
+            projectRunActive:
+              route.kind === 'project'
+              && projectRunActivity.projectId === route.projectId
+              && projectRunActivity.active,
+            memorySurfaceOpen:
+              settingsInitialSection === 'memory'
+              && (
+                settingsOpen
+                || (route.kind === 'home' && route.view === 'settings')
+              ),
+          })}
+        />
+      ) : null}
       {workingDirError ? (
         <Toast
           message={workingDirError}
@@ -5536,6 +5584,7 @@ function AppInner() {
       </motion.div>
       ) : null}
       </AnimatePresence>
+      <ConfirmDialogHost />
     </>
   );
 }

@@ -21,9 +21,29 @@
 
 .pageTitleBlock {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 12px;
   min-width: 0;
+}
+
+.backHome {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.backHome:hover,
+.backHome:focus-visible {
+  background: var(--bg-subtle);
+  color: var(--text-strong);
 }
 
 .pageTitle {

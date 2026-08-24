@@ -11,7 +11,7 @@ import express from 'express';
 import multer from 'multer';
 import JSZip from 'jszip';
 import { execFile, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -89,6 +89,7 @@ import {
   UPLOAD_DIR,
   composeLiveInstructionPrompt,
   formatDesignFilesWorkspaceHint,
+  formatLazyHydrationHint,
   formatProjectAttachmentHint,
   normalizeCommentAttachments,
   renderCommentAttachmentHint,
@@ -145,6 +146,7 @@ import {
 export {
   composeLiveInstructionPrompt,
   formatDesignFilesWorkspaceHint,
+  formatLazyHydrationHint,
   formatProjectAttachmentHint,
   normalizeCommentAttachments,
   renderCommentAttachmentHint,
@@ -346,6 +348,8 @@ import {
 } from './design-systems/team-project-share.js';
 import { prepareDesignTokenContractRebuild } from './design-systems/token-contract-rebuild.js';
 import { registerBrandRoutes } from './brand-routes.js';
+import { configureSnapshotOwnerRegistrar } from './plugins/snapshots.js';
+import { configureLibraryOwnerRegistrar } from './library.js';
 import {
   authorizeCreatedProjectWorkspace,
   bindCreatedProjectToWorkspace,
@@ -362,6 +366,7 @@ import {
   FIRST_PARTY_ATOMS,
   generateSkillPluginDraft,
   getInstalledPlugin,
+  setPluginEnabled,
   getSnapshot,
   installFromLocalFolder,
   installPlugin,
@@ -401,11 +406,19 @@ import {
 } from './plugins/marketplaces.js';
 import {
   composeMemoryBody,
+  configureMemoryHistoryOutbox,
+  deleteProjectMemoryForCurrentPrincipal,
+  drainMemoryHistoryWrites,
   extractFromMessage,
   listActiveRuleEntries,
   readMemoryConfig,
+  stopMemoryHistoryOutbox,
+  TrustedMemoryScope,
 } from './memory.js';
-import { runAutoExtractionCleanup } from './memory-cleanup.js';
+import {
+  canRunAutoExtractionCleanupAtStartup,
+  runAutoExtractionCleanup,
+} from './memory-cleanup.js';
 import { attachAcpSession } from './agent-protocol/index.js';
 import { attachPiRpcSession } from './agent-protocol/index.js';
 import { attachDshProfileSession } from './agent-protocol/index.js';
@@ -535,7 +548,9 @@ import {
   writeMcpConfig,
 } from './mcp-config.js';
 import {
+  rejectsClientMcpServers,
   resolveExternalMcpServersForRun,
+  trustedRunScopedMcpServers,
 } from './run-tool-bundle.js';
 import {
   beginAuth,
@@ -599,6 +614,26 @@ import {
   reconcileHtmlArtifactManifest,
 } from './projects.js';
 import { validateArtifactManifestInput } from './artifacts/manifest.js';
+import {
+  assertProjectActive,
+  isProjectLifecycleError,
+  runProjectActiveOperation,
+} from './project-lifecycle-gate.js';
+import {
+  dropState as dropProjectSyncState,
+  flush as flushProjectSync,
+  hydrate as hydrateManagedProject,
+  initSyncEngine,
+  markDirty as markProjectSyncDirty,
+  reviveProject as reviveProjectSync,
+  runProjectMutation,
+  shutdownSyncEngine,
+  backfillRegisteredResourceNamespaces,
+  hydrateResource,
+  markResourceDirty,
+  dropResourceState,
+} from './sync/engine.js';
+import { startProjectCacheEvictionScheduler } from './sync/cache-eviction-scheduler.js';
 import { ArtifactPublicationBlockedError } from './artifacts/publication-guard.js';
 import {
   appendMessageStatusEvent,
@@ -631,6 +666,7 @@ import {
   getWorkspaceResourceByResourceId,
   insertConversation,
   insertProject,
+  setBusinessProjectFactsSink,
   insertRoutine,
   insertRoutineRun,
   insertScheduledRoutineRun,
@@ -647,6 +683,8 @@ import {
   listProjectPreviewComments,
   listProjects,
   listUnboundProjects,
+  listOwnedUnboundProjects,
+  getProjectFactOwner,
   listTeamWorkspaceProjectShares,
   listTeamWorkspaceResourceWorkspaceIds,
   listWorkspaceProjects,
@@ -1001,6 +1039,37 @@ import {
   isApiAuthDisabled,
   isApiTokenMiddlewareEnabled,
 } from './api-token-auth.js';
+import {
+  createPrincipalAuthMiddleware,
+  principalContextModeForApiRequest,
+  resolvePrincipalAuthConfig,
+  runWithStaticPrincipalContext,
+} from './principal-auth.js';
+import { resolveDaemonDbConfig } from './storage/daemon-db.js';
+import { resolvePgMigrationsDirectory, runPgMigrations } from './storage/pg-migrations.js';
+import { importLegacyPostgresMetadata } from './storage/legacy-metadata-import.js';
+import { closePool, getPool, runWithPgPoolCleanupOnFailure } from './storage/pg.js';
+import { createResourceOwnerRegistry } from './storage/resource-owner-registry.js';
+import { runWithRequestContext, requireRequestContext } from './request-context.js';
+import { createBrandDesignSystemRegistry } from './storage/brand-design-system-registry.js';
+import {
+  createMemoryRunQueue,
+  createPostgresRunQueue,
+  resolveMaxConcurrentRuns,
+  resolveMaxConcurrentRunsPerTenant,
+} from './storage/run-queue.js';
+import { createPluginInstallIntentStore } from './storage/plugin-install-intents.js';
+import { createBusinessFactsStore } from './storage/business-facts.js';
+import { createBusinessFactsOutbox } from './storage/business-facts-outbox.js';
+import { getRequestContext } from './request-context.js';
+import {
+  parseProviderConfig,
+  providerConfigModel,
+  resolveOpenCodeProviderConfig,
+} from './runtime-provider-config.js';
+import { getPlatformMcpServers } from './platform-mcp-servers.js';
+import { createPluginIntentReconciler } from './plugins/plugin-intent-reconciler.js';
+import { registerInternalPluginIntentRoutes } from './routes/internal-plugin-intents.js';
 import { createOpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
 import { createWhatsNewService } from './services/whats-new.js';
 import { execCommandViaLoginShell } from './services/login-shell.js';
@@ -2150,6 +2219,7 @@ function createProjectPreviewScopeRegistry() {
       scopes.set(scope, {
         projectId: String(projectId),
         workspace,
+        principal: getRequestContext() ? Object.freeze({ ...getRequestContext() }) : undefined,
         expiresAt: Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS),
       });
       return scope;
@@ -2166,6 +2236,12 @@ function createProjectPreviewScopeRegistry() {
         return false;
       }
       return entry.projectId === String(projectId);
+    },
+    resolvePrincipal(projectId, scope) {
+      const key = String(scope || '');
+      const entry = scopes.get(key);
+      if (!entry || entry.expiresAt <= Date.now() || entry.projectId !== String(projectId)) return undefined;
+      return entry.principal;
     },
     resolve(projectId, scope) {
       const key = String(scope || '');
@@ -2557,6 +2633,17 @@ export interface StartServerResult {
   routeInventory: import('./route-registration-guard.js').RouteRegistration[];
 }
 
+function redactPostgresStartupError(error: unknown, prefix = ''): Error {
+  const password = process.env.OD_PG_PASSWORD;
+  const redact = (value: string) => password ? value.replaceAll(password, '[redacted]') : value;
+  if (error instanceof Error) {
+    error.message = `${prefix}${redact(error.message)}`;
+    if (typeof error.stack === 'string') error.stack = redact(error.stack);
+    return error;
+  }
+  return new Error(`${prefix}${redact(String(error))}`);
+}
+
 export async function startServer({
   port = 7456,
   host = normalizeDaemonBindHost(process.env.OD_BIND_HOST),
@@ -2574,6 +2661,44 @@ export async function startServer({
   const workspaceAuthorityCacheMode = resolveWorkspaceAuthorityCacheMode(
     process.env.OD_WORKSPACE_AUTHORITY_CACHE_MODE,
   );
+  const daemonDbConfig = resolveDaemonDbConfig();
+  const businessFacts = createBusinessFactsStore({ enabled: daemonDbConfig.kind === 'postgres' });
+  const principalAuthConfig = resolvePrincipalAuthConfig(process.env);
+  const requiredPrincipalMiddleware = createPrincipalAuthMiddleware(principalAuthConfig, 'required');
+  const optionalPrincipalMiddleware = createPrincipalAuthMiddleware(principalAuthConfig, 'optional');
+  const apiToken = apiTokenFromEnv();
+  const apiAuthDisabled = isApiAuthDisabled();
+  const apiTokenAuthEnabled = apiToken.length > 0 && !apiAuthDisabled;
+  const isApiTokenAuthorization = (authorization: string | undefined): boolean =>
+    apiTokenAuthEnabled && apiTokenAuthorizationMatches(authorization, apiToken);
+  const hasValidInternalSyncSignature = (projectId: string, signature: string | undefined): boolean => {
+    if (!apiToken) return true;
+    if (!signature || !/^[a-f0-9]{64}$/i.test(signature)) return false;
+    const expected = createHmac('sha256', apiToken).update(projectId).digest();
+    const actual = Buffer.from(signature, 'hex');
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  };
+  if (!isLoopbackHostname(host) && apiToken.length === 0 && !apiAuthDisabled) {
+    throw new Error(
+      `OD_BIND_HOST=${host} requires OD_API_TOKEN to be set. ` +
+      `Generate one with \`openssl rand -hex 32\` and re-launch. ` +
+      `(Loopback hosts 127.0.0.1 / ::1 / localhost do not need a token.) ` +
+      `Set OD_DISABLE_API_AUTH=1 only when a trusted reverse proxy already authenticates every request.`,
+    );
+  }
+  return await runWithPgPoolCleanupOnFailure(daemonDbConfig.kind === 'postgres', async () => {
+  try {
+    if (daemonDbConfig.kind === 'postgres') {
+      try {
+        await runPgMigrations({
+          pool: getPool(),
+          directory: resolvePgMigrationsDirectory(),
+          schema: daemonDbConfig.postgres.schema,
+        });
+      } catch (error) {
+        throw redactPostgresStartupError(error, 'PostgreSQL migration failed: ');
+      }
+    }
 
   // Plan §3.K1 / spec §15.7 — bound-API-token guard.
   //
@@ -2587,20 +2712,6 @@ export async function startServer({
   // purely additive: when present, every /api/* request must carry a
   // matching Bearer token or browser Basic credentials (loopback origins
   // are exempted so the desktop UI keeps working).
-  const apiToken = apiTokenFromEnv();
-  const apiAuthDisabled = isApiAuthDisabled();
-  const apiTokenAuthEnabled = apiToken.length > 0 && !apiAuthDisabled;
-  const isApiTokenAuthorization = (authorization: string | undefined): boolean =>
-    apiTokenAuthEnabled && apiTokenAuthorizationMatches(authorization, apiToken);
-  if (!isLoopbackHostname(host) && apiToken.length === 0 && !apiAuthDisabled) {
-    throw new Error(
-      `OD_BIND_HOST=${host} requires OD_API_TOKEN to be set. ` +
-      `Generate one with \`openssl rand -hex 32\` and re-launch. ` +
-      `(Loopback hosts 127.0.0.1 / ::1 / localhost do not need a token.) ` +
-      `Set OD_DISABLE_API_AUTH=1 only when a trusted reverse proxy already authenticates every request.`,
-    );
-  }
-
   const app = express();
   installRouteRegistrationGuard(app);
   // Clipper page captures are self-contained HTML with inlined images plus a
@@ -2694,6 +2805,17 @@ export async function startServer({
       );
     });
   }
+
+  // Memory is tenant-aware and therefore fail-closed. Other API routes install
+  // principal context only when a trusted proxy explicitly supplies principal
+  // headers; requests authenticated with preview/tool scoped tokens remain
+  // compatible. Dispatching once here avoids nesting two ALS scopes for memory.
+  app.use('/api', (req, res, next) => {
+    const middleware = principalContextModeForApiRequest(req.method, req.path, { backend: daemonDbConfig.kind }) === 'required'
+      ? requiredPrincipalMiddleware
+      : optionalPrincipalMiddleware;
+    return middleware(req, res, next);
+  });
 
   const designSystemServices = createDesignSystemServerServices({
     // `db` (below) is not initialized yet at this point in `startServer` —
@@ -2879,6 +3001,152 @@ export async function startServer({
     next();
   });
   const db = openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
+  if (daemonDbConfig.kind === 'postgres') configureMemoryHistoryOutbox(db);
+  const resourceOwnerRegistry = daemonDbConfig.kind === 'postgres'
+    ? createResourceOwnerRegistry(getPool())
+    : undefined;
+  configureSnapshotOwnerRegistrar(resourceOwnerRegistry
+    ? (snapshotId, projectId, principal) => resourceOwnerRegistry.registerUser({
+        kind: 'plugin_snapshot', id: snapshotId, projectId,
+        metadata: { projectId },
+      }, principal)
+    : null);
+  configureLibraryOwnerRegistrar(resourceOwnerRegistry
+    ? async (asset, taskId, sourceKind, principal) => {
+        await resourceOwnerRegistry.registerUser({
+          kind: 'library_asset', id: asset.id,
+          sourceKind: asset.storage === 'owned' ? 'upload' : 'local',
+          localPath: asset.filePath ?? path.join(LIBRARY_DIR, asset.contentHash),
+          projectId: asset.originProjectId ?? null,
+          metadata: { storage: asset.storage, sourceKind },
+        }, principal);
+        await resourceOwnerRegistry.registerUser({
+          kind: 'library_task', id: taskId, metadata: { assetId: asset.id },
+        }, principal);
+      }
+    : null);
+  const brandDesignSystemRegistry = createBrandDesignSystemRegistry({
+    enabled: daemonDbConfig.kind === 'postgres',
+  });
+  if (brandDesignSystemRegistry.enabled) {
+    const trustedLegacyOwner = principalAuthConfig.enabled && principalAuthConfig.source === 'static'
+      ? principalAuthConfig.principal
+      : null;
+    const legacyCandidates = [];
+    for (const [resourceType, root, idForDir] of [
+      ['brand', BRANDS_DIR, (name) => name],
+      ['design_system', USER_DESIGN_SYSTEMS_DIR, (name) => `user:${name}`],
+    ]) {
+      let entries = [];
+      try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch {}
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        legacyCandidates.push({
+          resourceType,
+          resourceId: idForDir(entry.name),
+          slug: entry.name,
+          name: entry.name,
+          owner: trustedLegacyOwner,
+          quarantineReason: trustedLegacyOwner ? undefined : 'legacy-owner-not-authoritative-in-proxy-mode',
+        });
+      }
+    }
+    await brandDesignSystemRegistry.backfill(legacyCandidates);
+  }
+  // Older hosted releases stored all daemon metadata in PostgreSQL. Merge that
+  // read-only source into the now-primary SQLite store before accepting traffic.
+  // A narrow business-facts schema does not match the full-schema fingerprint
+  // and is therefore an intentional no-op.
+  if (daemonDbConfig.kind === 'postgres') {
+    try {
+      await importLegacyPostgresMetadata({
+        sqlite: db,
+        pg: getPool(),
+        schema: daemonDbConfig.postgres.schema,
+        // Every local/upload path retained by the importer must remain on the
+        // daemon's durable volume; paths from an older container root are
+        // deliberately quarantined rather than exposed.
+        pvcRoots: [RUNTIME_DATA_DIR],
+      });
+    } catch (error) {
+      throw redactPostgresStartupError(error, 'Legacy PostgreSQL metadata import failed: ');
+    }
+  }
+  const businessFactsOutbox = createBusinessFactsOutbox(db, businessFacts);
+  const maxConcurrentRuns = resolveMaxConcurrentRuns();
+  const maxConcurrentRunsPerTenant = resolveMaxConcurrentRunsPerTenant();
+  const runQueue = daemonDbConfig.kind === 'postgres'
+    ? createPostgresRunQueue(getPool(), maxConcurrentRuns, maxConcurrentRunsPerTenant)
+    : createMemoryRunQueue(maxConcurrentRuns);
+  setBusinessProjectFactsSink({
+    projectCreated: (_db, project) => businessFactsOutbox.enqueueProjectCreate({
+      id: String(project.id), name: String(project.name),
+      skillId: project.skillId == null ? null : String(project.skillId),
+      designSystemId: project.designSystemId == null ? null : String(project.designSystemId),
+      createdAt: Number(project.createdAt), updatedAt: Number(project.updatedAt),
+    }, project.factPrincipal),
+    projectUpdated: (_db, project) => businessFactsOutbox.enqueueProjectUpdate({
+      id: String(project.id), name: String(project.name),
+      skillId: project.skillId == null ? null : String(project.skillId),
+      designSystemId: project.designSystemId == null ? null : String(project.designSystemId),
+      createdAt: Number(project.createdAt), updatedAt: Number(project.updatedAt),
+    }),
+    projectDeleted: (_db, project) => businessFactsOutbox.enqueueProjectDelete(
+      String(project.id), Date.now(),
+      project.factTenantId && project.factCreatorId
+        ? { tenantId: project.factTenantId, userId: project.factCreatorId } : undefined,
+    ),
+    projectDiscarded: (_db, project) => businessFactsOutbox.enqueueProjectDiscard(
+      String(project.id),
+      project.factTenantId && project.factCreatorId
+        ? { tenantId: project.factTenantId, userId: project.factCreatorId } : undefined,
+    ),
+  });
+  // PG owns backend-managed plugin desired state. SQLite, the plugin folder and
+  // the lockfile remain disposable caches so desktop/local CLI behavior is
+  // unchanged and hosted pods can rebuild an empty OD_DATA_DIR.
+  const pluginIntentStore = daemonDbConfig.kind === 'postgres'
+    ? createPluginInstallIntentStore(getPool())
+    : null;
+  const pluginIntentReconciler = pluginIntentStore
+    ? createPluginIntentReconciler({
+        store: pluginIntentStore,
+        materializer: {
+          isMaterialized: async (pluginId, source) => {
+            const plugin = getInstalledPlugin(db, pluginId);
+            if (!plugin || !plugin.fsPath || !fs.existsSync(plugin.fsPath)) return false;
+            return source === null || plugin.source === source;
+          },
+          install: async (pluginId, source, signal) => {
+            for await (const event of installPlugin(db, {
+              source,
+              expectedPluginId: pluginId,
+              roots: PLUGIN_REGISTRY_ROOTS,
+              lockfilePath: PLUGIN_LOCKFILE_PATH,
+              signal,
+            })) {
+              if (event.kind === 'success') return { pluginId: event.plugin.id };
+              if (event.kind === 'error') throw new Error(event.message);
+            }
+            throw new Error('plugin install ended without a terminal event');
+          },
+          uninstall: async (pluginId) => {
+            const result = await uninstallPlugin(db, pluginId, PLUGIN_REGISTRY_ROOTS);
+            if (!result.ok && !result.removedFolder && !/not found/i.test(result.warning ?? '')) {
+              throw new Error(result.warning ?? `could not uninstall ${pluginId}`);
+            }
+          },
+        },
+      })
+    : null;
+  if (!pluginIntentStore) {
+    console.warn('[plugins] persistent install intents disabled: OD_DAEMON_DB is sqlite');
+  }
+  registerInternalPluginIntentRoutes(app, {
+    apiToken,
+    store: pluginIntentStore,
+    reconciler: pluginIntentReconciler,
+  });
   const commentAnchorRepair = repairTeamProjectCommentAnchorConversations(db);
   if (commentAnchorRepair.created > 0) {
     console.warn(
@@ -2900,6 +3168,33 @@ export async function startServer({
     PLUGIN_LOCKFILE_PATH,
     PLUGIN_UPLOAD_MAX_BYTES,
   });
+  // PVC loss must not permanently strand remotely reproducible installs. The
+  // durable PostgreSQL owner row carries both the verified principal and the
+  // canonical source; replay each missing mirror into its tenant-qualified
+  // SQLite/filesystem slot before accepting HTTP traffic.
+  if (resourceOwnerRegistry?.listRecoverablePlugins) {
+    for (const recoverable of await resourceOwnerRegistry.listRecoverablePlugins()) {
+      await runWithRequestContext({
+        tenantId: recoverable.tenantId,
+        userId: recoverable.creatorId,
+      }, async () => {
+        const existing = getInstalledPlugin(db, recoverable.id);
+        if (existing && fs.existsSync(existing.fsPath)) return;
+        for await (const event of installPlugin(db, {
+          source: recoverable.retrievalUrl,
+          expectedPluginId: recoverable.id,
+          roots: PLUGIN_REGISTRY_ROOTS,
+          lockfilePath: PLUGIN_LOCKFILE_PATH,
+        })) {
+          if (event.kind === 'error') {
+            console.warn(`[plugin-recovery] ${recoverable.id}: ${event.message}`);
+            break;
+          }
+          if (event.kind === 'success') break;
+        }
+      });
+    }
+  }
   const mediaTaskStore = createMediaTaskStore(db, {
     isRunActive: (runId) => toolTokenRegistry.activeRunTokenCount(runId) > 0,
   });
@@ -3041,6 +3336,13 @@ export async function startServer({
         manifestText,
       });
       if (result.ok) {
+        await resourceOwnerRegistry?.registerBackend({
+          kind: 'plugin_marketplace',
+          id: result.row.id,
+          sourceKind: 'backend',
+          retrievalUrl: result.row.url,
+          metadata: { seeded: true },
+        });
         console.log(`[plugins] seeded ${id} registry source (${result.row.manifest.plugins.length} plugin(s))`);
       } else {
         console.warn(`[plugins] ${id} registry seed failed: ${result.message}`);
@@ -3072,16 +3374,25 @@ export async function startServer({
   // residue in user_profile). Marker-gated inside, so this is a no-op on
   // every boot after the first. Best-effort — memory cleanup must never
   // block the daemon from serving.
-  try {
-    const memoryCleanup = await runAutoExtractionCleanup(RUNTIME_DATA_DIR);
-    if (memoryCleanup.ran && (memoryCleanup.deletedIds.length > 0 || memoryCleanup.profilePruned)) {
-      console.log(
-        `[memory] auto-extraction cleanup removed ${memoryCleanup.deletedIds.length} entr(y/ies)`
-        + `${memoryCleanup.profilePruned ? ' and pruned user_profile to canonical fields' : ''}`,
+  // PostgreSQL memory is tenant-scoped. Trusted-proxy startup has no principal,
+  // so a safe global sweep is impossible: skip silently rather than inventing
+  // an identity or logging a predictable authorization error on every boot.
+  // Static mode has an explicitly validated principal and may run safely.
+  if (canRunAutoExtractionCleanupAtStartup(daemonDbConfig.kind, principalAuthConfig)) {
+    try {
+      const memoryCleanup = await runWithStaticPrincipalContext(
+        principalAuthConfig,
+        () => runAutoExtractionCleanup(RUNTIME_DATA_DIR),
       );
+      if (memoryCleanup.ran && (memoryCleanup.deletedIds.length > 0 || memoryCleanup.profilePruned)) {
+        console.log(
+          `[memory] auto-extraction cleanup removed ${memoryCleanup.deletedIds.length} entr(y/ies)`
+          + `${memoryCleanup.profilePruned ? ' and pruned user_profile to canonical fields' : ''}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[memory] auto-extraction cleanup failed:', err);
     }
-  } catch (err) {
-    console.warn('[memory] auto-extraction cleanup failed:', err);
   }
 
   // Warm agent-capability probes (e.g. whether the installed Claude Code
@@ -3101,6 +3412,67 @@ export async function startServer({
   if (fs.existsSync(staticDir)) {
     app.use(express.static(staticDir));
   }
+
+  app.get('/api/od-cli.mjs', (_req, res) => {
+    const bundlePath = fileURLToPath(new URL('./od-cli.mjs', import.meta.url));
+    if (!fs.existsSync(bundlePath)) {
+      return res.status(404).json({
+        error: 'od-cli bundle not built; run `pnpm --filter @open-design/daemon build`',
+      });
+    }
+    res.type('text/javascript');
+    return res.sendFile(bundlePath);
+  });
+
+  // Large Alpine Chromium closure used by html-to-pptx/html-to-image inside
+  // gVisor sandboxes. The daemon image bakes this pinned file under /app/data;
+  // serving it here avoids GitHub egress and needs no extra sandbox secret.
+  app.get('/api/chromium-bundle.tar.gz', (_req, res) => {
+    const bundlePath = path.join(PROJECT_ROOT, 'data', 'chromium-bundle.tar.gz');
+    if (!fs.existsSync(bundlePath)) {
+      return res.status(404).json({ error: 'chromium bundle not available' });
+    }
+    res.type('application/gzip');
+    return res.sendFile(bundlePath);
+  });
+
+  app.post('/api/projects/:id/sync/pull', async (req, res) => {
+    const project = getProject(db, req.params.id);
+    if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+    const hasWorkspaceContext = Boolean(
+      req.get('x-od-workspace-id') || req.get('x-od-workspace-member-id'),
+    );
+    if (hasWorkspaceContext) {
+      if (!await authorizeProjectRequest(
+        req,
+        res,
+        req.params.id,
+        { mode: 'write', capability: 'writeFiles' },
+      )) return;
+    } else if (!hasValidInternalSyncSignature(
+      req.params.id,
+      req.get('x-od-sync-signature'),
+    )) {
+      return sendApiError(res, 401, 'INVALID_SYNC_SIGNATURE', 'invalid internal sync signature');
+    }
+    const metadata = project.metadata as { baseDir?: unknown } | null | undefined;
+    if (typeof metadata?.baseDir === 'string' && metadata.baseDir) {
+      return res.json({ updated: false, version: 0, reason: 'imported project' });
+    }
+    try {
+      const result = await runProjectActiveOperation(req.params.id, () =>
+        hydrateManagedProject(req.params.id, {
+          ifMissing: req.body?.ifMissing === true,
+        }));
+      return res.json(result);
+    } catch (error) {
+      if (isProjectLifecycleError(error)) {
+        return sendApiError(res, 409, error.code, error.message);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ error: `sync pull failed: ${message}` });
+    }
+  });
 
   // ---- Projects (DB-backed) -------------------------------------------------
 
@@ -4683,7 +5055,7 @@ export async function startServer({
     retireUnmaterializedSharedPlaceholder: (projectId: string) => {
       const project = getProject(db, projectId);
       if (!isUnmaterializedSharedPlaceholder(project)) return;
-      dbDeleteProject(db, projectId);
+      dbDeleteProject(db, projectId, { facts: 'delete' });
       void removeProjectDir(PROJECTS_DIR, projectId).catch(() => {});
     },
     invalidateTeamProjectCatalog: () => {
@@ -6065,6 +6437,13 @@ export async function startServer({
     );
     const captureActivationFence = (): string | null =>
       workspaceTeamPluginBindingActivationFence(db, workspaceId, resource.id);
+    const registerTeamPluginOwner = async () => {
+      await resourceOwnerRegistry?.registerUser({
+        kind: 'plugin', id: resource.id, sourceKind: 'local', localPath: targetDir,
+        workspaceId, teamId: workspaceId,
+        metadata: { management: 'team-mirror', versionId: resource.versionId ?? null },
+      });
+    };
     const markTeamSynced = (): boolean => {
       const existingBinding = getWorkspaceResourceByResourceId(
         db,
@@ -6098,12 +6477,13 @@ export async function startServer({
       resource.versionId &&
       teamResourceVersions.get(workspaceId, 'plugin', resource.id) === resource.versionId
     ) {
-      await activateWorkspaceTeamPluginIfStillShared({
+      const activated = await activateWorkspaceTeamPluginIfStillShared({
         captureActivationFence,
         stillShared: () => teamResourceStillShared('plugin', resource, scope),
         activationFenceIsCurrent: (fence) => captureActivationFence() === fence,
         activate: markTeamSynced,
       });
+      if (activated) await registerTeamPluginOwner();
       return;
     }
     const existing = getInstalledPlugin(db, resource.id);
@@ -6112,12 +6492,13 @@ export async function startServer({
       ? existing.manifest.description.trim()
       : '';
     if (fs.existsSync(targetDir) && !resource.versionId && (!remoteDescription || localDescription === remoteDescription)) {
-      await activateWorkspaceTeamPluginIfStillShared({
+      const activated = await activateWorkspaceTeamPluginIfStillShared({
         captureActivationFence,
         stillShared: () => teamResourceStillShared('plugin', resource, scope),
         activationFenceIsCurrent: (fence) => captureActivationFence() === fence,
         activate: markTeamSynced,
       });
+      if (activated) await registerTeamPluginOwner();
       return;
     }
 
@@ -6169,6 +6550,7 @@ export async function startServer({
         activate: markTeamSynced,
       });
       if (!activated) return;
+      await registerTeamPluginOwner();
       if (resource.versionId) {
         await teamResourceVersions.set(
           workspaceId,
@@ -7151,6 +7533,22 @@ export async function startServer({
     readAnalyticsContext,
   };
 
+  initSyncEngine({
+    runtimeDataDir: RUNTIME_DATA_DIR,
+    projectsDir: PROJECTS_DIR,
+    hasActiveRun: (projectId) =>
+      design.runs.list({ projectId }).some((run) => !design.runs.isTerminal(run.status)),
+    resourceNamespaces: {
+      'design-system': { prefix: 'dsys--', rootDir: USER_DESIGN_SYSTEMS_DIR },
+      brand: { prefix: 'brnd--', rootDir: BRANDS_DIR },
+    },
+  });
+  if (principalAuthConfig.enabled && principalAuthConfig.source === 'static') {
+    void backfillRegisteredResourceNamespaces().catch((error) => {
+      console.warn('[sync] brand/design-system startup backfill failed', error);
+    });
+  }
+
   // Runs are process-local, but their terminal obligations are durable. On a
   // fresh daemon boot, repair stale message rows and replay any PostHog or
   // Langfuse terminal work whose checkpoint was not committed. Network work
@@ -7407,6 +7805,8 @@ export async function startServer({
     db,
     getWorkspaceProject,
     getWorkspaceProjectByProjectId,
+    enforceUnboundProjectOwner: daemonDbConfig.kind === 'postgres',
+    getProjectFactOwner,
     isProjectRevoked: (_db, projectId) =>
       revokedTeamProjectMirrors.has(projectId),
     isProjectUnmaterializedPlaceholder: (_db, projectId) =>
@@ -7451,20 +7851,44 @@ export async function startServer({
       },
     };
   };
+  const syncingWriteProjectFile: typeof writeProjectFile = async (...args) =>
+    runProjectMutation(args[1], args[5], async () => {
+      const result = await writeProjectFile(...args);
+      markProjectSyncDirty(args[1], args[5]);
+      return result;
+    });
+  const syncingRenameProjectFile: typeof renameProjectFile = async (...args) =>
+    runProjectMutation(args[1], args[4], async () => {
+      const result = await renameProjectFile(...args);
+      markProjectSyncDirty(args[1], args[4]);
+      return result;
+    });
+  const syncingDeleteProjectFile: typeof deleteProjectFile = async (...args) =>
+    runProjectMutation(args[1], args[3], async () => {
+      const result = await deleteProjectFile(...args);
+      markProjectSyncDirty(args[1], args[3]);
+      return result;
+    });
+  const syncingDeleteProjectFolder: typeof deleteProjectFolder = async (...args) =>
+    runProjectMutation(args[1], args[3], async () => {
+      const result = await deleteProjectFolder(...args);
+      markProjectSyncDirty(args[1], args[3]);
+      return result;
+    });
   const projectFileDeps = {
     ensureProject,
     listFiles,
     listProjectFolders,
     createProjectFolder,
-    deleteProjectFolder,
+    deleteProjectFolder: syncingDeleteProjectFolder,
     searchProjectFiles,
     readProjectFile,
     resolveProjectDir,
     resolveProjectFilePath,
     parseByteRange,
-    renameProjectFile,
-    deleteProjectFile,
-    writeProjectFile,
+    renameProjectFile: syncingRenameProjectFile,
+    deleteProjectFile: syncingDeleteProjectFile,
+    writeProjectFile: syncingWriteProjectFile,
     sanitizeName,
     sanitizePath,
     listTabs,
@@ -7496,7 +7920,9 @@ export async function startServer({
     normalizeProjectDisplayStatus,
     composeProjectDisplayStatus,
     listProjects,
-    listUnboundProjects,
+    listUnboundProjects: daemonDbConfig.kind === 'postgres'
+      ? (store: typeof db) => listOwnedUnboundProjects(store, requireRequestContext())
+      : listUnboundProjects,
   };
   const projectEventDeps = { subscribeFileEvents, activeProjectEventSinks };
   const importDeps = { importClaudeDesignZip, projectDir, detectEntryFile };
@@ -7565,7 +7991,18 @@ export async function startServer({
   };
   const appConfigDeps = {
     readAppConfig,
-    writeAppConfig,
+    writeAppConfig: (dataDir, patch) => {
+      if (!patch?.orbit) return writeAppConfig(dataDir, patch);
+      const principal = getRequestContext();
+      const { factPrincipal: _untrustedFactPrincipal, ...publicOrbit } = patch.orbit;
+      return writeAppConfig(dataDir, {
+        ...patch,
+        orbit: {
+          ...publicOrbit,
+          ...(principal ? { factPrincipal: { tenantId: principal.tenantId, userId: principal.userId } } : {}),
+        },
+      });
+    },
     onAppConfigWritten: () => {
       // AMR credentials may be overridden through Settings. Observe every
       // completed write so even an A -> B -> A transition with no intervening
@@ -7671,6 +8108,7 @@ export async function startServer({
     projectFiles: projectFileDeps,
     conversations: conversationDeps,
     auth: authDeps,
+    resourceOwnerRegistry,
     fetchProjectCreationWorkspaceDirectory,
     enforceWorkspaceProjectMutation: enforceAuthoritativeProjectMutation,
   });
@@ -7728,10 +8166,19 @@ export async function startServer({
   registerProjectRoutes(app, {
     db,
     design,
+    businessFacts,
+    businessFactsOutbox,
     http: httpDeps,
     paths: pathDeps,
     projectStore: projectStoreDeps,
     projectFiles: projectFileDeps,
+    projectSync: {
+      markDirty: markProjectSyncDirty,
+      hydrate: hydrateManagedProject,
+      dropState: dropProjectSyncState,
+      reviveProject: reviveProjectSync,
+      runMutation: runProjectMutation,
+    },
     conversations: conversationDeps,
     templates: templateDeps,
     status: projectStatusDeps,
@@ -7741,6 +8188,7 @@ export async function startServer({
     verifyWorkspaceRequestAuthority,
     verifyPersonalProjectDeleteLeaseAuthority,
     authorizeProjectRequest,
+    deleteProjectMemoryForCurrentPrincipal,
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
     isProjectUnmaterializedPlaceholder: (projectId) =>
@@ -8013,6 +8461,8 @@ export async function startServer({
       canMutateUserDesignSystem,
       mimeFor,
     },
+    registry: brandDesignSystemRegistry,
+    resourceSync: { hydrate: hydrateResource, markDirty: markResourceDirty },
     tokenContractRebuild: {
       maybeStartForImportedDesignSystem: async (designSystemId) => {
         const preparation = await prepareDesignTokenContractRebuild(
@@ -8108,6 +8558,12 @@ export async function startServer({
       updateUserDesignSystem,
       updateUserDesignSystemRevisionStatus,
     },
+    registry: brandDesignSystemRegistry,
+    resourceSync: {
+      hydrate: hydrateResource,
+      markDirty: markResourceDirty,
+      dropState: dropResourceState,
+    },
     generationJobs: designSystemGenerationJobs,
   });
   registerBrandRoutes(app, {
@@ -8140,6 +8596,12 @@ export async function startServer({
     dataDir: RUNTIME_DATA_DIR,
     db,
     runs: design.runs,
+    registry: brandDesignSystemRegistry,
+    resourceSync: {
+      hydrate: hydrateResource,
+      markDirty: markResourceDirty,
+      dropState: dropResourceState,
+    },
     randomId,
     resolveTranscriptAgent: async () => {
       const config = await readAppConfig(RUNTIME_DATA_DIR);
@@ -8247,6 +8709,13 @@ export async function startServer({
     uploads: uploadDeps,
     node: nodeDeps,
     projectStore: projectStoreDeps,
+    projectSync: {
+      markDirty: markProjectSyncDirty,
+      hydrate: hydrateManagedProject,
+      dropState: dropProjectSyncState,
+      reviveProject: reviveProjectSync,
+      runMutation: runProjectMutation,
+    },
     authorizeProjectRequest,
     isProjectRevoked: (projectId) =>
       revokedTeamProjectMirrors.has(projectId),
@@ -8292,7 +8761,10 @@ export async function startServer({
   ): boolean | string => {
     if (!scope) return true;
     const installed = getInstalledPlugin(db, pluginId);
-    if (installed?.sourceKind === 'bundled') {
+    // A same public slug owned by another tenant has no current-principal row.
+    // Tenant-qualified storage makes this a valid first install, not a conflict.
+    if (!installed) return true;
+    if (installed.sourceKind === 'bundled') {
       return `Bundled plugin "${pluginId}" cannot be replaced`;
     }
     const binding = getWorkspaceResourceByResourceId(db, 'plugin', pluginId);
@@ -8386,7 +8858,17 @@ export async function startServer({
             allowScopedPluginReplace(installWorkspaceContext, pluginId),
         })) {
           writeEvent(ev.kind, ev);
-          if (ev.kind === 'success' && mode === 'install' && installWorkspaceContext && ev.plugin?.id) {
+          if (ev.kind === 'success' && ev.plugin?.id && resourceOwnerRegistry) {
+            const remoteSourceKind = source.startsWith('github:') ? 'github' : /^https:\/\//i.test(source) ? 'http' : null;
+            await resourceOwnerRegistry.registerUser({
+              kind: 'plugin', id: ev.plugin.id,
+              sourceKind: remoteSourceKind ?? 'local',
+              ...(remoteSourceKind ? { retrievalUrl: source } : { localPath: ev.plugin.fsPath }),
+              workspaceId: installWorkspaceContext?.workspaceId ?? null,
+              metadata: { version: ev.plugin.version, installMode: mode },
+            });
+          }
+          if (ev.kind === 'success' && mode === 'install' && installWorkspaceContext && ev.plugin?.id && !resourceOwnerRegistry) {
             ensureWorkspaceResource(db, 'plugin', installWorkspaceContext.workspaceId, ev.plugin.id, {
               visibility: 'personal',
               resourceState: 'active',
@@ -8466,7 +8948,7 @@ export async function startServer({
       try { const body = req.body && typeof req.body === 'object' ? req.body : {}; const target = body.target === 'od' || body.target === 'claude-plugin' || body.target === 'agent-skill' ? body.target : null; if (!target) return res.status(400).json({ error: 'target must be one of: od, claude-plugin, agent-skill' }); const outDir = typeof body.outDir === 'string' && body.outDir.length > 0 ? body.outDir : null; if (!outDir) return res.status(400).json({ error: 'outDir is required' }); const { exportPlugin, ExportError } = await import('./plugins/export.js'); try { const result = await exportPlugin({ db, target, outDir, ...(typeof body.snapshotId === 'string' ? { snapshotId: body.snapshotId } : {}), ...(typeof body.projectId === 'string' ? { projectId: body.projectId } : {}) }); res.json({ ok: true, ...result }); } catch (err) { if (err instanceof ExportError) return res.status(404).json({ error: err.message }); throw err; } } catch (err) { res.status(500).json({ error: String(err) }); }
     },
     handleProjectInstallFolder: async (req, res) => {
-      try { const project = getProject(db, req.params.id); if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found'); const projectBinding = getWorkspaceProjectByProjectId(db, req.params.id); if (!projectBinding?.workspaceId || !projectBinding.createdByWorkspaceMemberId) return sendApiError(res, 409, 'WORKSPACE_PROJECT_UNBOUND', 'project must have an exact workspace owner before installing a plugin'); const installScope = { workspaceId: String(projectBinding.workspaceId), workspaceMemberId: String(projectBinding.createdByWorkspaceMemberId) }; const body = req.body && typeof req.body === 'object' ? req.body : {}; const relativePath = normalizeProjectPluginFolderPath(body.path); const projectRoot = resolveProjectDir(PROJECTS_DIR, req.params.id, project.metadata); const folder = await resolveProjectChildDirectory(projectRoot, relativePath); const warnings = []; const log = []; let plugin = null; let message = 'Install finished.'; for await (const ev of installPlugin(db, { source: folder, roots: PLUGIN_REGISTRY_ROOTS, allowReplacePlugin: (pluginId) => allowScopedPluginReplace(installScope, pluginId) })) { if (ev.message) log.push(ev.message); if (Array.isArray(ev.warnings)) warnings.splice(0, warnings.length, ...ev.warnings); if (ev.kind === 'success') { plugin = ev.plugin; ensureWorkspaceResource(db, 'plugin', installScope.workspaceId, ev.plugin.id, { visibility: 'personal', resourceState: 'active', createdByWorkspaceMemberId: installScope.workspaceMemberId, updatedByWorkspaceMemberId: installScope.workspaceMemberId }); message = `Installed ${ev.plugin.title}.`; break; } if (ev.kind === 'error') { message = ev.message; break; } } res.status(plugin ? 200 : 400).json({ ok: Boolean(plugin), plugin, warnings, message, log }); } catch (err) { const code = err && err.code; const status = code === 'ENOENT' || code === 'ENOTDIR' ? 404 : 400; sendApiError(res, status, status === 404 ? 'PLUGIN_FOLDER_NOT_FOUND' : 'BAD_REQUEST', String(err?.message || err)); }
+      try { const project = getProject(db, req.params.id); if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found'); const projectBinding = getWorkspaceProjectByProjectId(db, req.params.id); if (!projectBinding?.workspaceId || !projectBinding.createdByWorkspaceMemberId) return sendApiError(res, 409, 'WORKSPACE_PROJECT_UNBOUND', 'project must have an exact workspace owner before installing a plugin'); const installScope = { workspaceId: String(projectBinding.workspaceId), workspaceMemberId: String(projectBinding.createdByWorkspaceMemberId) }; const body = req.body && typeof req.body === 'object' ? req.body : {}; const relativePath = normalizeProjectPluginFolderPath(body.path); const projectRoot = resolveProjectDir(PROJECTS_DIR, req.params.id, project.metadata); const folder = await resolveProjectChildDirectory(projectRoot, relativePath); const warnings = []; const log = []; let plugin = null; let message = 'Install finished.'; for await (const ev of installPlugin(db, { source: folder, roots: PLUGIN_REGISTRY_ROOTS, allowReplacePlugin: (pluginId) => allowScopedPluginReplace(installScope, pluginId) })) { if (ev.message) log.push(ev.message); if (Array.isArray(ev.warnings)) warnings.splice(0, warnings.length, ...ev.warnings); if (ev.kind === 'success') { plugin = ev.plugin; if (resourceOwnerRegistry) { await resourceOwnerRegistry.registerUser({ kind: 'plugin', id: ev.plugin.id, sourceKind: 'local', localPath: ev.plugin.fsPath, projectId: req.params.id, workspaceId: installScope.workspaceId, metadata: { version: ev.plugin.version, installMode: 'project-folder' } }); } else { ensureWorkspaceResource(db, 'plugin', installScope.workspaceId, ev.plugin.id, { visibility: 'personal', resourceState: 'active', createdByWorkspaceMemberId: installScope.workspaceMemberId, updatedByWorkspaceMemberId: installScope.workspaceMemberId }); } message = `Installed ${ev.plugin.title}.`; break; } if (ev.kind === 'error') { message = ev.message; break; } } res.status(plugin ? 200 : 400).json({ ok: Boolean(plugin), plugin, warnings, message, log }); } catch (err) { const code = err && err.code; const status = code === 'ENOENT' || code === 'ENOTDIR' ? 404 : 400; sendApiError(res, status, status === 404 ? 'PLUGIN_FOLDER_NOT_FOUND' : 'BAD_REQUEST', String(err?.message || err)); }
     },
     handleProjectPluginCli: async (req, res, action) => {
       try { const project = getProject(db, req.params.id); if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found'); const body = req.body && typeof req.body === 'object' ? req.body : {}; const relativePath = normalizeProjectPluginFolderPath(body.path); const projectRoot = resolveProjectDir(PROJECTS_DIR, req.params.id, project.metadata); const folder = await resolveProjectChildDirectory(projectRoot, relativePath); const subcommand = action === 'publish-github' ? 'publish-repo' : 'open-design-pr'; const timeout = action === 'publish-github' ? 240_000 : 300_000; const result = await execCommandViaLoginShell(OD_NODE_BIN, [OD_BIN, 'plugin', subcommand, folder, '--json'], { timeout }); const payload = result.stdout ? JSON.parse(result.stdout) : null; if (!result.ok || !payload?.ok) return res.status(500).json({ ok: false, code: payload?.error?.label || (action === 'publish-github' ? 'publish-repo-failed' : 'open-design-pr-failed'), message: payload?.error?.stderr || payload?.error?.stdout || (action === 'publish-github' ? 'GitHub repo publish failed.' : 'OpenDesign PR creation failed.'), log: payload?.steps?.map((step) => step.stderr || step.stdout || step.command).filter(Boolean) ?? [result.stderr || result.stdout || `${subcommand} failed`] }); res.json({ ok: true, message: action === 'publish-github' ? (payload.repoUrl ? `Published plugin to ${payload.repoUrl}.` : 'Published plugin to GitHub.') : (payload.prUrl ? `Opened OpenDesign PR flow at ${payload.prUrl}.` : 'Opened OpenDesign PR flow.'), ...(payload.repoUrl ? { url: payload.repoUrl } : {}), ...(payload.prUrl ? { url: payload.prUrl } : {}), log: payload.steps?.map((step) => step.stderr || step.stdout || step.command).filter(Boolean) ?? [] }); } catch (err) { res.status(400).json({ ok: false, message: String(err?.message || err), log: [] }); }
@@ -8681,6 +9163,7 @@ export async function startServer({
 
   registerPluginRoutes(app, {
     db,
+    resourceOwnerRegistry,
     authorizeProjectRequest,
     teamResources: collab.teamResources,
     paths: { PROJECTS_DIR, PLUGIN_REGISTRY_ROOTS, PLUGIN_LOCKFILE_PATH },
@@ -8699,6 +9182,7 @@ export async function startServer({
     plugins: {
       listInstalledPlugins: listWorkspacePlugins,
       getInstalledPlugin,
+      setPluginEnabled,
       getWorkspacePlugin: getWorkspacePluginForRequest,
       getLocalPluginBySource,
       installPlugin,
@@ -8726,6 +9210,7 @@ export async function startServer({
   });
   registerPluginMarketplaceRoutes(app, {
     db,
+    resourceOwnerRegistry,
     bundledMarketplaceEntries,
     createMarketplaceFetcher,
     marketplaceRegistryIdFromUrl,
@@ -8784,6 +9269,13 @@ export async function startServer({
     node: nodeDeps,
     paths: { PROJECTS_DIR },
     projectStore: projectStoreDeps,
+    projectSync: {
+      markDirty: markProjectSyncDirty,
+      hydrate: hydrateManagedProject,
+      dropState: dropProjectSyncState,
+      reviveProject: reviveProjectSync,
+      runMutation: runProjectMutation,
+    },
     authorizeProjectRequest,
     authorizeProjectToolRequest,
     isProjectUnmaterializedPlaceholder: (projectId) =>
@@ -8812,6 +9304,7 @@ export async function startServer({
       typeof projectId === 'string' && projectId
         ? getProject(db, projectId)
         : null;
+    const trustedMemoryScope = TrustedMemoryScope.fromLoadedProject(project);
     const projectWorkspaceBinding =
       typeof projectId === 'string' && projectId
         ? getWorkspaceProjectByProjectId(db, projectId)
@@ -9158,7 +9651,7 @@ export async function startServer({
     // empty; the composer drops the block on a falsy value.
     let memoryBody = '';
     try {
-      memoryBody = await composeMemoryBody(RUNTIME_DATA_DIR);
+      memoryBody = await composeMemoryBody(RUNTIME_DATA_DIR, trustedMemoryScope);
     } catch (err) {
       console.warn('[memory] composeMemoryBody failed', err);
     }
@@ -9632,6 +10125,18 @@ export async function startServer({
   };
 
   const startChatRun = async (chatBody, run) => {
+    // Capture the authenticated identity before any await. Hosted queue rows are
+    // stamped only from principal ALS, never from request bodies or headers.
+    const runPrincipal = getRequestContext();
+    if (daemonDbConfig.kind === 'postgres' && !runPrincipal) {
+      throw new Error('Missing principal for persistent run queue');
+    }
+    // Defense in depth for non-HTTP/retry callers: never launch an agent after
+    // project deletion has synchronously marked its lifecycle tombstone.
+    const lifecycleProjectId = run?.projectId ?? chatBody?.projectId;
+    if (typeof lifecycleProjectId === 'string' && lifecycleProjectId) {
+      assertProjectActive(lifecycleProjectId);
+    }
     const lifecycle = createRunLifecycleTracer(run);
     lifecycle.mark('chat_run_started');
     const pendingNativeSessionContinue =
@@ -9669,6 +10174,11 @@ export async function startServer({
       byokMediaDefaults,
     } = chatBody;
     lifecycle.mark('prompt_build_start');
+    // Scope is derived only from the successfully loaded current project. It is
+    // captured by every asynchronous extraction closure for this run.
+    const trustedMemoryScope = TrustedMemoryScope.fromLoadedProject(
+      typeof projectId === 'string' && projectId ? getProject(db, projectId) : null,
+    );
     if (typeof projectId === 'string' && projectId) run.projectId = projectId;
     if (typeof conversationId === 'string' && conversationId)
       run.conversationId = conversationId;
@@ -9739,9 +10249,22 @@ export async function startServer({
         BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
       );
     }
+    const trustedRequestProviderConfig = getRequestContext()?.providerConfig ?? null;
+    const injectedOpenCodeProviderConfig = def.id === 'opencode'
+      ? await resolveOpenCodeProviderConfig()
+      : null;
+    if (def.id === 'opencode' && process.env.OD_BACKEND_URL && !injectedOpenCodeProviderConfig) {
+      return design.runs.fail(
+        run,
+        'AGENT_MODEL_NOT_CONFIGURED',
+        '本次运行未解析到模型配置，已安全中止。请在后台设置默认模型。',
+      );
+    }
     const requestedRuntimeModel = def.id === 'byok-opencode'
       ? byokOpenCodeProvider?.modelId ?? null
-      : model;
+      : def.id === 'opencode'
+        ? providerConfigModel(injectedOpenCodeProviderConfig) ?? model
+        : model;
     // Validate the checked-in runtime timeout hints immediately
     // after the runtime def is selected and before any side-effectful
     // setup (auto-memory extract, `.mcp.json` write/unlink,
@@ -9802,7 +10325,7 @@ export async function startServer({
       message.trim().length > 0
     ) {
       try {
-        await extractFromMessage(RUNTIME_DATA_DIR, message);
+        await extractFromMessage(RUNTIME_DATA_DIR, message, trustedMemoryScope);
       } catch (err) {
         console.warn('[memory] extractFromMessage failed', err);
       }
@@ -9838,6 +10361,17 @@ export async function startServer({
         existingProjectFolders = [];
       }
     }
+    const projectRecord =
+      typeof projectId === 'string' && projectId
+        ? getProject(db, projectId)
+        : null;
+    const projectMetadata = projectRecord?.metadata as { baseDir?: unknown } | null | undefined;
+    const shouldSyncManagedProject = Boolean(
+      cwd
+      && typeof projectId === 'string'
+      && projectId
+      && !(typeof projectMetadata?.baseDir === 'string' && projectMetadata.baseDir),
+    );
     if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
 
     // Sanitise supplied image paths: must live under UPLOAD_DIR and stay
@@ -9858,10 +10392,46 @@ export async function startServer({
         'Failed to read one or more image attachments.',
       );
     }
-    const amrStagedImages =
-      def.id === 'amr'
-        ? await stageAmrImagePaths(cwd ?? PROJECT_ROOT, safeImages, UPLOAD_DIR)
-        : safeImages;
+    const stageAmrImages = () =>
+      stageAmrImagePaths(cwd ?? PROJECT_ROOT, safeImages, UPLOAD_DIR);
+    const amrStagedImages = def.id === 'amr'
+      ? shouldSyncManagedProject
+        ? await runProjectMutation(projectId, projectMetadata, stageAmrImages)
+        : await stageAmrImages()
+      : safeImages;
+
+    const configuredPrefetchMax = Number(process.env.OD_SYNC_PREFETCH_MAX_BYTES);
+    const prefetchMax = configuredPrefetchMax > 0
+      ? configuredPrefetchMax
+      : 8 * 1024 * 1024;
+    const collectLargeManifestFiles = (
+      manifest: { files: Record<string, { size: number }> } | null,
+    ): Array<{ path: string; size: number }> => manifest
+      ? Object.entries(manifest.files)
+          .filter(([, entry]) => entry.size >= prefetchMax)
+          .map(([relativePath, entry]) => ({ path: relativePath, size: entry.size }))
+      : [];
+    let largeManifestFiles: Array<{ path: string; size: number }> = [];
+    let syncEnabledForRun = false;
+    if (shouldSyncManagedProject) {
+      try {
+        const flushed = await flushProjectSync(projectId);
+        syncEnabledForRun = flushed.enabled;
+        if (flushed.enabled) {
+          largeManifestFiles = collectLargeManifestFiles(flushed.manifest);
+          existingProjectFiles = await listFiles(PROJECTS_DIR, projectId, projectMetadata);
+          existingProjectFolders = await listProjectFolders(PROJECTS_DIR, projectId, projectMetadata);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[sync] pre-run flush failed: ${message}`);
+        return design.runs.fail(
+          run,
+          'PROJECT_SYNC_FAILED',
+          `project file sync failed, please retry: ${message}`,
+        );
+      }
+    }
 
     // Project-scoped attachments: project-relative paths inside cwd. Each
     // is run through the same path-traversal guard the file CRUD endpoints
@@ -9879,10 +10449,6 @@ export async function startServer({
     // systemPrompt. We also stitch in the cwd hint so the agent knows
     // where its file tools should write, and the attachment list so it
     // doesn't have to guess what the user just dropped in.
-    const projectRecord =
-      typeof projectId === 'string' && projectId
-        ? getProject(db, projectId)
-        : null;
     const effectiveRunSkillId = resolveSkillId(
       typeof skillId === 'string' && skillId
         ? skillId
@@ -9902,7 +10468,6 @@ export async function startServer({
           linkedDirs.map((d) => `- \`${d}\``).join('\n')
         }`
       : '';
-    const attachmentHint = formatProjectAttachmentHint(safeAttachments);
     // Plan §3.A3 / spec §9: thread plugin context onto every tool token
     // so the connector execute route can re-validate the §5.3
     // capability gate without re-reading the SQLite snapshot row.
@@ -9961,7 +10526,22 @@ export async function startServer({
     // values further down at .mcp.json write time — see the spawn block
     // below — instead of re-reading.
     let externalMcpConfig = { servers: [] };
-    if (!SANDBOX_RUNTIME.enabled) {
+    // OD_BACKEND_URL is also used by local sync installs. Only hosted
+    // PostgreSQL/trusted-proxy mode replaces upstream's local MCP config with
+    // the operator-controlled global policy.
+    const managedPlatformMcp = rejectsClientMcpServers() && Boolean(process.env.OD_BACKEND_URL);
+    if (managedPlatformMcp) {
+      try {
+        externalMcpConfig = { servers: await getPlatformMcpServers() };
+        console.info('[platform-mcp] global enabled servers loaded', {
+          count: externalMcpConfig.servers.length,
+        });
+      } catch {
+        // Deliberately omit principal, URLs, headers and env: diagnostics must
+        // establish the failure class without leaking tenant data or secrets.
+        console.warn('[platform-mcp] global fetch failed');
+      }
+    } else if (!SANDBOX_RUNTIME.enabled) {
       try {
         externalMcpConfig = await readMcpConfig(RUNTIME_DATA_DIR);
       } catch (err) {
@@ -9971,16 +10551,18 @@ export async function startServer({
         );
       }
     }
-    const runScopedMcpServers = Array.isArray(run?.toolBundle?.mcpServers)
-      ? run.toolBundle.mcpServers
-      : [];
+    // Defense in depth for queued/restored rows created before route validation:
+    // managed SaaS never lets run metadata add or shadow operator MCP servers.
+    const runScopedMcpServers = trustedRunScopedMcpServers(run?.toolBundle);
     const {
       enabledServers: enabledExternalMcp,
       persistedTokenServerIds,
     } = resolveExternalMcpServersForRun({
       persistedServers: externalMcpConfig.servers,
       runScopedServers: runScopedMcpServers,
-      sandboxMode: SANDBOX_RUNTIME.enabled,
+      // Managed platform servers are backend-authorized and must survive the
+      // sandbox rule that excludes untrusted locally persisted MCP entries.
+      sandboxMode: SANDBOX_RUNTIME.enabled && !managedPlatformMcp,
     });
     const oauthTokensForSpawn = {};
     if (persistedTokenServerIds.size > 0) {
@@ -10027,8 +10609,9 @@ export async function startServer({
         );
       }
     }
+    // Every enabled backend server is actually injected below. Include all of
+    // them in the prompt; authMode=none/static-header servers have no OAuth token.
     const connectedExternalMcp = enabledExternalMcp
-      .filter((s) => typeof oauthTokensForSpawn[s.id] === 'string')
       .map((s) => ({ id: s.id, label: s.label }));
 
     // Intent signals gate stable-region prompt blocks, so every flip changes
@@ -10125,20 +10708,56 @@ export async function startServer({
     // `readDesignSystem`), so an agent never has to open them via the
     // filesystem.
     if (cwd && activeSkillDirs.length > 0) {
-      for (const skillDir of activeSkillDirs) {
-        const result = await stageActiveSkill(
-          cwd,
-          skillCwdAliasSegment(skillDir),
-          skillDir,
-          (msg) => console.warn(msg),
+      const stageSkills = async (): Promise<{ stagedAny: boolean; failures: string[] }> => {
+        let stagedAny = false;
+        const failures: string[] = [];
+        for (const skillDir of activeSkillDirs) {
+          const result = await stageActiveSkill(
+            cwd,
+            skillCwdAliasSegment(skillDir),
+            skillDir,
+            (msg) => console.warn(msg),
+          );
+          if (result.staged) {
+            stagedAny = true;
+          } else {
+            const reason = result.reason ?? 'unknown reason';
+            failures.push(reason);
+            console.warn(
+              `[od] skill-stage skipped: ${reason}; falling back to absolute paths`,
+            );
+          }
+        }
+        return { stagedAny, failures };
+      };
+      const stageResult = shouldSyncManagedProject
+        ? await runProjectMutation(projectId, projectMetadata, stageSkills)
+        : await stageSkills();
+      if (syncEnabledForRun && stageResult.failures.length > 0) {
+        console.error(`[sync] skill staging failed: ${stageResult.failures.join('; ')}`);
+        return design.runs.fail(
+          run,
+          'PROJECT_SYNC_FAILED',
+          'project skill staging failed, please retry',
         );
-        if (!result.staged) {
-          console.warn(
-            `[od] skill-stage skipped: ${result.reason ?? 'unknown reason'}; falling back to absolute paths`,
+      }
+      if (stageResult.stagedAny && syncEnabledForRun) {
+        try {
+          const flushed = await flushProjectSync(projectId);
+          if (flushed.enabled) largeManifestFiles = collectLargeManifestFiles(flushed.manifest);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[sync] post-skill-stage flush failed: ${message}`);
+          return design.runs.fail(
+            run,
+            'PROJECT_SYNC_FAILED',
+            `project file sync failed, please retry: ${message}`,
           );
         }
       }
     }
+    const attachmentHint =
+      formatProjectAttachmentHint(safeAttachments) + formatLazyHydrationHint(largeManifestFiles);
     // Resolve the agent's effective working directory once and use it
     // everywhere the agent could read it (buildArgs runtimeContext, spawn
     // cwd, ACP session new). Falling back to PROJECT_ROOT — rather than
@@ -11308,7 +11927,9 @@ export async function startServer({
             allowedDirectories: [effectiveCwd, ...extraAllowedDirs],
             ...(byokOpenCodeProvider
               ? { extraConfig: byokOpenCodeProvider.config }
-              : {}),
+              : injectedOpenCodeProviderConfig
+                ? { extraConfig: parseProviderConfig(injectedOpenCodeProviderConfig) ?? {} }
+                : {}),
           },
         );
       } catch (err) {
@@ -11623,6 +12244,25 @@ export async function startServer({
         }
       }
     }
+
+    lifecycle.mark('admission_wait_start');
+    run.abandonGate = () => runQueue.cancelPending(run.id);
+    const gateSlot = await runQueue.acquire({
+      id: run.id,
+      principal: runPrincipal ?? { tenantId: '__local__', userId: '__local__' },
+      onQueued: (position, ahead) => send('queued', { position, ahead }),
+    });
+    run.abandonGate = null;
+    lifecycle.mark('admission_wait_end');
+    if (!gateSlot || run.cancelRequested || design.runs.isTerminal(run.status)) {
+      gateSlot?.release('canceled');
+      cleanupPromptFile();
+      if (!design.runs.isTerminal(run.status)) {
+        design.runs.finish(run, 'canceled', null, null);
+      }
+      return;
+    }
+    run.gateSlot = gateSlot;
 
     // Serialize antigravity spawns whose buildArgs writes a concrete
     // model into settings.json. Two concurrent runs with different
@@ -12427,6 +13067,10 @@ export async function startServer({
         // re-fired turn collapses but an identical (message, reply) in another
         // conversation is still examined.
         conversationId: run.conversationId ?? null,
+        trustedMemoryScope,
+        // Capture the authenticated request config in the run closure. Child
+        // close/import callbacks must not depend on whatever request is active later.
+        trustedProviderConfig: trustedRequestProviderConfig,
       };
       void import('./memory-llm.js')
         .then(({ extractWithLLM, distillAnnotationsToMemory }) => {
@@ -14117,6 +14761,7 @@ export async function startServer({
       metadata: { kind: 'orbit', trigger },
       createdAt: now,
       updatedAt: now,
+      ...(appConfig.orbit?.factPrincipal ? { factPrincipal: appConfig.orbit.factPrincipal } : {}),
     });
     bindProjectToPersistedAutomationWorkspace(
       (input) => ensureWorkspaceProject(db, input),
@@ -14245,6 +14890,8 @@ export async function startServer({
   registerRunRoutes(app, {
     db,
     design,
+    businessFacts,
+    businessFactsOutbox,
     http: httpDeps,
     paths: { PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },
@@ -14317,7 +14964,16 @@ export async function startServer({
 
   // Each routine fire resolves an agent, prepares project/conversation state,
   // and dispatches into the same chat runner used by manual runs.
-  routineService.setRunHandler(async ({ routine, trigger, startedAt, runId }) => {
+  routineService.setRunHandler((input) => {
+    // Timers do not inherit an HTTP ALS scope. Prefer the principal durably
+    // recorded with the routine's business fact; static mode is the only safe
+    // fallback. Trusted-proxy mode never receives a fabricated daemon identity.
+    const routineFactOwner = getRoutine(db, input.routine.id);
+    const routineFactPrincipal = routineFactOwner?.factTenantId && routineFactOwner?.factCreatorId
+      ? { tenantId: routineFactOwner.factTenantId, userId: routineFactOwner.factCreatorId }
+      : undefined;
+    const runRoutine = async () => {
+    const { routine, trigger, startedAt, runId } = input;
     const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
     let agentId = routine.agentId
       || (typeof appConfig.agentId === 'string' && appConfig.agentId ? appConfig.agentId : null);
@@ -14385,6 +15041,7 @@ export async function startServer({
         },
         createdAt: now,
         updatedAt: now,
+        ...(routineFactPrincipal ? { factPrincipal: routineFactPrincipal } : {}),
       });
       bindProjectToPersistedAutomationWorkspace(
         (input) => ensureWorkspaceProject(db, input),
@@ -14710,7 +15367,20 @@ export async function startServer({
       discard,
       discardUnstarted,
     };
+    };
+    return routineFactPrincipal
+      ? runWithRequestContext(routineFactPrincipal, runRoutine)
+      : runWithStaticPrincipalContext(principalAuthConfig, runRoutine);
   });
+  if (principalAuthConfig.enabled && principalAuthConfig.source === 'trusted-proxy') {
+    // Legacy rows without a durable owner may still be run manually under the
+    // caller's request context, but a timer has no such authority. Do not arm
+    // those timers and then emit a predictable missing-principal error forever.
+    routineService.setScheduleEligibility((routine) => {
+      const owner = getRoutine(db, routine.id);
+      return Boolean(owner?.factTenantId && owner.factCreatorId);
+    });
+  }
   routineService.start();
 
   assertServerContextSatisfiesRoutes({
@@ -14811,14 +15481,20 @@ export async function startServer({
   //   - `apps/daemon/src/cli.ts`            → expects `{ url, server, shutdown }`
   //   - `apps/daemon/sidecar/server.ts`     → expects `{ url, server }`
   //   - `apps/daemon/tests/version-route.test.ts` → expects `{ url, server }`
+  await runQueue.start();
   return await new Promise((resolve, reject) => {
-    let daemonShutdownStarted = false;
+    let daemonShutdownPromise: Promise<void> | undefined;
+    const stopProjectCacheEvictionScheduler = startProjectCacheEvictionScheduler();
+    let backgroundWorkCleanedUp = false;
     const cleanupDaemonBackgroundWork = () => {
+      if (backgroundWorkCleanedUp) return;
+      backgroundWorkCleanedUp = true;
       telemetry.disposeFatalHandlers();
       composioConnectorProvider.stopCatalogRefreshLoop();
       orbitService.stop();
       routineService?.stop();
       clearInterval(teamResourcesPollTimer);
+      stopProjectCacheEvictionScheduler();
       workspaceHubSubscriptions?.dispose();
       hubEventRefreshes.dispose();
       workspaceDirectoryRefreshes.dispose();
@@ -14826,19 +15502,66 @@ export async function startServer({
       proactiveContentPull.dispose();
       collabCloud?.dispose();
     };
-    const shutdownDaemonRuns = async () => {
-      if (daemonShutdownStarted) return;
-      daemonShutdownStarted = true;
-      daemonShuttingDown = true;
-      await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
-      await terminalService.shutdownActive();
-      await browserSessionService.shutdownActive();
-      await design.analytics.shutdown();
+    const shutdownDaemonRuns = (): Promise<void> => {
+      if (!daemonShutdownPromise) {
+        daemonShuttingDown = true;
+        cleanupDaemonBackgroundWork();
+        daemonShutdownPromise = (async () => {
+          const failures: Array<{ stage: string; error: unknown }> = [];
+          const attempt = async (stage: string, work: () => Promise<unknown> | undefined) => {
+            try {
+              await work();
+            } catch (error) {
+              failures.push({ stage, error });
+              console.error(`[od] graceful shutdown stage failed: ${stage}`, error);
+            }
+          };
+
+          await attempt('plugin intents', () => pluginIntentReconciler?.shutdown());
+          await attempt('active runs', () => design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() }));
+          await attempt('run queue', () => runQueue.shutdown());
+          await attempt('terminals', () => terminalService.shutdownActive());
+          await attempt('browser sessions', () => browserSessionService.shutdownActive());
+          // Active run teardown may perform the final project writes. Flush
+          // them before analytics/Postgres and other required resources close;
+          // shutdownSyncEngine also reaches quiescence with admitted writes.
+          await attempt('project sync', () => shutdownSyncEngine());
+          await attempt('analytics', () => design.analytics.shutdown());
+          // Extraction/verification history shares the PG pool. Drain accepted
+          // writes before closePool so shutdown cannot truncate the final phase.
+          await attempt('memory history', () => drainMemoryHistoryWrites());
+          stopMemoryHistoryOutbox();
+          setBusinessProjectFactsSink(null);
+          businessFactsOutbox.stop();
+          if (daemonDbConfig.kind === 'postgres') {
+            await attempt('PostgreSQL pool', () => closePool());
+          }
+          if (failures.length > 0) {
+            throw new AggregateError(
+              failures.map(({ error }) => error),
+              `daemon graceful shutdown failed: ${failures.map(({ stage }) => stage).join(', ')}`,
+            );
+          }
+        })();
+      }
+      return daemonShutdownPromise;
     };
     let server;
+    const handleStartupListenError = (error: Error) => {
+      cleanupDaemonBackgroundWork();
+      void runQueue.shutdown().finally(() => {
+        if (daemonDbConfig.kind === 'postgres') {
+          void closePool().then(() => reject(error), () => reject(error));
+        } else {
+          reject(error);
+        }
+      });
+    };
     try {
       server = app.listen(port, host);
+      server.once('error', handleStartupListenError);
       server.once('listening', () => {
+        server.off('error', handleStartupListenError);
         // Widen the between-request idle window so kept-alive sockets
         // belonging to chat/SSE clients survive the gaps between bursts.
         //
@@ -14888,6 +15611,9 @@ export async function startServer({
           console.log(`[od] daemon listening on ${url}`);
         }
         daemonUrl = url;
+        // Network reconciliation starts only after listen and is intentionally
+        // asynchronous so GitHub latency cannot block readiness.
+        pluginIntentReconciler?.start();
         resolve(returnServer ? {
           url,
           server,
@@ -14897,20 +15623,31 @@ export async function startServer({
       });
     } catch (error) {
       cleanupDaemonBackgroundWork();
-      reject(error);
+      void runQueue.shutdown().finally(() => {
+        if (daemonDbConfig.kind === 'postgres') {
+          void closePool().then(() => reject(error), () => reject(error));
+        } else {
+          reject(error);
+        }
+      });
       return;
     }
     server.once('close', () => {
-      void shutdownDaemonRuns().finally(cleanupDaemonBackgroundWork);
+      void shutdownDaemonRuns().catch((error) => {
+        console.error('[od] graceful shutdown failed', error);
+        process.exitCode = 1;
+      });
     });
     // `app.listen` throws synchronously when the port is already in use on
     // some Node versions, but emits an `error` event on others (and for
     // EACCES / EADDRNOTAVAIL even on the same Node). Wire the event so the
     // returned Promise always settles instead of hanging forever.
-    server.on('error', (error) => {
-      cleanupDaemonBackgroundWork();
-      reject(error);
-    });
+
+  });
+  } catch (error) {
+    if (daemonDbConfig.kind === 'postgres') throw redactPostgresStartupError(error);
+    throw error;
+  }
   });
 }
 

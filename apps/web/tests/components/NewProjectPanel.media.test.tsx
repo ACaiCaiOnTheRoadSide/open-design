@@ -40,13 +40,15 @@ describe('NewProjectPanel media provider badges', () => {
       />,
     );
 
+    expect(document.querySelector('.newproj-working-dir')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Media' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Image' }));
     // Model picker is now a combobox — open the popover so the
     // provider group + status badge become visible in the DOM.
     fireEvent.click(screen.getByTestId('model-picker-trigger'));
 
-    const openaiGroup = screen.getByText('OpenAI').closest('.ds-picker-group');
+    const openaiGroup = screen.getAllByText('OpenAI')
+      .map((node) => node.closest('.ds-picker-group'))
+      .find(Boolean);
     expect(openaiGroup?.textContent).toContain('Configured');
     expect(openaiGroup?.textContent).not.toContain('Integrated');
   });
@@ -66,14 +68,16 @@ describe('NewProjectPanel media provider badges', () => {
     );
 
     fireEvent.click(screen.getByRole('tab', { name: 'Media' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Image' }));
     fireEvent.click(screen.getByTestId('model-picker-trigger'));
 
     expect(screen.queryByText('OpenAI')).toBeNull();
-    expect(screen.queryByTestId('model-picker-option-gpt-image-2')).toBeNull();
+    expect(screen.queryByTestId('model-picker-option-gpt-4o-mini-tts')).toBeNull();
+    expect(screen.queryByTestId('new-project-media-surface-image')).toBeNull();
+    expect(screen.queryByTestId('new-project-media-surface-video')).toBeNull();
+    expect(screen.getByTestId('new-project-media-surface-audio')).toBeTruthy();
   });
 
-  it('uses Vela as the default image provider without media API credentials', async () => {
+  it('uses the default audio model without media API credentials', async () => {
     const onCreate = vi.fn();
     render(
       <NewProjectPanel
@@ -89,27 +93,26 @@ describe('NewProjectPanel media provider badges', () => {
     );
 
     fireEvent.click(screen.getByRole('tab', { name: 'Media' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Image' }));
     await waitFor(() => {
-      expect(screen.getByTestId('model-picker-trigger').textContent).toContain('gpt-image-2 (Cloud)');
+      expect(screen.getByTestId('model-picker-trigger').textContent).toContain('Pick a model');
     });
     fireEvent.change(screen.getByTestId('new-project-name'), {
-      target: { value: 'Vela default image' },
+      target: { value: 'Default audio' },
     });
     fireEvent.click(screen.getByTestId('create-project'));
 
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
-          kind: 'image',
-          imageModel: 'vela/gpt-image-2',
-          imageAspect: '1:1',
+          kind: 'audio',
+          audioKind: 'speech',
+          audioDuration: 10,
         }),
       }),
     );
   });
 
-  it('does not treat OpenAI OAuth-only markers as usable image credentials', () => {
+  it('does not treat OpenAI OAuth-only markers as usable audio credentials', () => {
     render(
       <NewProjectPanel
         skills={[]}
@@ -132,14 +135,13 @@ describe('NewProjectPanel media provider badges', () => {
     );
 
     fireEvent.click(screen.getByRole('tab', { name: 'Media' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Image' }));
     fireEvent.click(screen.getByTestId('model-picker-trigger'));
 
     expect(screen.queryByText('OpenAI')).toBeNull();
-    expect(screen.queryByTestId('model-picker-option-gpt-image-2')).toBeNull();
+    expect(screen.queryByTestId('model-picker-option-gpt-4o-mini-tts')).toBeNull();
   });
 
-  it('keeps the managed Vela default when another provider is configured', () => {
+  it('keeps retained Audio creation independent from configured visual providers', () => {
     const onCreate = vi.fn();
     render(
       <NewProjectPanel
@@ -162,16 +164,16 @@ describe('NewProjectPanel media provider badges', () => {
     );
 
     fireEvent.click(screen.getByRole('tab', { name: 'Media' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Image' }));
     fireEvent.change(screen.getByTestId('new-project-name'), {
-      target: { value: 'Configured provider image' },
+      target: { value: 'Configured provider audio' },
     });
     fireEvent.click(screen.getByTestId('create-project'));
 
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
-          imageModel: 'vela/gpt-image-2',
+          kind: 'audio',
+          audioKind: 'speech',
         }),
       }),
     );

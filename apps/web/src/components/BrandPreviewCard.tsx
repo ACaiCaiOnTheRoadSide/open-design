@@ -19,6 +19,7 @@ import { trackDesignSystemEditClick } from '../analytics/events';
 import { requestHomeChip } from '../runtime/home-intent';
 import { brandSummaryToKit } from '../runtime/design-kit';
 import { DesignKitView } from './DesignKitView';
+import { confirm } from './confirm-dialog-host';
 import { useWorkspaceContext } from '../collab/useWorkspaceContext';
 import {
   resolveWorkspaceResourceReadIdentity,
@@ -128,7 +129,12 @@ export function BrandPreviewCard({
 
   const deleteBrand = useCallback(async () => {
     if (busy) return;
-    const ok = window.confirm(t('brandDetail.deleteConfirm').replace('{name}', name));
+    const ok = await confirm({
+      message: t('brandDetail.deleteConfirm').replace('{name}', name),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
     if (!ok) return;
     const designSystemId = meta.designSystemId;
     if (designSystemId) {

@@ -1,5 +1,5 @@
 import type { LiveArtifactRefreshStatus } from '../api/live-artifacts.js';
-import type { RunFailureCategory, RunFailureDetail } from '../api/chat.js';
+import type { ChatRunEndReason, RunFailureCategory, RunFailureDetail } from '../api/chat.js';
 import type { SseErrorPayload } from '../errors.js';
 import type { SseTransportEvent } from './common.js';
 
@@ -93,6 +93,8 @@ export interface ChatSseEndPayload {
    *  runtime). Lets the chat offer a Continue affordance without a separate
    *  run-status fetch. Mirrors ChatRunStatusResponse.resumable. */
   resumable?: boolean;
+  /** Why this run reached its terminal state. */
+  reason?: ChatRunEndReason;
   /** True when this terminal run ended with unfinished declared work (a
    *  non-`completed` TodoWrite task, or a max_tokens truncation). The browser
    *  reads it straight off the terminal frame and carries it onto the persisted
@@ -152,8 +154,16 @@ export type DaemonAgentPayload =
     }
   | { type: 'raw'; line: string };
 
+export interface ChatSseQueuedPayload {
+  /** 1-based place in the durable FIFO queue. */
+  position: number;
+  /** Number of pending runs before this run. */
+  ahead: number;
+}
+
 export type ChatSseEvent =
   | SseTransportEvent<'start', ChatSseStartPayload>
+  | SseTransportEvent<'queued', ChatSseQueuedPayload>
   | SseTransportEvent<'agent', DaemonAgentPayload>
   | SseTransportEvent<'stdout', ChatSseChunkPayload>
   | SseTransportEvent<'stderr', ChatSseChunkPayload>

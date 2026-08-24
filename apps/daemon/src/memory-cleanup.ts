@@ -49,6 +49,20 @@ export interface AutoExtractionCleanupResult {
   profilePruned: boolean;
 }
 
+/**
+ * PostgreSQL memory is principal-scoped. A trusted-proxy daemon has no valid
+ * principal before an HTTP request arrives, so startup must not attempt a
+ * tenant-wide sweep (or invent a fallback identity). Static mode, however,
+ * has an explicitly configured principal and may safely run the migration for
+ * that tenant. SQLite remains process-local and needs no principal.
+ */
+export function canRunAutoExtractionCleanupAtStartup(
+  backend: 'sqlite' | 'postgres',
+  principal: { enabled: boolean; source?: 'static' | 'trusted-proxy' },
+): boolean {
+  return backend === 'sqlite' || (principal.enabled && principal.source === 'static');
+}
+
 function markerPath(dataDir: string): string {
   return path.join(memoryDir(dataDir), MARKER_FILE);
 }

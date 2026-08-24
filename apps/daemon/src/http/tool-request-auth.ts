@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import type { ToolTokenGrant, ToolTokenRegistry } from '../tool-tokens.js';
 import { sendApiError } from './api-errors.js';
+import { enterRequestContext } from '../request-context.js';
 
 export function bearerTokenFromRequest(req: Request): string | undefined {
   const header = req.get('authorization');
@@ -35,6 +36,10 @@ export function createToolRequestAuth(registry: ToolTokenRegistry): {
       });
       return null;
     }
+    // Capability authentication is the principal source for agent callbacks.
+    // Never accept x-tenant-id/x-od-user-id here: those headers may be absent or
+    // attacker-controlled when the callback reaches the daemon directly.
+    if (validation.grant.principal) enterRequestContext(validation.grant.principal);
     return validation.grant;
   }
 
@@ -43,7 +48,11 @@ export function createToolRequestAuth(registry: ToolTokenRegistry): {
     options: Parameters<ToolTokenRegistry['validate']>[1] = {},
   ): ToolTokenGrant | null {
     const validation = registry.validate(bearerTokenFromRequest(req), options);
-    return validation.ok ? validation.grant : null;
+    if (!validation.ok) return null;
+    // Optional callbacks have the same identity rule as required callbacks:
+    // only the principal captured when this capability was minted is restored.
+    if (validation.grant.principal) enterRequestContext(validation.grant.principal);
+    return validation.grant;
   }
 
   return {

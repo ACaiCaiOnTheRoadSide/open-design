@@ -2,6 +2,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   formatDesignFilesWorkspaceHint,
+  formatLazyHydrationHint,
   formatProjectAttachmentHint,
   resolveSafeProjectAttachments,
 } from '../src/server.js';
@@ -43,6 +44,16 @@ describe('resolveSafeProjectAttachments', () => {
         'When the user says "first attachment", "second file", or similar, map those references to the numbered list above.',
       ].join('\n'),
     );
+  });
+
+  it('tells sandbox agents how to fetch skipped large files', () => {
+    const hint = formatLazyHydrationHint([
+      { path: 'assets/demo.mp4', size: 9 * 1024 * 1024 },
+    ]);
+
+    expect(hint).toContain('`assets/demo.mp4` (9.0 MB)');
+    expect(hint).toContain('"$OD_NODE_BIN" "$OD_BIN" file get <path>');
+    expect(formatLazyHydrationHint([])).toBe('');
   });
 });
 

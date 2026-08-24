@@ -65,6 +65,8 @@ export interface MemoryEntrySummary {
   type: MemoryType;
   /** Which pipeline wrote the entry; absent on pre-provenance files. */
   source?: MemoryEntrySource;
+  /** PostgreSQL memory scope. `null` is global; omitted by SQLite. */
+  projectId?: string | null;
   /** Unix milliseconds — file mtime. */
   updatedAt: number;
 }
@@ -81,6 +83,8 @@ export interface MemorySuggestion {
   description: string;
   type: MemoryType;
   body: string;
+  /** Requested PostgreSQL memory scope; omitted means global. */
+  projectId?: string | null;
   source?: {
     kind: 'connector';
     connectorId?: string;
@@ -204,6 +208,8 @@ export interface UpsertMemoryRequest {
   description: string;
   type: MemoryType;
   body: string;
+  /** PostgreSQL memory scope; omitted or null creates global memory. */
+  projectId?: string | null;
 }
 
 export interface UpsertMemoryResponse {
@@ -350,6 +356,8 @@ export interface MemoryChangeEvent {
   name?: string;
   description?: string;
   type?: MemoryType;
+  /** PostgreSQL memory scope. `null` is global; omitted by SQLite. */
+  projectId?: string | null;
   /** Number of entries written in this pass — only on `kind: 'extract'`. */
   count?: number;
   /** Where the change came from. Useful for UX (e.g., suppress toasts on

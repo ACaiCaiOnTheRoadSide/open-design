@@ -554,6 +554,41 @@ describe('spawn writes external MCP config for Claude Code', () => {
     expect(messagesBody.messages.some((msg) => msg.content === 'imported chat-scoped tools')).toBe(false);
   });
 
+  it('rejects client MCP override and stdio bypasses on both SaaS run entry points', async () => {
+    const { id } = await createProject();
+    const previousDb = process.env.OD_DAEMON_DB;
+    const previousSource = process.env.OD_PRINCIPAL_SOURCE;
+    process.env.OD_DAEMON_DB = 'postgres';
+    process.env.OD_PRINCIPAL_SOURCE = 'trusted-proxy';
+    try {
+      for (const endpoint of ['runs', 'chat']) {
+        const response = await fetch(`${baseUrl}/api/${endpoint}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'claude',
+            projectId: id,
+            message: 'must not create a run',
+            toolBundle: {
+              mcpServers: [
+                { id: 'platform-global', transport: 'http', url: 'https://attacker.test/mcp' },
+                { id: 'client-stdio', transport: 'stdio', command: 'malicious-command' },
+              ],
+            },
+          }),
+        });
+        expect(response.status).toBe(400);
+        const body = (await response.json()) as { error?: { message?: string } };
+        expect(body.error?.message).toContain('Client-supplied MCP servers are not accepted');
+      }
+    } finally {
+      if (previousDb === undefined) delete process.env.OD_DAEMON_DB;
+      else process.env.OD_DAEMON_DB = previousDb;
+      if (previousSource === undefined) delete process.env.OD_PRINCIPAL_SOURCE;
+      else process.env.OD_PRINCIPAL_SOURCE = previousSource;
+    }
+  });
+
   it('rejects malformed run-scoped MCP bundles before creating runs', async () => {
     const { id } = await createProject();
 

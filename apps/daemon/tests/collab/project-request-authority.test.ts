@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAuthorizeProjectRequest } from '../../src/collab/project-request-authority.js';
 import { verifyWorkspaceRequestContext } from '../../src/collab/request-workspace-context.js';
 import { createCachedWorkspaceDirectoryFetcher } from '../../src/collab/vela-workspace-context.js';
+import { runWithRequestContext } from '../../src/request-context.js';
 
 function response() {
   return {} as any;
@@ -57,6 +58,62 @@ function context(overrides: Record<string, unknown> = {}) {
 }
 
 describe('createAuthorizeProjectRequest', () => {
+  it('isolates hosted unbound projects by durable tenant and user owner', async () => {
+    const sendApiError = vi.fn();
+    const authorize = createAuthorizeProjectRequest({
+      db: {},
+      getWorkspaceProject: () => null,
+      getWorkspaceProjectByProjectId: () => null,
+      enforceUnboundProjectOwner: true,
+      getProjectFactOwner: () => ({ tenantId: 'tenant-a', userId: 'user-a' }),
+      sendApiError,
+    });
+
+    await expect(runWithRequestContext(
+      { tenantId: 'tenant-a', userId: 'user-a' },
+      () => authorize(request({}), response(), 'project-a', { mode: 'read' }),
+    )).resolves.toBe(true);
+    await expect(runWithRequestContext(
+      { tenantId: 'tenant-b', userId: 'user-a' },
+      () => authorize(request({}), response(), 'project-a', { mode: 'read' }),
+    )).resolves.toBe(false);
+    expect(sendApiError).toHaveBeenLastCalledWith(
+      expect.anything(), 404, 'PROJECT_NOT_FOUND', 'project not found',
+    );
+  });
+
+  it('quarantines ownerless hosted legacy rows but does not fact-gate Workspace rows', async () => {
+    const sendApiError = vi.fn();
+    const authorizeLegacy = createAuthorizeProjectRequest({
+      db: {},
+      getWorkspaceProject: () => null,
+      getWorkspaceProjectByProjectId: () => null,
+      enforceUnboundProjectOwner: true,
+      getProjectFactOwner: () => null,
+      sendApiError,
+    });
+    await expect(runWithRequestContext(
+      { tenantId: 'tenant-a', userId: 'user-a' },
+      () => authorizeLegacy(request({}), response(), 'legacy', { mode: 'read' }),
+    )).resolves.toBe(false);
+
+    const binding = {
+      workspaceId: 'workspace-a', visibility: 'team' as const,
+      resourceState: 'active' as const, createdByWorkspaceMemberId: 'member-a',
+    };
+    const authorizeBound = createAuthorizeProjectRequest({
+      db: {},
+      getWorkspaceProject: () => binding,
+      getWorkspaceProjectByProjectId: () => binding,
+      enforceUnboundProjectOwner: true,
+      getProjectFactOwner: () => ({ tenantId: 'other', userId: 'other' }),
+      sendApiError,
+    });
+    await expect(runWithRequestContext(
+      { tenantId: 'tenant-a', userId: 'user-a' },
+      () => authorizeBound(request({ workspaceId: 'workspace-a', memberId: 'member-a' }), response(), 'bound', { mode: 'read' }),
+    )).resolves.toBe(true);
+  });
   it('keeps a first-open placeholder readable/commentable but blocks content writes', async () => {
     const row = {
       workspaceId: 'workspace-a',

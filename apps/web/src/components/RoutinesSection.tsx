@@ -10,6 +10,7 @@ import type {
 } from '@open-design/contracts';
 
 import { Icon } from './Icon';
+import { confirm as confirmDialog } from './confirm-dialog-host';
 import { navigate } from '../router';
 import { useT } from '../i18n';
 import { localizeRunFailureReason } from '../i18n/runErrors';
@@ -701,7 +702,12 @@ export function RoutinesSection({ onClose }: RoutinesSectionProps) {
   };
 
   const remove = async (routine: Routine) => {
-    if (!window.confirm(t('routines.confirmDelete'))) return;
+    if (!await confirmDialog({
+      message: t('routines.confirmDelete'),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    })) return;
     setBusyId(routine.id);
     try {
       const res = await fetch(`/api/routines/${routine.id}`, {

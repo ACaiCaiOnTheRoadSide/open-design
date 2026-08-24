@@ -447,12 +447,19 @@ export class RoutineService {
   private timers = new Map<string, ScheduledTimer>();
   private inflight = new Map<string, Promise<RoutineRunHandlerStart>>();
   private runHandler: RoutineRunHandler | null = null;
+  private scheduleEligibility: (routine: Routine) => boolean = () => true;
   private started = false;
 
   constructor(private readonly persistence: RoutinePersistence) {}
 
   setRunHandler(handler: RoutineRunHandler): void {
     this.runHandler = handler;
+  }
+
+  /** Suppress timer scheduling when daemon-initiated work lacks valid authority. */
+  setScheduleEligibility(predicate: (routine: Routine) => boolean): void {
+    this.scheduleEligibility = predicate;
+    if (this.started) this.rescheduleAll();
   }
 
   start(): void {
@@ -496,7 +503,7 @@ export class RoutineService {
   }
 
   private scheduleRoutine(routine: Routine): void {
-    if (!routine.enabled) return;
+    if (!routine.enabled || !this.scheduleEligibility(routine)) return;
     const fireAt = nextRunAtForSchedule(routine.schedule);
     if (!fireAt) return;
     this.scheduleRoutineAt(routine, fireAt);

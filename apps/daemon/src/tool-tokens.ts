@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { getRequestContext, type VerifiedPrincipal } from './request-context.js';
 
 export const DEFAULT_TOOL_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const CHAT_TOOL_TOKEN_TTL_BUFFER_MS = 15 * 60 * 1000;
@@ -64,6 +65,8 @@ export interface ToolTokenGrant {
   token: string;
   runId: string;
   projectId: string;
+  /** Principal captured at mint time; callbacks restore this, never headers. */
+  principal?: Readonly<VerifiedPrincipal>;
   allowedEndpoints: readonly ToolEndpoint[];
   allowedOperations: readonly ToolOperation[];
   issuedAt: string;
@@ -82,6 +85,8 @@ export interface ToolTokenGrant {
 export interface MintToolTokenOptions {
   runId: string;
   projectId: string;
+  /** Explicit seam for daemon-initiated/test minting; defaults to verified ALS. */
+  principal?: Readonly<VerifiedPrincipal>;
   allowedEndpoints?: readonly ToolEndpoint[];
   allowedOperations?: readonly ToolOperation[];
   ttlMs?: number;
@@ -172,6 +177,9 @@ export class ToolTokenRegistry {
       tokenHash: hash,
       runId: options.runId,
       projectId: options.projectId,
+      ...((options.principal ?? getRequestContext())
+        ? { principal: Object.freeze({ ...(options.principal ?? getRequestContext())! }) }
+        : {}),
       allowedEndpoints: [...(options.allowedEndpoints ?? CHAT_TOOL_ENDPOINTS)],
       allowedOperations: [...(options.allowedOperations ?? CHAT_TOOL_OPERATIONS)],
       issuedAt: new Date(nowMs).toISOString(),

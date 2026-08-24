@@ -14,7 +14,20 @@
 
 import type Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
+import { getRequestContext, type VerifiedPrincipal } from './request-context.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+
+type LibraryOwnerRegistrar = (
+  asset: LibraryAssetRecord,
+  taskId: string,
+  sourceKind: LibrarySourceKind,
+  principal: Readonly<VerifiedPrincipal>,
+) => Promise<void>;
+let libraryOwnerRegistrar: LibraryOwnerRegistrar | null = null;
+
+export function configureLibraryOwnerRegistrar(registrar: LibraryOwnerRegistrar | null): void {
+  libraryOwnerRegistrar = registrar;
+}
 import path from 'node:path';
 import type {
   LibraryAssetKind,
@@ -339,6 +352,9 @@ export async function registerLibraryAsset(
     throw new Error('registerLibraryAsset requires bytes, text, or absPath');
   }
 
+  // Content identity is tenant-independent. Hosted ownership lives in
+  // saas_resource_owners; equal bytes deliberately converge on one SQLite row
+  // and object file while each tenant receives an independent soft-delete row.
   const contentHash = createHash('sha256').update(bytes).digest('hex');
 
   // Dedup: same bytes already indexed → append source, union tags.
@@ -409,6 +425,11 @@ export async function registerLibraryAsset(
 
   const asset = getLibraryAsset(db, id);
   if (!asset) throw new Error(`library asset vanished after insert: ${id}`);
+  if (libraryOwnerRegistrar) {
+    const principal = getRequestContext();
+    if (!principal) throw new Error('Library production requires a verified principal in hosted mode');
+    await libraryOwnerRegistrar(asset, taskId, input.source.sourceKind, principal);
+  }
   return { asset, deduped: false, taskId };
 }
 

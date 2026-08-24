@@ -4,6 +4,7 @@ import type { DesignSystemSummary } from './design-systems/index.js';
 import type { RoutineRoutesService } from './routes/routine.js';
 import type { OpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
 import type { ResourceHubPrincipal } from './collab/resource-principal.js';
+import type { VerifiedPrincipal } from './request-context.js';
 import type {
   AuthorizeProjectRequest,
   AuthorizeProjectToolRequest,
@@ -105,6 +106,11 @@ export interface ProjectPreviewScopeDeps {
     projectId: string,
     scope: string,
   ) => { workspaceId: string; workspaceMemberId: string } | null | undefined;
+  /** Principal captured when the server minted this navigation-only scope. */
+  resolvePrincipal?: (
+    projectId: string,
+    scope: string,
+  ) => Readonly<VerifiedPrincipal> | undefined;
 }
 
 export interface TelemetryDeps {

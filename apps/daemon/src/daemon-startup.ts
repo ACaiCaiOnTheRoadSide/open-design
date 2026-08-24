@@ -115,6 +115,23 @@ export async function closeHttpServer(
   });
 }
 
+export function createDaemonRuntimeStop(started: StartedServer): () => Promise<void> {
+  let stopPromise: Promise<void> | undefined;
+  return () => {
+    if (!stopPromise) {
+      stopPromise = (async () => {
+        // Stop accepting work and drain already-accepted HTTP requests before
+        // services (and finally PostgreSQL) are torn down. Do not swallow the
+        // service barrier: callers and SIGTERM must be able to observe a failed
+        // project-sync flush and exit non-zero.
+        await Promise.allSettled([closeHttpServer(started.server)]);
+        await (started.shutdown?.() ?? Promise.resolve());
+      })();
+    }
+    return stopPromise;
+  };
+}
+
 export async function startDaemonRuntime(options: DaemonRuntimeOptions = {}): Promise<StartedDaemonRuntime> {
   const { openBrowser: shouldOpenBrowser = false, logListening = false, ...serverOptions } = options;
   const { startServer } = await import('./server.js');
@@ -126,13 +143,7 @@ export async function startDaemonRuntime(options: DaemonRuntimeOptions = {}): Pr
     throw new Error('daemon startServer did not return a server handle');
   }
 
-  const stop = async () => {
-    const closePromise = closeHttpServer(started.server);
-    const shutdownPromise = started.shutdown?.().catch((error: unknown) => {
-      console.error('daemon shutdown cleanup failed', error);
-    }) ?? Promise.resolve();
-    await Promise.allSettled([shutdownPromise, closePromise]);
-  };
+  const stop = createDaemonRuntimeStop(started);
 
   if (logListening) {
     console.log(`[od] listening on ${started.url}`);
@@ -145,6 +156,32 @@ export async function startDaemonRuntime(options: DaemonRuntimeOptions = {}): Pr
   return {
     ...started,
     stop,
+  };
+}
+
+export function createDaemonSignalStop(
+  runtime: Pick<StartedDaemonRuntime, 'stop'>,
+  options: {
+    exit?: (code: number) => void;
+    logError?: (message: string, error: unknown) => void;
+  } = {},
+): () => Promise<void> {
+  const exit = options.exit ?? ((code: number) => process.exit(code));
+  const logError = options.logError ?? ((message: string, error: unknown) => console.error(message, error));
+  let signalStopPromise: Promise<void> | undefined;
+
+  return () => {
+    if (!signalStopPromise) {
+      signalStopPromise = runtime.stop();
+      void signalStopPromise.then(
+        () => exit(0),
+        (error) => {
+          logError('daemon graceful shutdown failed', error);
+          exit(1);
+        },
+      );
+    }
+    return signalStopPromise;
   };
 }
 
@@ -167,14 +204,7 @@ export async function runDaemonCliStartup(argv: string[], options: { printHelp?:
     openBrowser: open,
     port,
   });
-  let shuttingDown = false;
-  const stop = () => {
-    if (shuttingDown) {
-      process.exit(0);
-    }
-    shuttingDown = true;
-    void runtime.stop().finally(() => process.exit(0));
-  };
+  const stop = createDaemonSignalStop(runtime);
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 }

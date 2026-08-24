@@ -1,14 +1,28 @@
-import type { Express } from 'express';
+import type { Express, Response } from 'express';
 import { MEMORY_TYPES } from '@open-design/contracts';
 import type { RouteDeps } from '../server-context.js';
+import { validateMemoryProjectId } from '../memory-scope.js';
+import { isProjectLifecycleError } from '../project-lifecycle-gate.js';
+import { getRequestContext } from '../request-context.js';
+import { memoryEventBelongsTo } from '../memory-events-scope.js';
 
 import {
   buildMemoryTree,
   composeMemoryBody,
   deleteMemoryEntry,
+  deriveMemoryId,
   extractFromMessage,
   listMemoryEntries,
+  listPersistedMemoryExtractions,
+  listPersistedMemoryVerifications,
+  clearPersistedMemoryExtractions,
+  clearPersistedMemoryVerifications,
+  removePersistedMemoryExtraction,
+  removePersistedMemoryVerification,
   maskMemoryExtractionConfig,
+  MemoryInputError,
+  MemoryNotFoundError,
+  ProjectMemoryScopeUnverifiedError,
   memoryDir,
   memoryEvents,
   readMemoryConfig,
@@ -71,6 +85,7 @@ interface MemoryEntryInput {
   description?: string;
   type: MemoryType;
   body?: string;
+  projectId?: string | null;
 }
 
 interface MemoryAppConfigLike {
@@ -84,6 +99,72 @@ function asRecord(value: unknown): UnknownRecord {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function sendMemoryMutationError(res: Response, err: unknown): void {
+  if (isProjectLifecycleError(err)) {
+    res.status(409).json({ error: { code: err.code, message: err.message } });
+    return;
+  }
+  if (err instanceof ProjectMemoryScopeUnverifiedError) {
+    sendUnverifiedProjectScope(res);
+    return;
+  }
+  if (err instanceof MemoryNotFoundError) {
+    res.status(404).json({ error: errorMessage(err) });
+    return;
+  }
+  if (err instanceof MemoryInputError || (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase() !== 'postgres') {
+    res.status(400).json({ error: errorMessage(err) });
+    return;
+  }
+  console.error('[memory] PostgreSQL mutation failed', err);
+  res.status(500).json({ error: 'Memory storage unavailable' });
+}
+
+function mutationProjectId(body: UnknownRecord): string | null | undefined {
+  if (!Object.prototype.hasOwnProperty.call(body, 'projectId')) return undefined;
+  if (body.projectId === null) return null;
+  return validateMemoryProjectId(body.projectId);
+}
+
+function sendUnverifiedProjectScope(res: Response): void {
+  res.status(409).json({
+    error: {
+      code: 'PROJECT_MEMORY_SCOPE_UNVERIFIED',
+      message: 'Project-scoped memory mutations require a server-verified static principal',
+    },
+  });
+}
+
+async function rejectUnverifiedEntryMutation(
+  res: Response,
+  dataDir: string,
+  requestedProjectId: string | null | undefined,
+  targetId?: string,
+): Promise<boolean> {
+  if (res.locals.principalSource !== 'trusted-proxy') return false;
+  if (typeof requestedProjectId === 'string') {
+    sendUnverifiedProjectScope(res);
+    return true;
+  }
+  if (targetId) {
+    const target = await readMemoryEntry(dataDir, targetId);
+    if (typeof target?.projectId === 'string') {
+      sendUnverifiedProjectScope(res);
+      return true;
+    }
+  }
+  return false;
+}
+
+function sendMemoryReadError(res: Response, err: unknown): void {
+  if ((process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase() !== 'postgres') {
+    res.status(400).json({ error: errorMessage(err) });
+    return;
+  }
+  console.error('[memory] PostgreSQL read failed', err);
+  res.status(500).json({ error: 'Memory storage unavailable' });
 }
 
 function isMemoryType(value: unknown): value is MemoryType {
@@ -109,6 +190,15 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
   const { RUNTIME_DATA_DIR, PROJECT_ROOT, PROJECTS_DIR } = ctx.paths;
   const { createSseResponse, requireLocalDaemonRequest } = ctx.http;
   const { readAppConfig } = ctx.appConfig;
+  const postgresMemory = () =>
+    (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase() === 'postgres';
+  const historyOptions = (query: UnknownRecord, stateKey: 'phase' | 'status') => {
+    const rawLimit = typeof query.limit === 'string' ? Number(query.limit) : undefined;
+    const limit = Number.isSafeInteger(rawLimit) ? Math.min(100, Math.max(1, rawLimit!)) : 20;
+    const cursor = typeof query.cursor === 'string' && query.cursor ? query.cursor : undefined;
+    const state = typeof query[stateKey] === 'string' && query[stateKey] ? query[stateKey] as string : undefined;
+    return { limit, ...(cursor ? { cursor } : {}), ...(state ? { [stateKey]: state } : {}) };
+  };
 
   // ----- Memory store -----------------------------------------------------
   // Markdown-on-disk memory under <dataDir>/memory/. The daemon folds these
@@ -159,16 +249,18 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
   app.patch('/api/memory/tree/:id', async (req, res) => {
     try {
       const body = asRecord(req.body);
+      const requestedProjectId = mutationProjectId(body);
+      if (await rejectUnverifiedEntryMutation(res, RUNTIME_DATA_DIR, requestedProjectId, req.params.id)) return;
       const entry = await updateMemoryTreeNode(
         RUNTIME_DATA_DIR,
         req.params.id,
         body,
+        { requireGlobalExisting: res.locals.principalSource === 'trusted-proxy' },
       );
       const tree = await buildMemoryTree(RUNTIME_DATA_DIR);
       res.json({ entry, tree });
     } catch (err) {
-      const message = errorMessage(err);
-      res.status(message === 'memory not found' ? 404 : 400).json({ error: message });
+      sendMemoryMutationError(res, err);
     }
   });
 
@@ -179,7 +271,7 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
       await writeMemoryIndex(RUNTIME_DATA_DIR, index, undefined);
       res.json({ index });
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      sendMemoryMutationError(res, err);
     }
   });
 
@@ -241,7 +333,7 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
             nextApiKey = currentExtraction?.apiKey ?? '';
           }
           if (!isExtractionProvider(incoming.provider)) {
-            throw new Error('invalid extraction provider');
+            throw new MemoryInputError('invalid extraction provider');
           }
           const nextExtraction: MemoryExtractionPatch = {
             provider: incoming.provider,
@@ -271,7 +363,7 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
         extraction: maskMemoryExtractionConfig(next.extraction),
       });
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      sendMemoryMutationError(res, err);
     }
   });
 
@@ -285,18 +377,22 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
   // live "recent extractions" list. We multiplex on a single SSE stream
   // so the browser opens one connection instead of two.
   app.get('/api/memory/events', async (_req, res) => {
+    const principal = getRequestContext();
     const sse = createSseResponse(res);
     sse.send('connected', { at: Date.now() });
     const onChange = (event: unknown) => {
+      if (!memoryEventBelongsTo(event, principal)) return;
       sse.send('change', event);
     };
     const onExtraction = (event: unknown) => {
+      if (!memoryEventBelongsTo(event, principal)) return;
       sse.send('extraction', event);
     };
     // `verify` events carry POST self-verify enforcement outcomes (THREAD 2),
     // one per enforced turn. Multiplexed on the same connection as `change`
     // and `extraction` so the settings panel opens a single stream.
     const onVerify = (event: unknown) => {
+      if (!memoryEventBelongsTo(event, principal)) return;
       sse.send('verify', event);
     };
     memoryEvents.on('change', onChange);
@@ -313,20 +409,27 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
   // Surfaces skip reasons, in-flight calls, success counts, and errors
   // so the settings panel can show "why didn't memory update?" at a
   // glance instead of leaving the user to guess.
-  app.get('/api/memory/extractions', async (_req, res) => {
+  app.get('/api/memory/extractions', async (req, res) => {
     try {
+      if (postgresMemory()) {
+        const page = await listPersistedMemoryExtractions(historyOptions(asRecord(req.query), 'phase'));
+        return res.json({ extractions: page.records, nextCursor: page.nextCursor });
+      }
       res.json({ extractions: listMemoryExtractions() });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
   });
 
-  // Drop the entire extraction history. Registered BEFORE the `:id`
-  // catch-all so a literal "/api/memory/extractions" can still be
-  // cleared with `curl -X DELETE`.
+  // Drop the entire extraction history. In PostgreSQL mode this enqueues a
+  // durable FIFO tombstone, so older pending projections cannot recreate rows
+  // after this request succeeds. Registered BEFORE the `:id` catch-all so a
+  // literal "/api/memory/extractions" can still be cleared with `curl -X DELETE`.
   app.delete('/api/memory/extractions', async (_req, res) => {
     try {
-      const removed = clearMemoryExtractions();
+      const removed = postgresMemory()
+        ? await clearPersistedMemoryExtractions()
+        : clearMemoryExtractions();
       res.json({ removed });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
@@ -335,7 +438,9 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
 
   app.delete('/api/memory/extractions/:id', async (req, res) => {
     try {
-      const removed = removeMemoryExtraction(req.params.id);
+      const removed = postgresMemory()
+        ? await removePersistedMemoryExtraction(req.params.id)
+        : removeMemoryExtraction(req.params.id);
       res.json({ removed });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
@@ -346,8 +451,12 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
   // capped server-side). Surfaces `missing` (model skipped the scorecard) and
   // `fail` (a rule failed or was left uncovered) so the user can see that
   // verification is actually enforced, not honour-system.
-  app.get('/api/memory/verifications', async (_req, res) => {
+  app.get('/api/memory/verifications', async (req, res) => {
     try {
+      if (postgresMemory()) {
+        const page = await listPersistedMemoryVerifications(historyOptions(asRecord(req.query), 'status'));
+        return res.json({ verifications: page.records, nextCursor: page.nextCursor });
+      }
       res.json({ verifications: listMemoryVerifications() });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -358,7 +467,9 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
   // catch-all so a literal "/api/memory/verifications" can be cleared.
   app.delete('/api/memory/verifications', async (_req, res) => {
     try {
-      const removed = clearMemoryVerifications();
+      const removed = postgresMemory()
+        ? await clearPersistedMemoryVerifications()
+        : clearMemoryVerifications();
       res.json({ removed });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
@@ -367,7 +478,9 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
 
   app.delete('/api/memory/verifications/:id', async (req, res) => {
     try {
-      const removed = removeMemoryVerification(req.params.id);
+      const removed = postgresMemory()
+        ? await removePersistedMemoryVerification(req.params.id)
+        : removeMemoryVerification(req.params.id);
       res.json({ removed });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
@@ -639,16 +752,21 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
     try {
       const body = asRecord(req.body);
       if (!isMemoryType(body.type) || typeof body.name !== 'string') {
-        throw new Error('memory entry requires `name` and a valid `type`');
+        throw new MemoryInputError('memory entry requires `name` and a valid `type`');
       }
+      const requestedProjectId = mutationProjectId(body);
+      const targetId = typeof body.id === 'string' && /^[a-z0-9_]+$/.test(body.id)
+        ? body.id
+        : deriveMemoryId(body.type, body.name);
+      if (await rejectUnverifiedEntryMutation(res, RUNTIME_DATA_DIR, requestedProjectId, targetId)) return;
       const entry = await upsertMemoryEntry(
         RUNTIME_DATA_DIR,
         body as unknown as MemoryEntryInput,
-        undefined,
+        { requireGlobalExisting: res.locals.principalSource === 'trusted-proxy' },
       );
       res.json({ entry });
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      sendMemoryMutationError(res, err);
     }
   });
 
@@ -658,7 +776,7 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
       if (!entry) return res.status(404).json({ error: 'memory not found' });
       res.json({ entry });
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      sendMemoryReadError(res, err);
     }
   });
 
@@ -666,28 +784,43 @@ export function registerMemoryRoutes(app: Express, ctx: RegisterMemoryRoutesDeps
     try {
       const body = asRecord(req.body);
       if (!isMemoryType(body.type) || typeof body.name !== 'string') {
-        throw new Error('memory entry requires `name` and a valid `type`');
+        throw new MemoryInputError('memory entry requires `name` and a valid `type`');
       }
+      const requestedProjectId = mutationProjectId(body);
+      const postgresMemory = (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase() === 'postgres';
+      const existing = postgresMemory
+        ? await readMemoryEntry(RUNTIME_DATA_DIR, req.params.id)
+        : null;
+      if (postgresMemory && !existing) throw new MemoryNotFoundError();
+      if (await rejectUnverifiedEntryMutation(res, RUNTIME_DATA_DIR, requestedProjectId, req.params.id)) return;
       const entry = await upsertMemoryEntry(
         RUNTIME_DATA_DIR,
         {
           ...(body as unknown as MemoryEntryInput),
           id: req.params.id,
         },
-        undefined,
+        {
+          requireGlobalExisting: res.locals.principalSource === 'trusted-proxy',
+          ...(typeof existing?.projectId === 'string'
+            ? { lifecycleProjectId: existing.projectId }
+            : {}),
+        },
       );
       res.json({ entry });
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      sendMemoryMutationError(res, err);
     }
   });
 
   app.delete('/api/memory/:id', async (req, res) => {
     try {
-      await deleteMemoryEntry(RUNTIME_DATA_DIR, req.params.id);
+      if (await rejectUnverifiedEntryMutation(res, RUNTIME_DATA_DIR, undefined, req.params.id)) return;
+      await deleteMemoryEntry(RUNTIME_DATA_DIR, req.params.id, {
+        requireGlobal: res.locals.principalSource === 'trusted-proxy',
+      });
       res.json({ ok: true });
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      sendMemoryMutationError(res, err);
     }
   });
 

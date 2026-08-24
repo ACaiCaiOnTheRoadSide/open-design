@@ -123,6 +123,7 @@ import {
   liveArtifactPreviewUrl,
   projectFileUrl,
   projectRawUrl,
+  projectRawSignedUrl,
   publishProjectFilePublic,
   unpublishProjectFilePublic,
   LiveArtifactRefreshError,
@@ -139,6 +140,7 @@ import {
   writeProjectTextFileDetailed,
 } from '../providers/registry';
 import type { ProjectFilePreview } from '../providers/registry';
+import { useRawToken } from '../providers/raw-token';
 import {
   downloadImageDataUrl,
   exportAsHtml,
@@ -226,6 +228,7 @@ import { Icon } from './Icon';
 import { RemixIcon } from './RemixIcon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
 import { HandoffButton } from './HandoffButton';
+import { MonkeycodeExportAction } from './MonkeycodeExportAction';
 import { SocialShareGrid } from './SocialShareGrid';
 import { Toast } from './Toast';
 import {
@@ -292,6 +295,38 @@ import {
   invalidateHtmlSourceSnapshotProject,
   setHtmlSourceSnapshot,
 } from './html-source-snapshot-cache';
+import {
+  DELEGATED_EXPORT,
+  type DelegatedExportResult,
+  type ImageAgentExportRequest,
+  type PdfAgentExportRequest,
+  type PptxAgentExportRequest,
+} from './export-agent-delegation';
+
+async function recordBusinessOutcome(
+  projectId: string,
+  event: 'download' | 'publish',
+  eventKey: string,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/stats-events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event, eventKey }),
+      });
+      if (response.ok) return;
+      lastError = new Error(`business stats event failed (${response.status})`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('business stats event failed');
+}
 
 function resolveChromeActionsHost(): HTMLElement | null {
   return document.querySelector<HTMLElement>(APP_CHROME_FILE_ACTIONS_SELECTOR)
@@ -1757,6 +1792,9 @@ interface Props {
    */
   onReorderPreviewComment?: (commentId: string, sortKey: number) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<CommentSendResult> | CommentSendResult;
+  onExportPptxViaAgent?: (request: PptxAgentExportRequest) => Promise<boolean> | boolean;
+  onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
+  onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
   onFileSaved?: () => Promise<void> | void;
   onBrandExtractionStopRequest?: () => void;
   // Open `openName` as a tab (focusing it) and close `closeName` in one
@@ -1852,6 +1890,9 @@ export const FileViewer = memo(function FileViewer({
   onRemovePreviewComment,
   onReorderPreviewComment,
   onSendBoardCommentAttachments,
+  onExportPptxViaAgent,
+  onExportImageViaAgent,
+  onExportPdfViaAgent,
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
@@ -1941,6 +1982,9 @@ export const FileViewer = memo(function FileViewer({
         onRemovePreviewComment={onRemovePreviewComment}
         onReorderPreviewComment={onReorderPreviewComment}
         onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+        onExportPptxViaAgent={onExportPptxViaAgent}
+        onExportImageViaAgent={onExportImageViaAgent}
+        onExportPdfViaAgent={onExportPdfViaAgent}
         onFileSaved={onFileSaved}
         onBrandExtractionStopRequest={onBrandExtractionStopRequest}
         onOpenFileReplacing={onOpenFileReplacing}
@@ -6662,6 +6706,7 @@ function ReactComponentViewer({
     setPublishingPublicFile(true);
     setPublishLinkFeedback(null);
     setPublishFailureKey(null);
+    const statsEventKey = `publish:${analytics.newRequestId()}`;
     try {
       const response = await publishProjectFilePublic(requestProjectId, requestFileName, workspaceContext);
       firePublishResult({
@@ -6671,14 +6716,20 @@ function ReactComponentViewer({
       });
       const current = publicFileIdentityRef.current;
       if (
-        publicFileRequestSeqRef.current !== requestSeq ||
-        current.projectId !== requestProjectId ||
-        current.fileName !== requestFileName
+        publicFileRequestSeqRef.current === requestSeq &&
+        current.projectId === requestProjectId &&
+        current.fileName === requestFileName
       ) {
-        return;
+        // Publishing is irreversible for this request. Commit its response before
+        // the independent statistic, but never leak an old file into a new tab.
+        setPublishedFileUrl(response.url);
+        setPublishedFileSlug(response.slug);
       }
-      setPublishedFileUrl(response.url);
-      setPublishedFileSlug(response.slug);
+      try {
+        await recordBusinessOutcome(requestProjectId, 'publish', statsEventKey);
+      } catch (statsError) {
+        console.error('[business-stats] publish succeeded but durable fact recording failed', statsError);
+      }
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
       const recoveryPublication = publicFileManualRevokePublication(error);
@@ -7101,6 +7152,12 @@ function ReactComponentViewer({
                     ) : null}
                     {unifiedActionTab === 'export' ? (
                       <div className="chrome-unified-panel">
+                        {viewerOnly ? null : (
+                          <MonkeycodeExportAction
+                            projectId={projectId}
+                            filePath={file.name}
+                          />
+                        )}
                         <button
                           type="button"
                           className="share-menu-item"
@@ -7333,6 +7390,9 @@ function HtmlViewer({
   onRemovePreviewComment,
   onReorderPreviewComment,
   onSendBoardCommentAttachments,
+  onExportPptxViaAgent,
+  onExportImageViaAgent,
+  onExportPdfViaAgent,
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
@@ -7368,6 +7428,9 @@ function HtmlViewer({
   onRemovePreviewComment?: (commentId: string) => Promise<boolean>;
   onReorderPreviewComment?: (commentId: string, sortKey: number) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<CommentSendResult> | CommentSendResult;
+  onExportPptxViaAgent?: (request: PptxAgentExportRequest) => Promise<boolean> | boolean;
+  onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
+  onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
   onFileSaved?: () => Promise<void> | void;
   onBrandExtractionStopRequest?: () => void;
   onOpenFileReplacing?: (openName: string, closeName: string) => void;
@@ -7441,6 +7504,7 @@ function HtmlViewer({
     };
   }
   const workspaceContext = stableWorkspaceContextRef.current.value;
+  const rawToken = useRawToken(projectId);
   const sourceAuthorizationScopeKey = stableWorkspaceContextRef.current.key;
   const projectResourceReadBlocked =
     sourceAuthorizationScopeKey === null;
@@ -7585,7 +7649,11 @@ function HtmlViewer({
     const started = performance.now();
     const originPromise = resolveArtifactExportOrigin(context)
       .catch(() => unknownExportOrigin());
-    const finish = async (result: 'success' | 'failed' | 'cancelled', errorCode?: string) => {
+    const finish = async (
+      result: 'success' | 'failed' | 'cancelled',
+      errorCode?: string,
+      options?: { countDownload?: boolean; countDelivered?: boolean },
+    ) => {
       const originProps = await originPromise;
       trackArtifactExportResult(
         analytics.track,
@@ -7604,10 +7672,26 @@ function HtmlViewer({
         },
         { requestId },
       );
+      // Count only an actual downloadable artifact after export success. Share
+      // links/pages and templates are separate product outcomes, not downloads.
+      if (
+        result === 'success'
+        && options?.countDownload !== false
+        && ['pdf', 'pptx', 'zip', 'html', 'image', 'markdown'].includes(trackingFormat)
+      ) {
+        try {
+          await recordBusinessOutcome(projectId, 'download', `export:${requestId}`);
+        } catch (error) {
+          console.error('[business-stats] export succeeded but durable fact recording failed', error);
+          setExportToast({ message: '导出成功，但统计记录失败；请重试导出。', tone: 'error' });
+        }
+      }
       // Onboarding first-loop 交付 step (spec §8.3): only a SUCCESSFUL export
       // closes the loop. Project-scoped — a no-op unless the project was
       // started from the Home recommendation.
-      if (result === 'success') recordFirstLoopStep(analytics.track, 'delivered', projectId);
+      if (result === 'success' && options?.countDelivered !== false) {
+        recordFirstLoopStep(analytics.track, 'delivered', projectId);
+      }
     };
     const toastFormats = new Set(['pdf', 'pptx', 'zip', 'html', 'image', 'markdown']);
     // Programmatic exports compute in-browser and can take a while (one render
@@ -7664,6 +7748,18 @@ function HtmlViewer({
               if (toastFormats.has(format)) setExportToast(null);
               return;
             }
+            if (result === DELEGATED_EXPORT) {
+              void finish('success', undefined, { countDownload: false, countDelivered: false });
+              if (toastFormats.has(format)) {
+                const message = format === 'pptx'
+                  ? t('fileViewer.exportPptxAgentQueued')
+                  : format === 'pdf'
+                    ? t('fileViewer.exportPdfAgentQueued')
+                    : t('fileViewer.exportImageAgentQueued');
+                setExportToast({ message, tone: 'success' });
+              }
+              return;
+            }
             void finish('success');
             if (toastFormats.has(format)) setExportToast({ message: t('fileViewer.exportDone'), tone: 'success' });
           },
@@ -7677,6 +7773,18 @@ function HtmlViewer({
         if (out === 'cancelled') {
           void finish('cancelled');
           if (toastFormats.has(format)) setExportToast(null);
+          return;
+        }
+        if (out === DELEGATED_EXPORT) {
+          void finish('success', undefined, { countDownload: false, countDelivered: false });
+          if (toastFormats.has(format)) {
+            const message = format === 'pptx'
+              ? t('fileViewer.exportPptxAgentQueued')
+              : format === 'pdf'
+                ? t('fileViewer.exportPdfAgentQueued')
+                : t('fileViewer.exportImageAgentQueued');
+            setExportToast({ message, tone: 'success' });
+          }
           return;
         }
         void finish('success');
@@ -8098,6 +8206,7 @@ function HtmlViewer({
     setPublishingPublicFile(true);
     setPublishLinkFeedback(null);
     setPublishFailureKey(null);
+    const statsEventKey = `publish:${analytics.newRequestId()}`;
     try {
       const response = await publishProjectFilePublic(requestProjectId, requestFileName, workspaceContext);
       firePublishResult({
@@ -8107,14 +8216,20 @@ function HtmlViewer({
       });
       const current = publicFileIdentityRef.current;
       if (
-        publicFileRequestSeqRef.current !== requestSeq ||
-        current.projectId !== requestProjectId ||
-        current.fileName !== requestFileName
+        publicFileRequestSeqRef.current === requestSeq &&
+        current.projectId === requestProjectId &&
+        current.fileName === requestFileName
       ) {
-        return;
+        // Publishing is irreversible for this request. Commit its response before
+        // the independent statistic, but never leak an old file into a new tab.
+        setPublishedFileUrl(response.url);
+        setPublishedFileSlug(response.slug);
       }
-      setPublishedFileUrl(response.url);
-      setPublishedFileSlug(response.slug);
+      try {
+        await recordBusinessOutcome(requestProjectId, 'publish', statsEventKey);
+      } catch (statsError) {
+        console.error('[business-stats] publish succeeded but durable fact recording failed', statsError);
+      }
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
       const recoveryPublication = publicFileManualRevokePublication(error);
@@ -10021,10 +10136,10 @@ function HtmlViewer({
   ]);
   const basePreviewSrcUrl = useMemo(
     () => appendResourceQuery(
-      projectRawUrl(projectId, file.name, workspaceContext),
+      projectRawSignedUrl(projectId, file.name, rawToken),
       `v=${Math.round(file.mtime)}&r=${reloadKey}&${PREVIEW_BRIDGE_QUERY}`,
     ),
-    [projectId, file.name, file.mtime, reloadKey, workspaceContext],
+    [projectId, file.name, file.mtime, reloadKey, rawToken],
   );
   const [previewSrcUrl, setPreviewSrcUrl] = useState(basePreviewSrcUrl);
   // Hold the iframe URL still (it carries file.mtime) while the user is mid
@@ -10332,6 +10447,7 @@ function HtmlViewer({
     transportPreviewMeasurementDocumentEpoch,
     effectiveDeck ? 'deck' : 'html',
     srcDocBaseHref,
+    rawToken ?? 'unsigned',
   ].join('\0');
   const candidateSrcDocTransport = useMemo(
     () => {
@@ -10356,6 +10472,7 @@ function HtmlViewer({
         srcDoc: previewSource ? buildSrcdoc(previewSource, {
           deck: effectiveDeck,
           baseHref: srcDocBaseHref,
+          rawAssetSigning: { projectId, token: rawToken },
           initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
           hideDeckChrome: effectiveDeck,
           selectionBridge: true,
@@ -10391,6 +10508,8 @@ function HtmlViewer({
       reloadKey,
       transportPreviewMeasurementDocumentEpoch,
       srcDocBaseHref,
+      projectId,
+      rawToken,
     ],
   );
   // A retained file tab may observe a newer file generation while its iframe
@@ -14478,6 +14597,7 @@ function HtmlViewer({
   const fireImageExportResult = (
     result: 'success' | 'failed' | 'cancelled',
     errorCode?: string,
+    options?: { countDownload?: boolean; countDelivered?: boolean },
   ) => {
     if (imageExportResolvedRef.current) return;
     imageExportResolvedRef.current = true;
@@ -14504,9 +14624,15 @@ function HtmlViewer({
         { requestId },
       );
     });
-    // Onboarding first-loop 交付 step (spec §8.3): only a SUCCESSFUL image
-    // export closes the loop. Project-scoped no-op unless started from Home.
-    if (result === 'success') recordFirstLoopStep(analytics.track, 'delivered', projectId);
+    if (result === 'success' && options?.countDownload !== false) {
+      void recordBusinessOutcome(projectId, 'download', `export:${requestId}`).catch((error) => {
+        console.error('[business-stats] image export succeeded but durable fact recording failed', error);
+      });
+    }
+    // Delegation only queued work; it is neither a download nor a delivered artifact yet.
+    if (result === 'success' && options?.countDelivered !== false) {
+      recordFirstLoopStep(analytics.track, 'delivered', projectId);
+    }
   };
 
   async function handleImageExportSave() {
@@ -14530,6 +14656,22 @@ function HtmlViewer({
     try {
       const context = imageExportContext;
       const targetTitle = context?.title ?? exportTitle;
+      if (onExportImageViaAgent && !isOpenDesignHostAvailable() && !context?.versionId) {
+        try {
+          const queued = await onExportImageViaAgent({
+            fileName: file.name,
+            title: targetTitle,
+            format: imageExportFormat,
+          });
+          if (queued !== false) {
+            fireImageExportResult('success', undefined, { countDownload: false, countDelivered: false });
+            setExportToast({ message: t('fileViewer.exportImageAgentQueued'), tone: 'success' });
+            return;
+          }
+        } catch (error) {
+          console.warn('[exportAsImage] agent delegation failed; using browser snapshot fallback:', error);
+        }
+      }
       let dataUrl = imageExportSnapshotDataUrlRef.current;
       if (!dataUrl) {
         // Export as image of a deck = the whole deck stitched into one long
@@ -16153,6 +16295,12 @@ function HtmlViewer({
                     ) : null}
                     {unifiedActionTab === 'export' && rawCanDownload ? (
                       <div className="chrome-unified-panel">
+                        {viewerOnly ? null : (
+                          <MonkeycodeExportAction
+                            projectId={projectId}
+                            filePath={file.name}
+                          />
+                        )}
                   <button
                     type="button"
                     className="share-menu-item"
@@ -16167,29 +16315,25 @@ function HtmlViewer({
                       // packaged runtime (no embedded fonts) — unacceptable for a
                       // Chinese-first product. Falls back to the vector/browser
                       // print path on web or on failure.
-                      fireShareExport('pdf', async () => {
-                        if (isOpenDesignHostAvailable()) {
-                          const res = await exportProjectScreenshotPdf({
-                            projectId,
+                      fireShareExport('pdf', async (): Promise<void | DelegatedExportResult> => {
+                        const res = await exportProjectScreenshotPdf({
+                          projectId,
+                          fileName: file.name,
+                          title: exportTitle,
+                          workspaceContext,
+                          deck: deckExportSignal,
+                        });
+                        if (res.ok) return;
+                        // Only renderer-unavailable (including HTTP 501) may be
+                        // delegated/fallback. Semantic renderer failures stay visible.
+                        if (!('unavailable' in res)) throw new Error(res.error);
+                        if (onExportPdfViaAgent) {
+                          const queued = await onExportPdfViaAgent({
                             fileName: file.name,
                             title: exportTitle,
-                            workspaceContext,
-                            // Broader deck signal than the viewer's nav so
-                            // runtime-managed decks (<deck-stage>) paginate per
-                            // slide; the vector fallback below uses the SAME
-                            // signal, so an artifact exports identically with or
-                            // without a desktop host (no per-host divergence).
                             deck: deckExportSignal,
                           });
-                          if (res.ok) return;
-                          // A SEMANTIC failure (bad deck routing, unreadable
-                          // renderer output, renderer 502, …) must surface — NOT
-                          // silently downgrade to the vector PDF, which can
-                          // reintroduce the CJK-glyph / fidelity bugs the
-                          // screenshot path exists to avoid. Only a genuinely
-                          // unavailable renderer (no host / 501 / transport)
-                          // falls through to the vector path below.
-                          if (!('unavailable' in res)) throw new Error(res.error);
+                          if (queued !== false) return DELEGATED_EXPORT;
                         }
                         await exportProjectAsPdf({
                           deck: deckExportSignal,
@@ -16991,7 +17135,7 @@ function HtmlViewer({
                 onClick={() => {
                   const editable = pptxExportMode === 'editable';
                   setPptxExportModalOpen(false);
-                  fireShareExport('pptx', async () => {
+                  fireShareExport('pptx', async (): Promise<void | DelegatedExportResult> => {
                     const res = await exportProjectAsPptx({
                       projectId,
                       fileName: file.name,
@@ -17000,7 +17144,16 @@ function HtmlViewer({
                       editable,
                       workspaceContext,
                     });
-                    if (!res.ok) throw new Error('error' in res ? res.error : t('fileViewer.exportPptxNa'));
+                    if (res.ok) return;
+                    if ('unavailable' in res && onExportPptxViaAgent) {
+                      const queued = await onExportPptxViaAgent({
+                        fileName: file.name,
+                        title: exportTitle,
+                        editable,
+                      });
+                      if (queued !== false) return DELEGATED_EXPORT;
+                    }
+                    throw new Error('error' in res ? res.error : t('fileViewer.exportPptxNa'));
                   });
                 }}
               >

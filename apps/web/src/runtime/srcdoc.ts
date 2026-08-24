@@ -32,6 +32,7 @@ import {
   MANUAL_EDIT_SOURCE_PATH_ATTR,
 } from '../edit-mode/bridge';
 import { isApprovedFontStylesheetHref } from './deck-thumbnail-parser';
+import { signProjectRawUrlsInHtml } from '../providers/registry';
 
 export type SrcdocOptions = {
   deck?: boolean;
@@ -73,6 +74,8 @@ export type SrcdocOptions = {
    * echoes it only after all document-side listeners are installed, allowing
    * the host to reject a stale ready signal from the document being replaced. */
   transportActivationGeneration?: string;
+  /** Sign internal raw asset URLs for opaque-origin sandbox previews only. */
+  rawAssetSigning?: { projectId: string; token: string | null };
 };
 
 // --- Redirect-loop guard -------------------------------------------------
@@ -465,9 +468,16 @@ export function buildSrcdoc(
   // Embed the reload counter so the srcdoc string differs across reloads even
   // when the underlying HTML bytes are identical.  This ensures the browser
   // sees a changed `srcdoc` attribute and re-parses the document (issue #4650).
-  return options.reloadKey !== undefined
+  const withReloadKey = options.reloadKey !== undefined
     ? withTransport.replace(/(<html\b)([^>]*>)/i, `$1 data-od-reload-key="${options.reloadKey}"$2`)
     : withTransport;
+  return options.rawAssetSigning
+    ? signProjectRawUrlsInHtml(
+        withReloadKey,
+        options.rawAssetSigning.projectId,
+        options.rawAssetSigning.token,
+      )
+    : withReloadKey;
 }
 
 /**

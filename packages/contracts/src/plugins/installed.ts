@@ -43,6 +43,7 @@ export const InstalledPluginRecordSchema = z.object({
   capabilitiesGranted: z.array(z.string()),
   manifest:            PluginManifestSchema,
   fsPath:              z.string(),
+  enabled:             z.boolean().optional(),
   installedAt:         z.number(),
   updatedAt:           z.number(),
 });

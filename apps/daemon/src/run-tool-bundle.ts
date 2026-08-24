@@ -59,6 +59,28 @@ export function normalizeRunToolBundleForRun(raw: unknown): RunToolBundle {
   };
 }
 
+/** Hosted SaaS must accept MCP policy only from the operator backend. */
+export function rejectsClientMcpServers(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return (env.OD_DAEMON_DB ?? '').trim().toLowerCase() === 'postgres'
+    && (env.OD_PRINCIPAL_SOURCE ?? '').trim().toLowerCase() === 'trusted-proxy';
+}
+
+/**
+ * Defense-in-depth for durable rows: route validation rejects new client MCP,
+ * while this boundary also strips bundles restored from an older daemon or
+ * inserted directly into PostgreSQL. SQLite deliberately preserves upstream's
+ * per-run MCP behavior.
+ */
+export function trustedRunScopedMcpServers(
+  bundle: RunToolBundle | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): McpServerConfig[] {
+  if (rejectsClientMcpServers(env)) return [];
+  return Array.isArray(bundle?.mcpServers) ? bundle.mcpServers : [];
+}
+
 export function parseRunToolBundleForRequest(raw: unknown): RunToolBundleParseResult {
   if (raw == null) return { ok: true, bundle: { mcpServers: [] } };
   if (!isPlainObject(raw)) {

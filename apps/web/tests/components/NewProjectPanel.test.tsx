@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { WHITE_LABEL_SAAS } from '../../src/features/whiteLabel';
 import { isOpenDesignHostAvailable, pickHostWorkingDir } from '@open-design/host';
 import {
   buildDesignSystemCreateSelection,
@@ -458,7 +459,7 @@ describe('NewProjectPanel design system defaults', () => {
     );
   });
 
-  it('saves image creation with the selected aspect and trimmed style notes metadata', () => {
+  it.skipIf(WHITE_LABEL_SAAS)('saves image creation with the selected aspect and trimmed style notes metadata', () => {
     const onCreate = vi.fn();
     render(
       <NewProjectPanel
@@ -493,7 +494,7 @@ describe('NewProjectPanel design system defaults', () => {
     );
   });
 
-  it('saves video creation with the selected aspect and duration metadata', () => {
+  it.skipIf(WHITE_LABEL_SAAS)('saves video creation with the selected aspect and duration metadata', () => {
     const onCreate = vi.fn();
     render(
       <NewProjectPanel
@@ -621,7 +622,7 @@ describe('NewProjectPanel design system defaults', () => {
     expect(onCreate.mock.calls[0]?.[0].metadata).not.toHaveProperty('voice');
   });
 
-  it('pins skillId to hyperframes when the video model is hyperframes-html, regardless of skill discovery order', () => {
+  it.skipIf(WHITE_LABEL_SAAS)('pins skillId to hyperframes when the video model is hyperframes-html, regardless of skill discovery order', () => {
     // Reproduces PR #866 mrcfps's reported regression: when daemon `readdir()`
     // returns video skills in an order that puts `video-shortform` ahead of
     // `hyperframes`, the previous `list[0]?.id` fallback would route the
@@ -698,7 +699,7 @@ describe('NewProjectPanel design system defaults', () => {
 });
 
 describe('NewProjectPanel working directory picker', () => {
-  it('includes a browser-picked working directory in the create payload', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('includes a browser-picked working directory in the create payload', async () => {
     const onCreate = vi.fn();
     mockedIsHostAvailable.mockReturnValue(false);
     mockedOpenFolderDialog.mockResolvedValue('/Users/me/product-designs');
@@ -732,7 +733,7 @@ describe('NewProjectPanel working directory picker', () => {
     expect(mockedPickHostWorkingDir).not.toHaveBeenCalled();
   });
 
-  it('threads the desktop host working-dir token into the create payload', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('threads the desktop host working-dir token into the create payload', async () => {
     const onCreate = vi.fn();
     mockedIsHostAvailable.mockReturnValue(true);
     mockedPickHostWorkingDir.mockResolvedValue({
@@ -771,7 +772,7 @@ describe('NewProjectPanel working directory picker', () => {
     expect(mockedOpenFolderDialog).not.toHaveBeenCalled();
   });
 
-  it('surfaces host picker failures without falling back to an untokened browser path', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('surfaces host picker failures without falling back to an untokened browser path', async () => {
     mockedIsHostAvailable.mockReturnValue(true);
     mockedPickHostWorkingDir.mockResolvedValue({
       ok: false,
@@ -796,7 +797,7 @@ describe('NewProjectPanel working directory picker', () => {
     expect(mockedOpenFolderDialog).not.toHaveBeenCalled();
   });
 
-  it('surfaces browser picker daemon failures with localized copy and native details', async () => {
+  it.skipIf(WHITE_LABEL_SAAS)('surfaces browser picker daemon failures with localized copy and native details', async () => {
     mockedIsHostAvailable.mockReturnValue(false);
     mockedOpenFolderDialog.mockRejectedValue(new Error('Could not open folder picker: zenity is not installed'));
 

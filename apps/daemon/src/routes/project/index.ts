@@ -26,6 +26,7 @@ import {
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
 import { readMeta as readBrandMeta } from '../../brands/store.js';
+import { runWithRequestContext } from '../../request-context.js';
 import { createProjectArtifactFile } from '../../artifacts/create.js';
 import { ArtifactPublicationBlockedError } from '../../artifacts/publication-guard.js';
 import { ArtifactRegressionError } from '../../artifacts/stub-guard.js';
@@ -49,6 +50,7 @@ import {
   type UserDesignSystemInput,
 } from '../../design-systems/index.js';
 import { buildProjectDesignTokenSuggestions } from '../../project-design-token-suggestions.js';
+import { beginProjectDeletion, isProjectLifecycleError } from '../../project-lifecycle-gate.js';
 import {
   FIRST_PARTY_ATOMS,
   buildConnectorProbe,
@@ -61,7 +63,7 @@ import {
 import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
-import { isSafeId } from '../../projects.js';
+import { isSafeId, ProjectDirectoryRollbackError } from '../../projects.js';
 import {
   ensureTeamProjectCommentConversations,
   SYNC_KEEPS_UPDATED_AT,
@@ -120,6 +122,8 @@ import {
 } from '../../collab/created-project-workspace.js';
 import { localPluginRegistryScope } from '../../plugins/local-source.js';
 import type { WorkspaceDirectoryFetchResult } from '../../collab/vela-workspace-context.js';
+import type { BusinessFactsStore } from '../../storage/business-facts.js';
+import type { BusinessFactsOutbox } from '../../storage/business-facts-outbox.js';
 import { cancelRunsOwnedBy } from './cancel-owned-runs.js';
 
 export function rewriteOutsideExecutableHtmlRanges(
@@ -234,6 +238,15 @@ function sameLocalCatalogScopes(left: unknown, right: unknown): boolean {
 }
 
 export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation' | 'collabSync'> {
+  businessFacts?: BusinessFactsStore;
+  businessFactsOutbox?: BusinessFactsOutbox;
+  projectSync?: {
+    markDirty: (projectId: string, metadata?: unknown) => void;
+    hydrate: (projectId: string, opts?: { ifMissing?: boolean }) => Promise<unknown>;
+    dropState: (projectId: string) => Promise<void>;
+    reviveProject: (projectId: string) => void;
+    runMutation: <T>(projectId: string, metadata: unknown, mutation: () => Promise<T>) => Promise<T>;
+  };
   pluginScope?: {
     loadRegistry: (options: {
       workspaceId?: string | null;
@@ -261,6 +274,8 @@ export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | '
   verifyPersonalProjectDeleteLeaseAuthority?: VerifyWorkspaceRequestAuthority;
   /** Shared local binding gate for all project data-plane routes. */
   authorizeProjectRequest?: AuthorizeProjectRequest;
+  /** Cleanup for project-scoped Memory belonging to the verified current principal. */
+  deleteProjectMemoryForCurrentPrincipal?: (projectIds: readonly string[]) => Promise<void>;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
   isProjectRevoked?: (projectId: string) => boolean;
   /** Durable first-open placeholder stamp lookup. */
@@ -1804,6 +1819,8 @@ function buildDesignSystemCopyPendingPrompt(input: {
 
 export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDeps) {
   const { db, design } = ctx;
+  const businessFacts = ctx.businessFacts;
+  const businessFactsOutbox = ctx.businessFactsOutbox;
   const projectTelemetry = ctx.telemetry;
   const { sendApiError, createSseResponse } = ctx.http;
   const { DESIGN_SYSTEMS_DIR, PROJECTS_DIR, SKILLS_DIR, BRANDS_DIR, USER_DESIGN_SYSTEMS_DIR } = ctx.paths;
@@ -1825,7 +1842,15 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     deleteWorkspaceProject,
     countWorkspaceProjectRefs,
   } = ctx.projectStore;
-  const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir } = ctx.projectFiles;
+  const {
+    writeProjectFile,
+    readProjectFile,
+    ensureProject,
+    listFiles,
+    listTabs,
+    setTabs,
+    resolveProjectDir,
+  } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
   const { listLatestProjectRunStatuses, listProjectsAwaitingInput, normalizeProjectDisplayStatus, composeProjectDisplayStatus, listProjects, listUnboundProjects } = ctx.status;
@@ -1833,6 +1858,8 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
   const { randomId } = ctx.ids;
   const { validateProjectDesignSystemId, validateProjectSkillId } = ctx.validation;
   const { collabSync, teamProjectCatalog, workspaceTypes } = ctx;
+  const projectSync = ctx.projectSync;
+  const deleteProjectMemory = ctx.deleteProjectMemoryForCurrentPrincipal ?? (async (_projectIds: readonly string[]) => {});
   const learnAssertedWorkspaceType = (context: WorkspaceResourceContext | null) => {
     if (!context?.workspaceTypeAsserted) return;
     workspaceTypes?.learn({
@@ -2901,6 +2928,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             continue;
           }
           try {
+            const conversationId = randomId();
             const project = insertProject(db, {
               id: manifest.id,
               name: manifest.name,
@@ -2918,7 +2946,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
               updatedAt: manifest.updatedAt,
             });
             insertConversation(db, {
-              id: randomId(),
+              id: conversationId,
               projectId: manifest.id,
               title: null,
               createdAt: now,
@@ -2981,17 +3009,13 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         }
       }
       // This is the NO-SCOPE catalog: no `x-od-workspace-*` headers are read
-      // here at all, so every unbound (never-claimed) project must be visible
-      // (pre-workspace-isolation compatibility) while every project some
-      // workspace HAS claimed must not leak to a caller with no identity to
-      // check it against — a signed-out client, a removed member, or a plain
-      // `curl` (spec 04 §10: "no scope" must not mean "trust everything").
-      // `listUnboundProjects` is the join that enforces this; a workspace-
-      // scoped caller uses `GET /api/workspaces/:id/projects` instead, which
-      // has its own ctx-gated membership check. Every row here is, by
-      // construction, unbound — so `workspaceId` is always `null`; no binding
-      // lookup needed (a `listWorkspaceProjectBindings` scan here would only
-      // ever resolve to misses).
+      // here. In local SQLite mode the injected query preserves the historical
+      // unbound catalog; in hosted PostgreSQL mode it is replaced with the
+      // VerifiedPrincipal-scoped query, so "unbound" never means cross-tenant.
+      // Projects claimed by a workspace remain excluded in both modes; a
+      // workspace-scoped caller uses `GET /api/workspaces/:id/projects`, which
+      // has its own ctx-gated membership check. Every returned row therefore
+      // has `workspaceId: null` without another binding scan.
       /** @type {import('@open-design/contracts').ProjectsResponse} */
       const body = {
         projects: listUnboundProjects(db)
@@ -3414,24 +3438,91 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         return sendApiError(res, 403, 'PROJECT_BATCH_CONTAINS_FORBIDDEN_ITEMS', 'batch contains forbidden projects');
       }
       const finalProjectIds = projectIds.filter((id: string) => countWorkspaceProjectRefs(db, id) <= 1);
-      const deleteMany = db.transaction((ids: string[], finalIds: string[]) => {
+      const deleteMany = db.transaction((ids: string[], finalIds: string[], deletedAt: number) => {
         for (const id of ids) deleteWorkspaceProject(db, ctx.workspaceId, id);
         for (const id of finalIds) {
-          if (countWorkspaceProjectRefs(db, id) === 0) dbDeleteProject(db, id);
+          if (countWorkspaceProjectRefs(db, id) === 0) {
+            dbDeleteProject(db, id, { facts: 'none' });
+            // The outbox uses this same SQLite connection, so its insert and the
+            // project/workspace deletes commit (or roll back) as one unit.
+            businessFactsOutbox?.enqueueProjectDelete(id, deletedAt);
+          }
         }
       });
-      const stagedDelete = finalProjectIds.length > 0
-        ? await stageProjectDirsForDelete(PROJECTS_DIR, finalProjectIds, randomId())
-        : null;
+      // Only projects whose final Workspace reference is removed cease to
+      // exist, so unbound-but-existing projects remain runnable.
+      const deletion = await beginProjectDeletion(finalProjectIds);
+      let stagedDelete: Awaited<ReturnType<typeof stageProjectDirsForDelete>> | null = null;
       try {
-        deleteMany(projectIds, finalProjectIds);
+        for (const id of finalProjectIds) {
+          await cancelRunsOwnedBy(design.runs, { projectId: id });
+        }
+        stagedDelete = finalProjectIds.length > 0
+          ? await stageProjectDirsForDelete(PROJECTS_DIR, finalProjectIds, randomId())
+          : null;
+        // Covers a request that loaded the project just before the synchronous
+        // gate mark but did not register its run until the first cancel passed.
+        for (const id of finalProjectIds) {
+          await cancelRunsOwnedBy(design.runs, { projectId: id });
+        }
+        const deletedAt = Date.now();
+        deleteMany(projectIds, finalProjectIds, deletedAt);
+        deletion.commit();
       } catch (error) {
-        await stagedDelete?.rollback();
-        throw error;
+        let failure: unknown = error;
+        if (!(error instanceof ProjectDirectoryRollbackError)) {
+          try {
+            await stagedDelete?.rollback();
+          } catch (rollbackError) {
+            console.error('[project-delete] failed to restore staged project directories:', rollbackError);
+            failure = new ProjectDirectoryRollbackError([error, rollbackError]);
+          }
+        }
+        // Every failure before the SQLite delete commits must release the
+        // lifecycle gate, including staging's own directory-restore failure.
+        // Keep the rollback error as the outward failure after the gate is live.
+        deletion.rollback();
+        throw failure;
       }
+      // From here on the local deletion is irreversible. Project-scoped Memory
+      // cleanup is therefore post-commit and cannot leave a live project empty.
+      let projectionError: unknown;
+      if (!businessFactsOutbox && businessFacts) {
+        try {
+          await Promise.all(finalProjectIds.map((id: string) => businessFacts.deleteProject(id, Date.now())));
+        } catch (error) {
+          projectionError = error;
+        }
+      }
+      let memoryCleanupFailed = false;
+      try {
+        await deleteProjectMemory(finalProjectIds);
+      } catch {
+        memoryCleanupFailed = true;
+      }
+      await Promise.all(finalProjectIds.map(async (id: string) => {
+        await projectSync?.dropState(id).catch((error) => {
+          console.warn(`[sync] failed to drop state for deleted project ${id}:`, error);
+        });
+        // A read authorized before the lifecycle gate may have already queued a
+        // hydrate. dropState drains that queue; remove any directory it restored.
+        await removeProjectDir(PROJECTS_DIR, id).catch(() => {});
+      }));
       await stagedDelete?.commit();
+      if (memoryCleanupFailed) {
+        return sendApiError(
+          res,
+          500,
+          'PROJECT_MEMORY_CLEANUP_FAILED',
+          'project was deleted, but project memory cleanup failed',
+        );
+      }
+      if (projectionError) throw projectionError;
       res.json({ ok: true, deletedProjectIds: projectIds });
     } catch (err: any) {
+      if (isProjectLifecycleError(err)) {
+        return sendApiError(res, 409, err.code, err.message);
+      }
       sendApiError(res, 400, 'BAD_REQUEST', String(err));
     }
   });
@@ -3832,6 +3923,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           }
           return createdProject;
         })();
+        projectSync?.reviveProject(id);
       } catch (err) {
         // External directories cannot participate in SQLite's transaction.
         // Treat their creation as a recoverable side effect and compensate on
@@ -4214,6 +4306,23 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     if (!project || !projectVisibleForLocations(project, locations))
       return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
     if (!await authorizeProjectRequest(req, res, project.id, { mode: 'read' })) return;
+    if (!project.metadata?.baseDir && projectSync) {
+      try {
+        await projectSync.hydrate(project.id, { ifMissing: true });
+      } catch (error) {
+        console.warn(`[sync] failed to hydrate project ${project.id}:`, error);
+        if (isProjectLifecycleError(error)) {
+          return sendApiError(res, 409, error.code, error.message);
+        }
+        return sendApiError(
+          res,
+          503,
+          'UPSTREAM_UNAVAILABLE',
+          'project synchronization is temporarily unavailable; retry the request',
+          { retryable: true },
+        );
+      }
+    }
     // When a caller is about to *reference* this project (add it as read-only
     // context for another run), materialize its managed folder first so the
     // reference resolves to a real directory. See ensureReferencedProjectDir.
@@ -4276,6 +4385,28 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     /** @type {import('@open-design/contracts').ProjectWorkspaceScopeResponse} */
     const body = { scope };
     res.json(body);
+  });
+
+  // Internal outcome event: callers send only after a real export or publish
+  // succeeded. The gateway-authenticated principal is taken from ALS by the
+  // store; request headers are never read here as identity. eventKey makes web
+  // retries idempotent.
+  app.post('/api/projects/:id/stats-events', async (req, res) => {
+    const project = getProject(db, req.params.id);
+    if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+    if (!await authorizeProjectRequest(req, res, project.id, { mode: 'read' })) return;
+    const event = req.body?.event;
+    const eventKey = req.body?.eventKey;
+    if ((event !== 'download' && event !== 'publish')
+        || typeof eventKey !== 'string' || eventKey.length < 1 || eventKey.length > 256) {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'event and eventKey are required');
+    }
+    try {
+      await businessFacts?.recordProjectEvent(project.id, event, eventKey);
+      return res.json({ ok: true });
+    } catch (error) {
+      return sendApiError(res, 503, 'STATS_FACT_WRITE_FAILED', String(error), { retryable: true });
+    }
   });
 
   app.patch('/api/projects/:id', async (req, res) => {
@@ -4638,16 +4769,63 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         }
         await requestTeamVisibility([project.id], teamCtx, 'personal');
       }
-      // Stop any live agent run in this project before its row and directory
-      // are removed, otherwise the CLI subprocess is orphaned — it keeps
-      // billing and writes into a directory that no longer exists (#5468).
-      await cancelRunsOwnedBy(design.runs, { projectId: req.params.id });
-      dbDeleteProject(db, req.params.id);
+      // Mark synchronously before cancellation/PG cleanup. This both rejects
+      // new runs and drains any automatic project-Memory write already in its
+      // PG critical section.
+      const deletion = await beginProjectDeletion([req.params.id]);
+      try {
+        // Stop any live agent run in this project before its row and directory
+        // are removed, otherwise the CLI subprocess is orphaned.
+        await cancelRunsOwnedBy(design.runs, { projectId: req.params.id });
+        // A request that loaded the row before the mark but had not registered
+        // by the first cancel is covered here. There is deliberately no await
+        // from this final cancel through durable tombstone + SQLite deletion.
+        await cancelRunsOwnedBy(design.runs, { projectId: req.params.id });
+        const deletedAt = Date.now();
+        const commitDelete = db.transaction(() => {
+          dbDeleteProject(db, req.params.id, { facts: 'none' });
+          businessFactsOutbox?.enqueueProjectDelete(req.params.id, deletedAt);
+        });
+        commitDelete();
+        deletion.commit();
+      } catch (error) {
+        deletion.rollback();
+        throw error;
+      }
+      let projectionError: unknown;
+      if (!businessFactsOutbox && businessFacts) {
+        try {
+          await businessFacts.deleteProject(req.params.id, Date.now());
+        } catch (error) {
+          projectionError = error;
+        }
+      }
+      let memoryCleanupFailed = false;
+      try {
+        await deleteProjectMemory([req.params.id]);
+      } catch {
+        memoryCleanupFailed = true;
+      }
+      await projectSync?.dropState(req.params.id).catch((error) => {
+        console.warn(`[sync] failed to drop state for deleted project ${req.params.id}:`, error);
+      });
       await removeProjectDir(PROJECTS_DIR, req.params.id).catch(() => {});
+      if (memoryCleanupFailed) {
+        return sendApiError(
+          res,
+          500,
+          'PROJECT_MEMORY_CLEANUP_FAILED',
+          'project was deleted, but project memory cleanup failed',
+        );
+      }
+      if (projectionError) throw projectionError;
       /** @type {import('@open-design/contracts').OkResponse} */
       const body = { ok: true };
       res.json(body);
     } catch (err: any) {
+      if (isProjectLifecycleError(err)) {
+        return sendApiError(res, 409, err.code, err.message);
+      }
       sendApiError(res, 400, 'BAD_REQUEST', String(err));
     }
   });
@@ -4915,6 +5093,7 @@ export function registerProjectArtifactRoutes(app: Express, ctx: RegisterProject
 }
 
 export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'uploads' | 'node' | 'projectStore' | 'projectFiles' | 'documents' | 'artifacts' | 'projectPreviewScopes'> {
+  projectSync?: RegisterProjectRoutesDeps['projectSync'];
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
@@ -4925,6 +5104,7 @@ export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' |
 
 export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFileRoutesDeps) {
   const { db } = ctx;
+  const projectSync = ctx.projectSync;
   const { sendApiError, sendMulterError } = ctx.http;
   // The design-token suggestion route reads the design-system roots to resolve
   // a project's tokens, so this scope needs them alongside PROJECTS_DIR.
@@ -4977,6 +5157,28 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     "object-src 'none'",
   ].join('; ');
   const previewScopeRe = /^[A-Za-z0-9_-]{8,128}$/u;
+
+  async function ensureManagedProjectHydrated(project: any, res: any): Promise<boolean> {
+    if (project?.metadata?.baseDir || !projectSync) return true;
+    try {
+      await projectSync.hydrate(project.id, { ifMissing: true });
+      return true;
+    } catch (error) {
+      console.warn(`[sync] failed to hydrate project ${project.id}:`, error);
+      if (isProjectLifecycleError(error)) {
+        sendApiError(res, 409, error.code, error.message);
+        return false;
+      }
+      sendApiError(
+        res,
+        503,
+        'UPSTREAM_UNAVAILABLE',
+        'project synchronization is temporarily unavailable; retry the request',
+        { retryable: true },
+      );
+      return false;
+    }
+  }
 
   function setProjectPreviewHeaders(res: Response) {
     res.setHeader('Cache-Control', 'no-store');
@@ -5598,6 +5800,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (project?.metadata?.teamMirrorRevokedAt) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
       }
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       const files = await listFiles(PROJECTS_DIR, req.params.id, {
         since: Number.isFinite(since) ? since : undefined,
         metadata: project?.metadata,
@@ -5624,6 +5827,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
       if (!await authorizeProjectRequest(req, res, searchProject.id, { mode: 'read' })) return;
+      if (!await ensureManagedProjectHydrated(searchProject, res)) return;
       const query = String(req.query.q ?? '');
       if (!query) {
         sendApiError(res, 400, 'BAD_REQUEST', 'q query parameter is required');
@@ -5711,6 +5915,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
       if (!await authorizeProjectRequest(req, res, project.id, { mode: 'read' })) return;
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       const folders = await listProjectFolders(PROJECTS_DIR, req.params.id, {
         metadata: project.metadata,
       });
@@ -5815,6 +6020,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         return;
       }
       if (!await authorizeProjectRequest(req, res, project.id, { mode: 'read' })) return;
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       const requestedPath = previewFilePathForProject(project, req.query.file);
       const meta = await resolveProjectFilePath(
         PROJECTS_DIR,
@@ -5875,6 +6081,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         projectId,
         { mode: 'read', allowNavigationQuery: true },
       )) return;
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       const meta = await resolveProjectFilePath(
         PROJECTS_DIR,
         projectId,
@@ -5944,12 +6151,18 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
             get: req.get.bind(req),
           }
         : req;
-      if (!await authorizeProjectRequest(
+      const authorizePreview = () => authorizeProjectRequest(
         authorityRequest,
         res,
         projectId,
         { mode: 'read', allowNavigationQuery: true },
-      )) return;
+      );
+      const previewPrincipal = projectPreviewScopes.resolvePrincipal?.(project.id, scope);
+      const previewAllowed = previewPrincipal
+        ? await runWithRequestContext(previewPrincipal, authorizePreview)
+        : await authorizePreview();
+      if (!previewAllowed) return;
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       if (req.headers.origin === 'null') {
         res.header('Access-Control-Allow-Origin', '*');
       }
@@ -6012,6 +6225,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (project?.metadata?.teamMirrorRevokedAt) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
       }
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       // PreviewModal loads artifact HTML via srcdoc, giving the iframe Origin: "null".
       // data: URIs, file://, and some sandboxed iframes also send null — all are
       // local-only callers, so this is safe. Real cross-origin sites send a real
@@ -6131,6 +6345,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         projectId,
         { mode: 'read', allowNavigationQuery: true },
       )) return;
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       const meta = await resolveProjectFilePath(
         PROJECTS_DIR,
         projectId,
@@ -6217,6 +6432,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project.id,
         { mode: 'read', allowNavigationQuery: true },
       )) return;
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       const file = await readProjectFile(
         PROJECTS_DIR,
         req.params.id,
@@ -6252,6 +6468,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
       if (!await authorizeProjectRequest(req, res, project.id, { mode: 'read' })) return;
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       if (!/\.html?$/i.test(fileName)) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'versions are only available for HTML files');
       }
@@ -6542,6 +6759,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (project?.metadata?.teamMirrorRevokedAt) {
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
       }
+      if (!await ensureManagedProjectHydrated(project, res)) return;
       const file = await readProjectFile(
         PROJECTS_DIR,
         projectId,
@@ -6902,6 +7120,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 }
 
 export interface RegisterProjectUploadRoutesDeps extends RouteDeps<'db' | 'http' | 'uploads' | 'node' | 'paths' | 'projectStore' | 'projectFiles'> {
+  projectSync?: RegisterProjectRoutesDeps['projectSync'];
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Durable first-open placeholder stamp lookup. */
@@ -6910,6 +7129,7 @@ export interface RegisterProjectUploadRoutesDeps extends RouteDeps<'db' | 'http'
 
 export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUploadRoutesDeps) {
   const { db } = ctx;
+  const projectSync = ctx.projectSync;
   const { sendApiError } = ctx.http;
   const { handleProjectUpload } = ctx.uploads;
   const { PROJECTS_DIR } = ctx.paths;
@@ -6937,7 +7157,33 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
 
   app.post(
     '/api/projects/:id/upload',
-    handleProjectUpload,
+    (req, res, next) => {
+      const project = getProject(db, req.params.id);
+      if (!projectSync) return handleProjectUpload(req, res, next);
+      void projectSync.runMutation(req.params.id, project?.metadata, () =>
+        new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const settle = () => {
+            if (settled) return;
+            settled = true;
+            res.off('finish', settle);
+            res.off('close', settle);
+            resolve();
+          };
+          res.once('finish', settle);
+          res.once('close', settle);
+          handleProjectUpload(req, res, (error?: unknown) => {
+            if (error) {
+              res.off('finish', settle);
+              res.off('close', settle);
+              reject(error);
+              return;
+            }
+            next();
+          });
+        }),
+      ).catch(next);
+    },
     async (req, res) => {
       try {
         const incoming = Array.isArray(req.files) ? req.files : [];
@@ -6991,6 +7237,7 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
             // skip files that vanished mid-flight
           }
         }
+        if (out.length > 0) projectSync?.markDirty(req.params.id, project?.metadata);
         /** @type {import('@open-design/contracts').UploadProjectFilesResponse} */
         const body = { files: out };
         res.json(body);

@@ -17,6 +17,8 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 
+vi.mock("../src/providers/raw-token", () => ({ useRawToken: () => null }));
+
 import { DesignFilesPanel } from "../src/components/DesignFilesPanel";
 import { resetHtmlThumbnailSourceCache } from "../src/components/html-thumbnail-source-cache";
 import type { ProjectFile } from "../src/types";

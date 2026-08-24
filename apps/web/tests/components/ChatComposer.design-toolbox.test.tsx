@@ -76,6 +76,31 @@ const RESEARCH_PLUGIN = {
   updatedAt: 0,
 };
 
+const MEDIA_PLUGIN = {
+  ...RESEARCH_PLUGIN,
+  id: 'od-media-generation',
+  title: 'Media generation',
+  manifest: {
+    ...RESEARCH_PLUGIN.manifest,
+    name: 'od-media-generation',
+    title: 'Media generation',
+    tags: ['image', 'video', 'audio'],
+  },
+};
+const HYPERFRAMES_PLUGIN = {
+  ...RESEARCH_PLUGIN,
+  id: 'example-hyperframes',
+  title: 'HyperFrames',
+  manifest: { ...RESEARCH_PLUGIN.manifest, name: 'example-hyperframes', title: 'HyperFrames', tags: ['video'] },
+};
+const COMMUNITY_VISUAL_PLUGIN = {
+  ...HYPERFRAMES_PLUGIN,
+  id: 'community-visual',
+  title: 'Community Visual',
+  sourceKind: 'marketplace' as const,
+  manifest: { ...HYPERFRAMES_PLUGIN.manifest, name: 'community-visual', title: 'Community Visual' },
+};
+
 const HIGGSFIELD_MCP = {
   id: 'higgsfield',
   label: 'Higgsfield Video MCP',
@@ -186,7 +211,9 @@ beforeEach(() => {
       });
     }
     if (url === '/api/plugins') {
-      return new Response(JSON.stringify({ plugins: [RESEARCH_PLUGIN] }), {
+      return new Response(JSON.stringify({
+          plugins: [RESEARCH_PLUGIN, MEDIA_PLUGIN, HYPERFRAMES_PLUGIN, COMMUNITY_VISUAL_PLUGIN],
+        }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -220,6 +247,41 @@ afterEach(() => {
 });
 
 describe('ChatComposer design toolbox', () => {
+  it('filters native visual plugins from Plus while preserving community plugins', async () => {
+    const { ref } = renderComposer();
+    await flushMounts();
+    act(() => ref.current?.openPlusMenu('plugins'));
+
+    await waitFor(() => expect(screen.getByText('Community Visual')).toBeTruthy());
+    expect(screen.getAllByText('Research Asset Plugin').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Media generation')).toBeNull();
+    expect(screen.queryByText('HyperFrames')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith('/api/mcp/servers');
+  });
+
+  it('does not probe working directories on mount, focus, or visibility in SaaS mode', async () => {
+    renderComposer({ projectMetadata: { kind: 'prototype', linkedDirs: ['/tmp/hidden-workdir'] } });
+    await flushMounts();
+    fireEvent(window, new Event('focus'));
+    fireEvent(document, new Event('visibilitychange'));
+    await act(async () => Promise.resolve());
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/dir-exists'))).toBe(false);
+  });
+  it('hides native visual generation actions while retaining charts and MCP discovery', async () => {
+    const { ref } = renderComposer();
+    await flushMounts();
+    openToolbox(ref);
+
+    await waitFor(() => expect(screen.getByText('Generate charts / diagrams')).toBeTruthy());
+    expect(screen.queryByText('Generate images / visual references')).toBeNull();
+    expect(screen.queryByText('Generate logo / identity')).toBeNull();
+    expect(screen.queryByText('Generate video / motion script')).toBeNull();
+
+    // MCP remains discoverable through the unchanged picker/catalog request.
+    expect(fetchMock).toHaveBeenCalledWith('/api/mcp/servers');
+  });
+
   it('returns focus to the active opener when an imperative caller omits it', async () => {
     const { ref } = renderComposer();
     await flushMounts();
@@ -299,7 +361,7 @@ describe('ChatComposer design toolbox', () => {
     fireEvent.change(search, { target: { value: 'research' } });
 
     await waitFor(() => {
-      expect(screen.getByText('Research Asset Plugin')).toBeTruthy();
+      expect(screen.getAllByText('Research Asset Plugin').length).toBeGreaterThan(0);
     });
 
     fireEvent.change(search, { target: { value: '' } });

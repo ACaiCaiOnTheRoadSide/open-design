@@ -22,6 +22,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { expandHomePrefix } from './home-expansion.js';
+import { getAgentDef } from './runtimes/registry.js';
 
 import {
   readInstallationFile,
@@ -97,6 +98,8 @@ export interface OrbitConfigPrefs {
     workspaceId: string;
     workspaceMemberId: string;
   } | null;
+  /** Server-stamped verified owner for background-created project facts. */
+  factPrincipal?: { tenantId: string; userId: string };
 }
 
 export interface ProjectLocationPrefs {
@@ -323,6 +326,16 @@ function validateOrbit(raw: unknown): OrbitConfigPrefs | undefined {
     orbit.templateSkillId = typeof obj.templateSkillId === 'string' && obj.templateSkillId.trim()
       ? obj.templateSkillId.trim()
       : null;
+  }
+  if (Object.hasOwn(obj, 'factPrincipal')) {
+    const value = obj.factPrincipal;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const tenantId = typeof (value as Record<string, unknown>).tenantId === 'string'
+        ? String((value as Record<string, unknown>).tenantId).trim() : '';
+      const userId = typeof (value as Record<string, unknown>).userId === 'string'
+        ? String((value as Record<string, unknown>).userId).trim() : '';
+      if (tenantId && userId) orbit.factPrincipal = { tenantId, userId };
+    }
   }
   if (Object.hasOwn(obj, 'workspaceScope')) {
     const rawScope = obj.workspaceScope;
@@ -703,6 +716,9 @@ function applyTelemetryDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
 
 export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
   const base = await readAppConfigFileOnly(dataDir);
+  if (typeof base.agentId === 'string' && base.agentId && !getAgentDef(base.agentId)) {
+    base.agentId = null;
+  }
   // Channel-root installation file is the new authoritative source for the
   // identity bits that must survive a namespace-scoped data-dir wipe. It
   // lives outside `<namespace>/data/` so a reinstall of the same channel
@@ -742,6 +758,9 @@ export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
 // part of the read result.
 export function readAppConfigSync(dataDir: string): AppConfigPrefs {
   const base = readAppConfigFileOnlySync(dataDir);
+  if (typeof base.agentId === 'string' && base.agentId && !getAgentDef(base.agentId)) {
+    base.agentId = null;
+  }
   const installation = readInstallationFileSync(resolveInstallationDir(dataDir));
   if (
     typeof installation.installationId === 'string' &&

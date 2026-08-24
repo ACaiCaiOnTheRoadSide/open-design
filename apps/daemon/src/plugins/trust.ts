@@ -11,6 +11,7 @@
 //     snapshot; we never widen the registry-stored cache here.
 
 import type { InstalledPluginRecord, PluginManifest, TrustTier } from '@open-design/contracts';
+import { currentPluginStorageId } from './storage-identity.js';
 
 export const TRUSTED_DEFAULT_CAPABILITIES: ReadonlyArray<string> = [
   'prompt:inject',
@@ -149,9 +150,10 @@ export function grantCapabilities(args: {
   pluginId: string;
   capabilities: string[];
 }): string[] {
+  const storageId = currentPluginStorageId(args.pluginId);
   const row = args.db
     .prepare(`SELECT capabilities_granted FROM installed_plugins WHERE id = ?`)
-    .get(args.pluginId) as { capabilities_granted?: string } | undefined;
+    .get(storageId) as { capabilities_granted?: string } | undefined;
   if (!row) {
     throw new Error(`plugin not found: ${args.pluginId}`);
   }
@@ -172,7 +174,7 @@ export function grantCapabilities(args: {
           SET capabilities_granted = ?, updated_at = ?
         WHERE id = ?`,
     )
-    .run(JSON.stringify(merged), now, args.pluginId);
+    .run(JSON.stringify(merged), now, storageId);
   return merged;
 }
 
@@ -184,9 +186,10 @@ export function revokeCapabilities(args: {
   pluginId: string;
   capabilities: string[];
 }): string[] {
+  const storageId = currentPluginStorageId(args.pluginId);
   const row = args.db
     .prepare(`SELECT capabilities_granted FROM installed_plugins WHERE id = ?`)
-    .get(args.pluginId) as { capabilities_granted?: string } | undefined;
+    .get(storageId) as { capabilities_granted?: string } | undefined;
   if (!row) {
     throw new Error(`plugin not found: ${args.pluginId}`);
   }
@@ -211,6 +214,6 @@ export function revokeCapabilities(args: {
           SET capabilities_granted = ?, updated_at = ?
         WHERE id = ?`,
     )
-    .run(JSON.stringify(next), now, args.pluginId);
+    .run(JSON.stringify(next), now, storageId);
   return next;
 }

@@ -1084,6 +1084,42 @@
   font-size: var(--font-size-13);
   line-height: 1.25;
 }
+.settings-accent-swatches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.settings-accent-swatch,
+.settings-accent-custom {
+  width: 30px;
+  height: 30px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+}
+.settings-accent-swatch[data-active='true'] {
+  border-color: var(--bg-panel);
+  box-shadow: 0 0 0 2px var(--text-strong);
+}
+.settings-accent-custom {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.settings-accent-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
 .settings-general-field {
   display: flex;
   flex-direction: column;

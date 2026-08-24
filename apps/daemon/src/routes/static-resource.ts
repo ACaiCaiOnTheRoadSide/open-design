@@ -65,6 +65,8 @@ import {
   type SkillInstallErrorCode,
 } from '../services/skill-installation.js';
 import type { RouteDeps } from '../server-context.js';
+import { captureVerifiedPrincipal, type BrandDesignSystemRegistry } from '../storage/brand-design-system-registry.js';
+import type { SyncResourceNamespace } from '../sync/engine.js';
 
 export interface RegisterAtomRoutesDeps {
   db: Database.Database;
@@ -84,6 +86,11 @@ export interface RegisterStaticResourceRoutesDeps extends RouteDeps<'db' | 'http
   /** Team-resource copy red-line (D3). When present, a frozen team skill cannot
    *  be edit-shadowed into a personal editable copy. Omit to skip (no-op). */
   teamResources?: TeamResourceStateProvider;
+  registry?: BrandDesignSystemRegistry;
+  resourceSync?: {
+    hydrate: (namespace: SyncResourceNamespace, id: string, options?: { ifMissing?: boolean }) => Promise<unknown>;
+    markDirty: (namespace: SyncResourceNamespace, id: string) => void;
+  };
 }
 
 export function registerAtomRoutes(app: Express, ctx: RegisterAtomRoutesDeps) {
@@ -138,6 +145,23 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
   } = ctx.resources;
   const { isLocalSameOrigin, resolvedPortRef, sendApiError } = ctx.http;
   const teamResources = ctx.teamResources;
+  const registry = ctx.registry;
+  const registerImportedDesignSystem = async (designSystem: { id: string; title?: string }, dirId: string) => {
+    const principal = registry?.enabled ? captureVerifiedPrincipal() : undefined;
+    try {
+      await registry?.register({
+        resourceType: 'design_system', resourceId: designSystem.id,
+        slug: dirId, name: designSystem.title ?? dirId,
+      }, principal);
+    } catch (error) {
+      // A failed/tombstoned identity must not leave bytes that startup backfill
+      // could later mistake for a fresh resource.
+      await fs.promises.rm(path.join(USER_DESIGN_SYSTEMS_DIR, dirId), { recursive: true, force: true });
+      deleteWorkspaceResourceByResourceId(db, 'design_system', designSystem.id);
+      throw error;
+    }
+    ctx.resourceSync?.markDirty('design-system', dirId);
+  };
   const requireLocalOrigin = (req: any, res: any) => {
     if (isLocalSameOrigin(req, resolvedPortRef.current)) return true;
     sendApiError(res, 403, 'FORBIDDEN', 'local origin required');
@@ -809,12 +833,25 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       const workspaceId = workspaceContext?.workspaceId
         ?? (catalogAuthority ? null : (await resolveWorkspaceScope?.(req)) ?? null);
       const workspaceMemberId = workspaceContext?.workspaceMemberId ?? null;
+      const ownedDesignSystems = registry?.enabled
+        ? await registry.listOwned('design_system', captureVerifiedPrincipal())
+        : null;
+      if (ownedDesignSystems && ctx.resourceSync) {
+        await Promise.all(ownedDesignSystems.map((row) =>
+          ctx.resourceSync!.hydrate('design-system', row.resourceId.replace(/^user:/u, ''), { ifMissing: true })));
+      }
       const catalog = await listAllDesignSystems({
         workspaceId,
         workspaceMemberId,
       });
+      const ownedDesignSystemIds = ownedDesignSystems
+        ? new Set(ownedDesignSystems.map((row) => row.resourceId))
+        : null;
+      const tenantCatalog = ownedDesignSystemIds
+        ? catalog.filter((system) => system.source !== 'user' || ownedDesignSystemIds.has(system.id))
+        : catalog;
       const visibleSystems = workspaceId && workspaceMemberId
-        ? catalog.filter((system) => {
+        ? tenantCatalog.filter((system) => {
             if (system.source !== 'user') return true;
             const teamBinding = getWorkspaceResourceByResourceId(
               db,
@@ -838,7 +875,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
               && personalBinding.resourceState !== 'deleted'
               && personalBinding.createdByWorkspaceMemberId === workspaceMemberId;
           })
-        : catalog;
+        : tenantCatalog;
       // recvqb6mfyqXLD: decorate every teamSynced entry with the same
       // mutate verdict the PATCH/DELETE routes enforce, so any surface that
       // renders straight off this list (e.g. `ProjectView`'s in-project
@@ -1261,6 +1298,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       if (!designSystem) {
         return res.status(500).json({ error: `installed design system was not found in catalog: ${result.dir}` });
       }
+      await registerImportedDesignSystem(designSystem, designSystemId);
       res.json({ designSystem });
     } catch (err: any) {
       if (sendWorkspaceScopeError(res, err)) return;
@@ -1329,6 +1367,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           `imported design system was not found in catalog: ${result.dir}`,
         );
       }
+      await registerImportedDesignSystem(designSystem, result.id);
       res.status(201).json(await importedDesignSystemResponse(designSystem));
     } catch (err: any) {
       if (sendWorkspaceScopeError(res, err)) return;
@@ -1377,6 +1416,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           `imported GitHub design system was not found in catalog: ${result.dir}`,
         );
       }
+      await registerImportedDesignSystem(designSystem, result.id);
       res.status(201).json(await importedDesignSystemResponse(designSystem));
     } catch (err: any) {
       if (sendWorkspaceScopeError(res, err)) return;
@@ -1427,6 +1467,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           `imported shadcn design system was not found in catalog: ${result.dir}`,
         );
       }
+      await registerImportedDesignSystem(designSystem, result.id);
       res.status(201).json(await importedDesignSystemResponse(designSystem));
     } catch (err: any) {
       if (sendWorkspaceScopeError(res, err)) return;

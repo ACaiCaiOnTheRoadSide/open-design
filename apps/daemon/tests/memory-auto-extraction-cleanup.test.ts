@@ -12,7 +12,10 @@ import {
   upsertMemoryEntry,
   writeMemoryConfig,
 } from '../src/memory.js';
-import { runAutoExtractionCleanup } from '../src/memory-cleanup.js';
+import {
+  canRunAutoExtractionCleanupAtStartup,
+  runAutoExtractionCleanup,
+} from '../src/memory-cleanup.js';
 
 let dataDir = '';
 
@@ -118,6 +121,19 @@ afterEach(async () => {
 });
 
 describe('one-time auto-extraction cleanup', () => {
+  it('runs at PostgreSQL startup only when a static principal is available', () => {
+    expect(canRunAutoExtractionCleanupAtStartup('sqlite', { enabled: false })).toBe(true);
+    expect(canRunAutoExtractionCleanupAtStartup('postgres', {
+      enabled: true,
+      source: 'static',
+    })).toBe(true);
+    expect(canRunAutoExtractionCleanupAtStartup('postgres', {
+      enabled: true,
+      source: 'trusted-proxy',
+    })).toBe(false);
+    expect(canRunAutoExtractionCleanupAtStartup('postgres', { enabled: false })).toBe(false);
+  });
+
   it('deletes heuristic-pack artifacts and keeps LLM / brand / manual entries', async () => {
     const result = await runAutoExtractionCleanup(dataDir);
     expect(result.ran).toBe(true);

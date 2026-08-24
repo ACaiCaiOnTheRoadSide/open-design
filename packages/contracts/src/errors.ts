@@ -13,6 +13,8 @@ export const API_ERROR_CODES = [
   'AGENT_UNAVAILABLE',
   'AGENT_AUTH_REQUIRED',
   'AGENT_EXECUTION_FAILED',
+  // Managed OpenCode runs must never fall through to an implicit/free model.
+  'AGENT_MODEL_NOT_CONFIGURED',
   // The agent's connection to its model provider was established and then
   // dropped or kept resetting mid-response (e.g. "socket connection was closed
   // unexpectedly", ECONNRESET, "Unable to connect to API", ETIMEDOUT). Distinct
@@ -59,6 +61,7 @@ export const API_ERROR_CODES = [
   // than silently disabling the agent-specific watchdog.
   'AGENT_RUNTIME_DEF_INVALID',
   'PROJECT_NOT_FOUND',
+  'PROJECT_MEMORY_CLEANUP_FAILED',
   'PROJECT_MATERIALIZATION_PENDING',
   // Handoff (`POST /api/projects/:id/handoff`): the requested conversation
   // is not in the project, or has no messages to synthesize a handoff from.

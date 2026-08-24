@@ -56,6 +56,13 @@ import {
 } from "@open-design/contracts";
 import { OdCardView, type BrandBrowserAssistConfirm } from "./OdCard";
 import {
+  DESIGN_REF_SELECTION_RE,
+  splitOnDesignReferences,
+  stripTrailingOpenDesignReferences,
+  type DesignReferences,
+} from '../artifacts/design-references';
+import { DesignReferencesGrid } from './DesignReferencesGrid';
+import {
   normalizeVisualStyleQuestionValue,
   parseSubmittedAnswers,
   QuestionFormView,
@@ -339,6 +346,8 @@ function SkillPluginCandidateCard({
 
 interface Props {
   message: ChatMessage;
+  /** Effective app agent, used only when this message has no agent identity. */
+  fallbackAgentId?: string | null;
   streaming: boolean;
   // Live-only streaming tool-input partials keyed by tool-use id (raw,
   // mid-token JSON accumulated from `input_json_delta`). Used to render an
@@ -388,6 +397,7 @@ interface Props {
   // Structured form replies are parsed back into the inline answered summary.
   nextUserContent?: string;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
+  onSelectDesignReference?: (text: string) => void;
   questionFormSubmitDisabled?: boolean;
   onContinueRemainingTasks?: (todos: TodoItem[]) => void;
   onForkFromMessage?: () => void;
@@ -436,6 +446,7 @@ interface Props {
 // cheap.
 const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   'message',
+  'fallbackAgentId',
   'streaming',
   'projectId',
   'projectKind',
@@ -453,6 +464,7 @@ const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   'errorCardOwnerId',
   'nextUserContent',
   'questionFormSubmitDisabled',
+  'onSelectDesignReference',
   'forking',
   'shareToOpenDesignBusy',
   'suppressDirectionForms',
@@ -500,6 +512,7 @@ export const AssistantMessage = memo(AssistantMessageImpl, areAssistantMessagePr
  */
 function AssistantMessageImpl({
   message,
+  fallbackAgentId = null,
   streaming,
   liveToolInput,
   projectId = null,
@@ -521,6 +534,7 @@ function AssistantMessageImpl({
   errorCardOwnerId = null,
   nextUserContent,
   onSubmitQuestionForm,
+  onSelectDesignReference,
   questionFormSubmitDisabled = false,
   onContinueRemainingTasks,
   onForkFromMessage,
@@ -727,9 +741,13 @@ function AssistantMessageImpl({
     | Extract<AgentEvent, { kind: "usage" }>
     | undefined;
   const roleName = assistantRoleName(message, t);
-  const roleIconId = agentIconId(message.agentId, message.agentName);
+  const roleIconId = agentIconId(message.agentId, message.agentName, fallbackAgentId);
   const hasEmptyResponse = events.some(
     (e) => e.kind === "status" && e.label === "empty_response"
+  );
+  const runEndEvent = [...events].reverse().find(
+    (event): event is Extract<AgentEvent, { kind: "status" }> =>
+      event.kind === "status" && event.label === "run_end",
   );
   const hasResultDeliveryFailure =
     message.resultDeliveryState === "no_result" ||
@@ -921,6 +939,7 @@ function AssistantMessageImpl({
                 nextUserContent={nextUserContent}
                 suppressDirectionForms={suppressDirectionForms}
                 onSubmitQuestionForm={onSubmitQuestionForm}
+                onSelectDesignReference={onSelectDesignReference}
                 questionFormSubmitDisabled={questionFormSubmitDisabled}
                 visualStyleContext={visualStyleContextForProjectKind(projectKind)}
                 projectId={projectId}
@@ -981,7 +1000,7 @@ function AssistantMessageImpl({
             if (b.label === "error" && message.id === errorCardOwnerId) return null;
             // The pre-output "initializing" status is surfaced by the footer's
             // shimmering "Preparing…" label instead of its own pill.
-            if (b.label === "initializing") return null;
+            if (b.label === "initializing" || b.label === "run_end") return null;
             return <StatusPill key={i} label={b.label} detail={b.detail} />;
           }
           return null;
@@ -1083,6 +1102,8 @@ function AssistantMessageImpl({
                   hasUnfinishedTodos: unfinishedTodos.length > 0,
                   hasEmptyResponse,
                   canceled: message.runStatus === "canceled",
+                  endReasonCode: runEndEvent?.code,
+                  endReasonDetail: runEndEvent?.detail,
                   preparing,
                   preparingStatus,
                   copyMarkdown,
@@ -1102,6 +1123,8 @@ function AssistantMessageImpl({
                 hasUnfinishedTodos={unfinishedTodos.length > 0}
                 hasEmptyResponse={hasEmptyResponse}
                 canceled={message.runStatus === "canceled"}
+                endReasonCode={runEndEvent?.code}
+                endReasonDetail={runEndEvent?.detail}
                 preparing={preparing}
                 preparingStatus={preparingStatus}
                 copyMarkdown={copyMarkdown}
@@ -1597,6 +1620,8 @@ interface AssistantFooterProps {
   hasUnfinishedTodos: boolean;
   hasEmptyResponse: boolean;
   canceled?: boolean;
+  endReasonCode?: string;
+  endReasonDetail?: string;
   // Pre-output phase: streaming but nothing rendered yet. The label shimmers
   // "Preparing…"; once content lands it flips to "Working".
   preparing?: boolean;
@@ -1614,11 +1639,27 @@ interface AssistantFooterProps {
   hideRunStatus?: boolean;
 }
 
+function endReasonLabelKey(code?: string): keyof Dict | null {
+  switch (code) {
+    case 'user_canceled': return 'assistant.endCanceled';
+    case 'daemon_shutdown': return 'assistant.endInterrupted';
+    case 'output_truncated': return 'assistant.endTruncated';
+    case 'idle_artifact_shutdown': return 'assistant.endIdleWrapUp';
+    case 'completed':
+    case undefined:
+      return null;
+    default:
+      return 'assistant.endFailed';
+  }
+}
+
 function AssistantFooter({
   streaming,
   hasUnfinishedTodos,
   hasEmptyResponse,
   canceled = false,
+  endReasonCode,
+  endReasonDetail,
   preparing = false,
   preparingStatus = "preparing",
   copyMarkdown,
@@ -1630,12 +1671,16 @@ function AssistantFooter({
   hideRunStatus = false,
 }: AssistantFooterProps) {
   const t = useT();
+  const endLabelKey = streaming
+    ? null
+    : endReasonLabelKey(endReasonCode) ?? (canceled ? 'assistant.endCanceled' : null);
   if (
     !forceVisible &&
     !streaming &&
     !hasUnfinishedTodos &&
     !hasEmptyResponse &&
     !canceled &&
+    !endLabelKey &&
     !copyMarkdown &&
     !onFork
   )
@@ -1650,7 +1695,10 @@ function AssistantFooter({
       {!hideRunStatus ? (
         <>
           <span className="dot" data-active={streaming ? "true" : "false"} />
-          <span className={`assistant-label${streaming && preparing ? " shimmer-text shimmer-prepare" : ""}`}>
+          <span
+            className={`assistant-label${streaming && preparing ? " shimmer-text shimmer-prepare" : ""}`}
+            title={endLabelKey && endReasonDetail ? endReasonDetail : undefined}
+          >
             {streaming
               ? preparing
                 ? preparingStatus === "thinking"
@@ -1659,6 +1707,8 @@ function AssistantFooter({
                 : t("assistant.workingLabel")
               : hasEmptyResponse
               ? t("assistant.emptyResponseLabel")
+              : endLabelKey
+              ? t(endLabelKey)
               : canceled
               ? t("assistant.canceledLabel")
               : hasUnfinishedTodos
@@ -2534,6 +2584,7 @@ function ProseBlock({
   nextUserContent,
   suppressDirectionForms,
   onSubmitQuestionForm,
+  onSelectDesignReference,
   questionFormSubmitDisabled,
   visualStyleContext,
   projectId,
@@ -2558,6 +2609,7 @@ function ProseBlock({
   projectFileNames?: Set<string>;
   projectResolvedDir?: string | null;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
+  onSelectDesignReference?: (text: string) => void;
   questionFormSubmitDisabled: boolean;
   visualStyleContext?: VisualStyleContext;
   onRequestOpenFile?: (name: string) => void;
@@ -2577,7 +2629,8 @@ function ProseBlock({
     if (!(isLastAssistant && streaming)) return { text: cleaned, hadOpenForm: false };
     const form = stripTrailingOpenQuestionForm(cleaned);
     const card = stripTrailingOpenOdCard(form.text);
-    return { text: card.text, hadOpenForm: form.hadOpenForm };
+    const refs = stripTrailingOpenDesignReferences(card.text);
+    return { text: refs.text, hadOpenForm: form.hadOpenForm };
   }, [cleaned, isLastAssistant, streaming]);
   // While an `<artifact type="text/html">` is still streaming (no closing tag
   // yet), surface its body in a live code panel instead of leaking the raw
@@ -2607,6 +2660,7 @@ function ProseBlock({
     | { key: string; kind: "reminder"; text: string }
     | { key: string; kind: "form"; form: QuestionForm }
     | { key: string; kind: "od-card"; card: OdCard }
+    | { key: string; kind: "design-references"; refs: DesignReferences }
     | { key: string; kind: "suppressed-direction" };
   const renderable = segments.flatMap((seg, idx): Renderable[] => {
     if (seg.kind === "form") {
@@ -2621,11 +2675,17 @@ function ProseBlock({
         return [{ key: `c-${idx}-${c}`, kind: "od-card", card: cardSeg.card }];
       }
       if (cardSeg.text.trim().length === 0) return [];
-      return splitSystemReminders(cardSeg.text).map((s, j) => ({
-        key: `t-${idx}-${c}-${j}`,
-        kind: s.kind,
-        text: s.text,
-      }));
+      return splitOnDesignReferences(cardSeg.text).flatMap((refSeg, r): Renderable[] => {
+        if (refSeg.kind === 'design-references') {
+          return [{ key: `dr-${idx}-${c}-${r}`, kind: 'design-references', refs: refSeg.refs }];
+        }
+        if (refSeg.text.trim().length === 0) return [];
+        return splitSystemReminders(refSeg.text).map((s, j) => ({
+          key: `t-${idx}-${c}-${r}-${j}`,
+          kind: s.kind,
+          text: s.text,
+        }));
+      });
     });
   });
   if (renderable.length === 0 && !live) return null;
@@ -2655,6 +2715,19 @@ function ProseBlock({
                 assistantMessageId,
                 seg.key,
               ].join(":")}
+            />
+          );
+        }
+        if (seg.kind === 'design-references') {
+          const selectedId = nextUserContent?.match(DESIGN_REF_SELECTION_RE)?.[1]?.trim() ?? null;
+          return (
+            <DesignReferencesGrid
+              key={seg.key}
+              refs={seg.refs}
+              projectId={projectId}
+              onSelect={onSelectDesignReference}
+              selectedId={selectedId}
+              disabled={!onSelectDesignReference}
             />
           );
         }

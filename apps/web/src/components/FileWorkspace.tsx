@@ -47,6 +47,7 @@ import {
   writeProjectBase64File,
   writeProjectTextFile,
 } from '../providers/registry';
+import { useRawToken } from '../providers/raw-token';
 import type { Dict } from '../i18n/types';
 import { STAGE_ATTACHMENT_EVENT, type StageAttachmentEventDetail } from './ChatComposer';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
@@ -129,11 +130,17 @@ import type { PluginFolderAgentAction } from './design-files/pluginFolderActions
 import { designSystemGithubEvidenceState, repoConnectCopy } from './design-system-github-evidence';
 import { APP_CHROME_FILE_ACTIONS_ID } from './AppChromeHeader';
 import { FileViewer, LiveArtifactViewer } from './FileViewer';
+import type {
+  ImageAgentExportRequest,
+  PdfAgentExportRequest,
+  PptxAgentExportRequest,
+} from './export-agent-delegation';
 import { useIframeKeepAlivePool } from './IframeKeepAlivePool';
 import { Icon, type IconName } from './Icon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
 import { FileSyncBadge, type FileSyncBadgeState } from '../collab/FileSyncBadge';
 import { Toast } from './Toast';
+import { confirm } from './confirm-dialog-host';
 import { TabLauncherMenu } from './workspace/TabLauncherMenu';
 import { buildLauncherActions, type LauncherContext } from './workspace/tab-launcher';
 import { SideChatTab, type ActiveConversationChatState } from './workspace/SideChatTab';
@@ -257,6 +264,9 @@ interface Props {
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<CommentSendResult> | CommentSendResult;
   onBrandExtractionStopRequest?: () => void;
   onRequestBrowserUsePrompt?: (prompt: string) => void;
+  onExportPptxViaAgent?: (request: PptxAgentExportRequest) => Promise<boolean> | boolean;
+  onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
+  onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
   onPluginFolderAgentAction?: (
     relativePath: string,
     action: PluginFolderAgentAction,
@@ -1311,6 +1321,9 @@ export function FileWorkspace({
   onSendBoardCommentAttachments,
   onBrandExtractionStopRequest,
   onRequestBrowserUsePrompt,
+  onExportPptxViaAgent,
+  onExportImageViaAgent,
+  onExportPdfViaAgent,
   onPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
@@ -2248,13 +2261,13 @@ export function FileWorkspace({
 
   function closeTab(name: string) {
     if (activeTabRef.current === name && manualEditExitHandlersRef.current.has(name)) {
-      afterActiveManualEditSettles(() => performCloseTab(name));
+      afterActiveManualEditSettles(() => { void performCloseTab(name); });
       return;
     }
-    performCloseTab(name);
+    void performCloseTab(name);
   }
 
-  function performCloseTab(name: string) {
+  async function performCloseTab(name: string) {
     // Terminal tabs own a daemon PTY that now outlives unmount (so tab switches
     // reattach cheaply). An explicit Close is the one place we terminate it —
     // kill the LIVE session (which may differ from the tab's original id after
@@ -2271,7 +2284,15 @@ export function FileWorkspace({
     const sketchEntry = sketches[name];
     const isPending = sketchEntry && !sketchEntry.persisted;
     const hasUnsavedStrokes = sketchEntry && (sketchEntry.dirty || !sketchEntry.persisted);
-    if (hasUnsavedStrokes && !confirm(t('sketch.closeConfirm'))) return;
+    if (hasUnsavedStrokes) {
+      const ok = await confirm({
+        message: t('sketch.closeConfirm'),
+        confirmLabel: t('common.close'),
+        cancelLabel: t('common.cancel'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
     if (isPending) {
       setSketches((curr) => {
         const next = { ...curr };
@@ -2525,7 +2546,13 @@ export function FileWorkspace({
 
   async function handleDelete(name: string) {
     if (viewerOnly) return; // read-only viewer of a team-shared project
-    if (!confirm(t('workspace.deleteFileConfirm', { name }))) return;
+    const confirmed = await confirm({
+      message: t('workspace.deleteFileConfirm', { name }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
+    if (!confirmed) return;
     const ok = await deleteProjectFile(projectId, name, workspaceContext);
     if (ok) {
       await onRefreshFiles();
@@ -2558,7 +2585,13 @@ export function FileWorkspace({
   async function handleDeleteMany(names: string[]) {
     if (viewerOnly) return; // read-only viewer of a team-shared project
     if (names.length === 0) return;
-    if (!confirm(t('workspace.deleteSelectedFilesConfirm', { n: names.length }))) return;
+    const confirmed = await confirm({
+      message: t('workspace.deleteSelectedFilesConfirm', { n: names.length }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
+    if (!confirmed) return;
     const deleted: string[] = [];
     const failed: string[] = [];
     for (const name of names) {
@@ -3351,6 +3384,9 @@ export function FileWorkspace({
       onRemovePreviewComment={onRemovePreviewComment}
       onReorderPreviewComment={onReorderPreviewComment}
       onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+      onExportPptxViaAgent={onExportPptxViaAgent}
+      onExportImageViaAgent={onExportImageViaAgent}
+      onExportPdfViaAgent={onExportPdfViaAgent}
       onBrandExtractionStopRequest={
         file.name === 'brand.html' ? onBrandExtractionStopRequest : undefined
       }
@@ -4889,9 +4925,12 @@ function DesignSystemProjectPanel({
   // to do in the happy path.
   async function deleteDesignSystemProject() {
     if (kitActionBusy || !onDeleteDesignSystemProject || !editable) return;
-    const ok = window.confirm(
-      t('ds.deleteProjectConfirm', { title: system.title }),
-    );
+    const ok = await confirm({
+      message: t('ds.deleteProjectConfirm', { title: system.title }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    });
     if (!ok) return;
     setKitActionBusy('delete');
     notifyKitLoading(t('ds.deleteProjectAction', { title: system.title }));
@@ -7457,6 +7496,7 @@ function DesignSystemInlinePreview({
   file: ProjectFile;
 }) {
   const { workspaceContext } = useProjectCollabContext();
+  const rawToken = useRawToken(projectId);
   const url = projectFileUrl(projectId, file.name, workspaceContext);
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
   const [srcDocReady, setSrcDocReady] = useState(false);
@@ -7489,13 +7529,14 @@ function DesignSystemInlinePreview({
           baseDirForDesignSystemPreviewFile(file.name),
           workspaceContext,
         ),
+        rawAssetSigning: { projectId, token: rawToken },
       }));
       setSrcDocReady(true);
     });
     return () => {
       cancelled = true;
     };
-  }, [file.kind, file.mtime, file.name, projectId, workspaceContext]);
+  }, [file.kind, file.mtime, file.name, projectId, rawToken, workspaceContext]);
 
   if (file.kind === 'html') {
     return (

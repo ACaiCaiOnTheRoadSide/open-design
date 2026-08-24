@@ -67,6 +67,8 @@ function skill(overrides: Partial<SkillSummary> & Pick<SkillSummary, 'id' | 'nam
     hasBody: overrides.hasBody ?? true,
     examplePrompt: overrides.examplePrompt ?? `Build ${overrides.name}.`,
     aggregatesExamples: overrides.aggregatesExamples ?? false,
+    source: overrides.source,
+    category: overrides.category,
   };
 }
 
@@ -117,6 +119,26 @@ const skills: SkillSummary[] = [
     description: 'Video generation prompt',
     mode: 'video',
     surface: 'video',
+    platform: null,
+    scenario: 'marketing',
+  }),
+  skill({
+    id: 'community-image',
+    name: 'Community image',
+    description: 'Community visual workflow',
+    mode: 'image',
+    surface: 'image',
+    source: 'user',
+    platform: null,
+    scenario: 'design',
+  }),
+  skill({
+    id: 'podcast-audio',
+    name: 'Podcast audio',
+    description: 'Audio conversation',
+    examplePrompt: 'Create an audio conversation.',
+    mode: 'audio',
+    surface: 'audio',
     platform: null,
     scenario: 'marketing',
   }),
@@ -202,11 +224,19 @@ describe('ExamplesTab', () => {
     expect(screen.getByText('No examples match these filters.')).toBeTruthy();
   });
 
-  it('narrows by surface, type, and scenario filter pills', () => {
+  it('hides native visual examples while retaining audio and ordinary filters', () => {
     renderExamples();
 
-    fireEvent.click(within(filterRow('Surface')).getByRole('tab', { name: /Image1/ }));
-    expect(screen.getByTestId('example-card-hero-image')).toBeTruthy();
+    expect(within(filterRow('Surface')).queryByRole('tab', { name: /Image/ })).toBeNull();
+    expect(within(filterRow('Surface')).queryByRole('tab', { name: /Video/ })).toBeNull();
+    expect(screen.queryByTestId('example-card-hero-image')).toBeNull();
+    expect(screen.queryByTestId('example-card-launch-video')).toBeNull();
+    expect(screen.getByTestId('example-card-community-image')).toBeTruthy();
+    expect(screen.getByTestId('example-card-podcast-audio')).toBeTruthy();
+    expect(screen.getByTestId('example-card-open-design-landing')).toBeTruthy();
+
+    fireEvent.click(within(filterRow('Surface')).getByRole('tab', { name: /Audio1/ }));
+    expect(screen.getByTestId('example-card-podcast-audio')).toBeTruthy();
     expect(screen.queryByTestId('example-card-live-dashboard')).toBeNull();
 
     fireEvent.click(within(filterRow('Surface')).getByRole('tab', { name: /All7/ }));
@@ -218,7 +248,7 @@ describe('ExamplesTab', () => {
     fireEvent.click(within(filterRow('Scenario')).getByRole('button', { name: /Marketing3/ }));
     expect(screen.getByTestId('example-card-open-design-landing')).toBeTruthy();
     expect(screen.getByTestId('example-card-brand-deck')).toBeTruthy();
-    expect(screen.getByTestId('example-card-launch-video')).toBeTruthy();
+    expect(screen.queryByTestId('example-card-launch-video')).toBeNull();
     expect(screen.queryByTestId('example-card-live-dashboard')).toBeNull();
   });
 

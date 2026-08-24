@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { getRequestContext } from '../request-context.js';
 import {
   requestWithWorkspaceNavigationScope,
   workspaceResourceContextFromRequest,
@@ -197,6 +198,12 @@ export function createAuthorizeProjectRequest(deps: {
     db: unknown,
     projectId: string,
   ) => WorkspaceResourceAccessInput | null | undefined;
+  /** Enabled only for the shared PostgreSQL daemon; desktop SQLite stays compatible. */
+  enforceUnboundProjectOwner?: boolean;
+  getProjectFactOwner?: (
+    db: unknown,
+    projectId: string,
+  ) => { tenantId: string; userId: string } | null | undefined;
   /** @deprecated Retained as an ignored compatibility seam for route fixtures. */
   verifyWorkspaceReadAuthority?: VerifyWorkspaceRequestAuthority;
   /** @deprecated Retained as an ignored compatibility seam for route fixtures. */
@@ -223,6 +230,8 @@ export function createAuthorizeProjectRequest(deps: {
     db,
     getWorkspaceProject,
     getWorkspaceProjectByProjectId,
+    enforceUnboundProjectOwner,
+    getProjectFactOwner,
     isProjectRevoked,
     isProjectUnmaterializedPlaceholder,
     sendApiError,
@@ -240,6 +249,26 @@ export function createAuthorizeProjectRequest(deps: {
           : 'workspace project mutation is not allowed',
       );
       return false;
+    }
+    // Workspace-bound projects retain Workspace authority. Fact ownership is
+    // exclusively the namespace for hosted, unbound projects.
+    if (enforceUnboundProjectOwner && !getWorkspaceProjectByProjectId(db, projectId)) {
+      const principal = getRequestContext();
+      const owner = getProjectFactOwner?.(db, projectId);
+      if (
+        !principal
+        || !owner
+        || owner.tenantId !== principal.tenantId
+        || owner.userId !== principal.userId
+      ) {
+        sendApiError(
+          res,
+          options.mode === 'read' ? 404 : 403,
+          options.mode === 'read' ? 'PROJECT_NOT_FOUND' : 'PROJECT_PERMISSION_DENIED',
+          options.mode === 'read' ? 'project not found' : 'project mutation is not allowed',
+        );
+        return false;
+      }
     }
     const allowed = await enforceLocalProjectDataPlaneRequest({
       req,

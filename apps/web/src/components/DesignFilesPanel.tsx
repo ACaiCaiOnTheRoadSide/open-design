@@ -6,6 +6,7 @@ import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
 import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { projectFileUrl, projectRawUrl } from '../providers/registry';
+import { useRawToken } from '../providers/raw-token';
 import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
@@ -1946,6 +1947,7 @@ function HtmlCardThumbnail({
     workspaceContextLoading,
   } = useProjectCollabContext();
   const tooLargeForThumbnail = file.size > HTML_THUMBNAIL_INLINE_MAX_BYTES;
+  const rawToken = useRawToken(projectId);
   const url = projectFileUrl(projectId, file.name, workspaceContext);
   const authorizationScopeKey = workspaceContextLoading
     ? null
@@ -1976,7 +1978,10 @@ function HtmlCardThumbnail({
         thumbnailIdentity.refreshKey,
       )?.source
       ?? getHtmlThumbnailSource(thumbnailIdentity);
-    return source === null ? null : buildSrcdoc(source, { baseHref });
+    return source === null ? null : buildSrcdoc(source, {
+      baseHref,
+      rawAssetSigning: { projectId, token: rawToken },
+    });
   });
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState<number | null>(null);
@@ -2023,7 +2028,10 @@ function HtmlCardThumbnail({
       )?.source
       ?? getHtmlThumbnailSource(thumbnailIdentity);
     if (cachedSource !== null) {
-      setSrcDoc(buildSrcdoc(cachedSource, { baseHref }));
+      setSrcDoc(buildSrcdoc(cachedSource, {
+        baseHref,
+        rawAssetSigning: { projectId, token: rawToken },
+      }));
       return;
     }
     // Only an actual network load waits for viewport proximity (cached
@@ -2043,7 +2051,10 @@ function HtmlCardThumbnail({
         },
       ).then((html) => {
           if (cancelled || html === null) return;
-          const nextSrcDoc = buildSrcdoc(html, { baseHref });
+          const nextSrcDoc = buildSrcdoc(html, {
+            baseHref,
+            rawAssetSigning: { projectId, token: rawToken },
+          });
           if (!cancelled) setSrcDoc(nextSrcDoc);
         })
         .catch(() => {
@@ -2064,6 +2075,8 @@ function HtmlCardThumbnail({
     authorizationScopeKey,
     baseHref,
     nearViewport,
+    projectId,
+    rawToken,
     refreshKey,
     tooLargeForThumbnail,
     url,

@@ -331,7 +331,7 @@ export async function buildProjectArchive(projectsRoot, projectId, root, metadat
 // in daemon memory at once. All paths are collected and validated before the
 // first response byte is emitted, preserving the route's fail-before-download
 // behavior for missing, empty, or unsafe roots.
-export async function createProjectArchiveStream(projectsRoot, projectId, root, metadata?) {
+export async function createProjectArchiveStream(projectsRoot, projectId, root, metadata?, options: { maxUncompressedBytes?: number } = {}) {
   const projectRoot = resolveProjectDir(projectsRoot, projectId, metadata);
   let archiveRoot = projectRoot;
   let archiveBaseName = '';
@@ -373,6 +373,15 @@ export async function createProjectArchiveStream(projectsRoot, projectId, root, 
     const err = new Error('archive root is empty');
     err.code = 'ENOENT';
     throw err;
+  }
+
+  if (Number.isFinite(options.maxUncompressedBytes)) {
+    const totalBytes = entries.reduce((total, entry) => total + entry.size, 0);
+    if (totalBytes > options.maxUncompressedBytes!) {
+      const err = new Error(`archive uncompressed size exceeds ${options.maxUncompressedBytes} bytes`);
+      (err as Error & { code: string }).code = 'ARCHIVE_TOO_LARGE';
+      throw err;
+    }
   }
 
   const zip = new JSZip();
@@ -560,7 +569,7 @@ async function collectArchiveEntries(dir, relDir, out) {
     // metadata collection. Keep the archive allowlist fail-closed; the lazy
     // O_NOFOLLOW open below repeats the check when bytes are actually read.
     if (!st.isFile() || st.isSymbolicLink()) continue;
-    out.push({ relPath: rel, fullPath: full, mtime: st.mtimeMs });
+    out.push({ relPath: rel, fullPath: full, mtime: st.mtimeMs, size: st.size });
   }
 }
 
@@ -1394,6 +1403,27 @@ export async function removeProjectDir(projectsRoot, projectId) {
   await rm(dir, { recursive: true, force: true });
 }
 
+export class ProjectDirectoryRollbackError extends AggregateError {
+  constructor(errors) {
+    super(errors, 'project directory rollback failed');
+    this.name = 'ProjectDirectoryRollbackError';
+  }
+}
+
+async function restoreStagedProjectDirs(staged, stagingRoot) {
+  const results = await Promise.allSettled(
+    staged
+      .slice()
+      .reverse()
+      .map((entry) => rename(entry.target, entry.source)),
+  );
+  const failures = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (failures.length > 0) throw new ProjectDirectoryRollbackError(failures);
+  await rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+}
+
 export async function stageProjectDirsForDelete(projectsRoot, projectIds, batchId) {
   const uniqueProjectIds = Array.from(new Set(projectIds));
   const stagingRoot = path.join(projectsRoot, '.delete-staging', batchId);
@@ -1412,24 +1442,16 @@ export async function stageProjectDirsForDelete(projectsRoot, projectIds, batchI
       }
     }
   } catch (error) {
-    await Promise.allSettled(
-      staged
-        .slice()
-        .reverse()
-        .map((entry) => rename(entry.target, entry.source)),
-    );
-    await rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+    try {
+      await restoreStagedProjectDirs(staged, stagingRoot);
+    } catch (rollbackError) {
+      throw new ProjectDirectoryRollbackError([error, rollbackError]);
+    }
     throw error;
   }
   return {
     async rollback() {
-      await Promise.allSettled(
-        staged
-          .slice()
-          .reverse()
-          .map((entry) => rename(entry.target, entry.source)),
-      );
-      await rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+      await restoreStagedProjectDirs(staged, stagingRoot);
     },
     async commit() {
       await rm(stagingRoot, { recursive: true, force: true });

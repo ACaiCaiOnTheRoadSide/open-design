@@ -373,6 +373,12 @@ export const CHAT_RUN_STATUSES = [
 
 export type ChatRunStatus = (typeof CHAT_RUN_STATUSES)[number];
 
+/** Stable, forward-compatible explanation for a terminal run. */
+export interface ChatRunEndReason {
+  code: string;
+  detail?: string;
+}
+
 /** User-facing result delivery, kept separate from agent-process runStatus. */
 export type ResultDeliveryState = 'delivered' | 'no_result' | 'delivery_failed';
 
@@ -670,6 +676,8 @@ export interface ChatRunStatusResponse {
    *  conversation resumes the persisted session. Absent/false on success,
    *  non-resumable failures, and runtimes without CLI session resume. */
   resumable?: boolean;
+  /** Why this run reached its terminal state. */
+  endReason?: ChatRunEndReason;
   /** True when a terminal `succeeded` run ended with its declared work
    *  unfinished — the agent left a TodoWrite task in a non-`completed` state
    *  (pending / in_progress / stopped) or the turn was truncated mid-generation

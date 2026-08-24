@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '../../i18n';
 import { Icon } from '../Icon';
 import { ChatPane } from '../ChatPane';
@@ -132,6 +133,52 @@ export function SideChatTab({
     activeConversationChat?.conversationId === conversationId
       ? activeConversationChat
       : null;
+  const chatStreaming = controlledChat?.streaming ?? chat.streaming;
+  const chatLoading = controlledChat?.loading ?? chat.loading;
+  const chatSendDisabled = controlledChat?.sendDisabled ?? chat.sendDisabled;
+  const [referenceSubmitting, setReferenceSubmitting] = useState(false);
+  const referenceSubmitLockRef = useRef(false);
+  const referenceObservedBusyRef = useRef(false);
+  const referenceFallbackTimerRef = useRef<number | null>(null);
+  const chatBusy = chatStreaming || !!chatLoading || !!chatSendDisabled;
+
+  useEffect(() => {
+    if (!referenceSubmitting) return;
+    if (chatBusy) {
+      referenceObservedBusyRef.current = true;
+      return;
+    }
+    if (!referenceObservedBusyRef.current) return;
+    referenceSubmitLockRef.current = false;
+    referenceObservedBusyRef.current = false;
+    if (referenceFallbackTimerRef.current !== null) {
+      window.clearTimeout(referenceFallbackTimerRef.current);
+      referenceFallbackTimerRef.current = null;
+    }
+    setReferenceSubmitting(false);
+  }, [chatBusy, referenceSubmitting]);
+
+  useEffect(() => () => {
+    if (referenceFallbackTimerRef.current !== null) {
+      window.clearTimeout(referenceFallbackTimerRef.current);
+    }
+  }, []);
+
+  const handleSelectDesignReference = (text: string) => {
+    if (chatBusy || referenceSubmitLockRef.current) return;
+    referenceSubmitLockRef.current = true;
+    setReferenceSubmitting(true);
+    const send = controlledChat?.onSend ?? chat.onSend;
+    void send(text, [], []);
+    // Defensive release when a custom controlled sender never exposes a busy
+    // transition; normal sends unlock as soon as streaming settles.
+    referenceFallbackTimerRef.current = window.setTimeout(() => {
+      referenceSubmitLockRef.current = false;
+      referenceObservedBusyRef.current = false;
+      setReferenceSubmitting(false);
+      referenceFallbackTimerRef.current = null;
+    }, 5_000);
+  };
 
   return (
     <div className={styles.sideChat} data-testid="side-chat-tab">
@@ -144,9 +191,9 @@ export function SideChatTab({
       <div className={styles.pane}>
         <ChatPane
           messages={controlledChat?.messages ?? chat.messages}
-          streaming={controlledChat?.streaming ?? chat.streaming}
-          loading={controlledChat?.loading ?? chat.loading}
-          sendDisabled={controlledChat?.sendDisabled ?? chat.sendDisabled}
+          streaming={chatStreaming}
+          loading={chatLoading}
+          sendDisabled={chatBusy || referenceSubmitting}
           queuedItems={controlledChat?.queuedItems}
           onRemoveQueuedSend={controlledChat?.onRemoveQueuedSend}
           onUpdateQueuedSend={controlledChat?.onUpdateQueuedSend}
@@ -162,6 +209,7 @@ export function SideChatTab({
           projectResolvedDir={projectResolvedDir}
           onEnsureProject={async () => projectId}
           onSend={controlledChat?.onSend ?? chat.onSend}
+          onSelectDesignReference={handleSelectDesignReference}
           onRetry={controlledChat?.onRetry ?? chat.onRetry}
           onStop={controlledChat?.onStop ?? chat.onStop}
           onAssistantFeedback={controlledChat?.onAssistantFeedback}
