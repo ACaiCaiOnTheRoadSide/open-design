@@ -56,11 +56,13 @@ describe('discovery.ts — on-demand clarification policy', () => {
     );
   });
 
-  it('keeps the Pinterest design-reference pagination and selection contract', () => {
-    expect(DISCOVERY_AND_PHILOSOPHY).toContain('--max-sources 20 --providers pinterest');
-    expect(DISCOVERY_AND_PHILOSOPHY).toContain('<design-references>');
-    expect(DISCOVERY_AND_PHILOSOPHY).toContain('"pageSize":3');
-    expect(DISCOVERY_AND_PHILOSOPHY).toContain('[design reference selected — none — 都不喜欢]');
+  it('skips visual-reference search when no source is provided', () => {
+    expect(DISCOVERY_AND_PHILOSOPHY).toContain(
+      'Proceed directly to RULE 3 without offering or searching for visual references',
+    );
+    expect(DISCOVERY_AND_PHILOSOPHY).not.toContain('--providers pinterest');
+    expect(DISCOVERY_AND_PHILOSOPHY).not.toContain('<design-references>');
+    expect(DISCOVERY_AND_PHILOSOPHY).not.toContain('design-ref-offer');
   });
 
   it('emits a complete form before tools only after clarification is needed', () => {
