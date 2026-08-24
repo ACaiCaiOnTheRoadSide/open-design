@@ -4,10 +4,21 @@ import type {
   ResearchSource,
 } from '@open-design/contracts/api/research';
 import { resolveProviderConfig } from '../media/config.js';
+import type { FetchLike } from './net.js';
+import { pinterestSearch, PinterestError } from './pinterest.js';
 import { tavilySearch, TavilyError } from './tavily.js';
 
 const DEFAULT_MAX_SOURCES = 5;
 const TAVILY_MAX_RESULTS_LIMIT = 20;
+
+function wrapProviderError(err: unknown, ProviderErrorClass: { new (...a: any[]): Error & { status?: number | undefined } }): never {
+  const message =
+    err instanceof ProviderErrorClass
+      ? err.message
+      : `research failed: ${(err as Error).message || String(err)}`;
+  const status = err instanceof ProviderErrorClass && (err as any).status ? (err as any).status : 502;
+  throw new ResearchError(message, status, 'RESEARCH_PROVIDER_FAILED');
+}
 
 export class ResearchError extends Error {
   constructor(
@@ -25,7 +36,9 @@ export interface SearchResearchInput {
   projectRoot: string;
   maxSources?: number;
   providers?: string[];
-  requestInit?: Pick<RequestInit, 'dispatcher'>;
+  /** Injected fetch for provider egress. Owns proxy routing (direct-first +
+   *  fallback); defaults to the global direct fetch inside each provider. */
+  fetchImpl?: FetchLike;
   signal?: AbortSignal;
 }
 
@@ -44,44 +57,53 @@ export async function searchResearch(
   const provider = providers[0] ?? 'tavily';
   const maxSources = clampMaxSources(input.maxSources);
 
-  if (provider !== 'tavily') {
+  let answer = '';
+  let sources: ResearchSource[] = [];
+
+  if (provider === 'pinterest') {
+    try {
+      const out = await pinterestSearch({
+        query,
+        maxResults: maxSources,
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      sources = out.sources;
+    } catch (err) {
+      wrapProviderError(err, PinterestError);
+    }
+  } else if (provider === 'tavily') {
+    const cfg = await resolveProviderConfig(input.projectRoot, 'tavily');
+    if (!cfg.apiKey) {
+      throw new ResearchError(
+        'Tavily API key not configured (Settings -> Tavily Search)',
+        400,
+        'TAVILY_API_KEY_MISSING',
+      );
+    }
+
+    try {
+      const out = await tavilySearch({
+        apiKey: cfg.apiKey,
+        query,
+        searchDepth: 'basic',
+        maxResults: maxSources,
+        includeAnswer: true,
+        ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      answer = out.answer;
+      sources = out.sources;
+    } catch (err) {
+      wrapProviderError(err, TavilyError);
+    }
+  } else {
     throw new ResearchError(
-      `provider "${provider}" not supported in Phase 1`,
+      `provider "${provider}" not supported`,
       400,
       'UNSUPPORTED_RESEARCH_PROVIDER',
     );
-  }
-
-  const cfg = await resolveProviderConfig(input.projectRoot, 'tavily');
-  if (!cfg.apiKey) {
-    throw new ResearchError(
-      'Tavily API key not configured (Settings -> Tavily Search)',
-      400,
-      'TAVILY_API_KEY_MISSING',
-    );
-  }
-
-  let answer = '';
-  let sources: ResearchSource[] = [];
-  try {
-    const out = await tavilySearch({
-      apiKey: cfg.apiKey,
-      query,
-      searchDepth: 'basic',
-      maxResults: maxSources,
-      includeAnswer: true,
-      ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
-      ...(input.requestInit ? { requestInit: input.requestInit } : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
-    answer = out.answer;
-    sources = out.sources;
-  } catch (err) {
-    const message =
-      err instanceof TavilyError
-        ? err.message
-        : `research failed: ${(err as Error).message || String(err)}`;
-    throw new ResearchError(message, 502, 'RESEARCH_PROVIDER_FAILED');
   }
 
   if (sources.length === 0) {

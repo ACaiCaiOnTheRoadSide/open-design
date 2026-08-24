@@ -375,6 +375,9 @@ export type ComposerStandalonePanel = 'plugins' | 'toolbox' | null;
 
 export interface ChatComposerHandle {
   setDraft: (text: string, options?: ChatComposerDraftOptions) => void;
+  getDraft: () => string;
+  /** Persist the selected template and stage its @mention for the user's next send. */
+  applyAndStageSkill: (skill: SkillSummary) => Promise<boolean>;
   restoreDraft: (draft: {
     text: string;
     attachments?: ChatAttachment[];
@@ -1180,6 +1183,18 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           editorRef.current?.setText(text);
           editorRef.current?.focus();
           seededRef.current = true;
+        },
+        getDraft: () => draftRef.current,
+        applyAndStageSkill: async (skill: SkillSummary) => {
+          const applied = await applyProjectSkill(skill);
+          if (!applied) return false;
+          setStagedSkills((prev) => prev.some((item) => item.id === skill.id) ? prev : [...prev, skill]);
+          editorRef.current?.insertMention({
+            token: inlineMentionToken(skill.name),
+            entity: { id: skill.id, kind: 'skill', label: skill.name },
+          });
+          editorRef.current?.focus();
+          return true;
         },
         restoreDraft: ({ text, attachments = [], commentAttachments = [], meta }) => {
           setDraft(text);

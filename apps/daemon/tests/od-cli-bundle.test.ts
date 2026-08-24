@@ -44,7 +44,7 @@ describe('sandbox od-cli bundle contract', () => {
     expect(packageJson.scripts['build:od-cli']).toContain('dist/od-cli.mjs');
   });
 
-  it('exposes sync and file help without loading daemon-native dependencies', () => {
+  it('exposes sync, file, and research help without loading daemon-native dependencies', () => {
     const sync = runBundle(['sync', '--help']);
     expect(sync.status).toBe(0);
     expect(sync.stdout).toContain('od sync pull');
@@ -53,18 +53,25 @@ describe('sandbox od-cli bundle contract', () => {
     const file = runBundle(['file', '--help']);
     expect(file.status).toBe(0);
     expect(file.stdout).toContain('od file get');
+
+    const research = runBundle(['research', '--help']);
+    expect(research.status).toBe(0);
+    expect(research.stdout).toContain('od research search');
+    expect(research.stdout).toContain('--providers pinterest');
   });
 
-  it.each(['media', 'research', 'serve'])('rejects unsupported sandbox command %s', (command) => {
+  it.each(['media', 'serve'])('rejects unsupported sandbox command %s', (command) => {
     const result = runBundle([command]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain(`unsupported sandbox command '${command}'`);
     expect(result.stderr).toContain('only supports: od sync pull|push, od file get');
+    expect(result.stderr).toContain('od research search');
   });
 
   it('prints the restricted command surface when no command is supplied', () => {
     const result = runBundle([]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('only supports: od sync pull|push, od file get');
+    expect(result.stderr).toContain('od research search');
   });
 });

@@ -6,6 +6,8 @@ import {
   CHAT_TOOL_OPERATIONS,
   DEFAULT_TOOL_TOKEN_TTL_MS,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
+  OD_CLI_DOWNLOAD_TOOL_ENDPOINT,
+  RESEARCH_SEARCH_TOOL_ENDPOINT,
   resolveChatToolTokenTtlMs,
   ToolTokenRegistry,
 } from '../src/tool-tokens.js';
@@ -128,7 +130,11 @@ describe('run-scoped tool tokens', () => {
     expect(grant.allowedEndpoints).toEqual([...CHAT_TOOL_ENDPOINTS]);
     expect(MEDIA_TASK_WAIT_TOOL_ENDPOINT).toBe('/api/media/tasks/:id/wait');
     expect(grant.allowedEndpoints).toContain(MEDIA_TASK_WAIT_TOOL_ENDPOINT);
+    expect(grant.allowedEndpoints).toContain(OD_CLI_DOWNLOAD_TOOL_ENDPOINT);
+    expect(grant.allowedEndpoints).toContain(RESEARCH_SEARCH_TOOL_ENDPOINT);
     expect(grant.allowedOperations).toEqual([...CHAT_TOOL_OPERATIONS]);
+    expect(grant.allowedOperations).toContain('od-cli:download');
+    expect(grant.allowedOperations).toContain('research:search');
     registry.clear();
   });
 });

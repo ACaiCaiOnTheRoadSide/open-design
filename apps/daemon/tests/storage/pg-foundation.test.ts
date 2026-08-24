@@ -264,6 +264,7 @@ describe('postgres migrations', () => {
       '008_memory_capabilities.sql',
       '009_business_fact_dimensions.sql',
       '010_memory_history_tombstones.sql',
+      '011_app_configs.sql',
     ]);
     for (const filename of sqlFiles) {
       const sql = await readFile(path.join(directory, filename), 'utf8');
@@ -289,6 +290,7 @@ describe('postgres migrations', () => {
       '008_memory_capabilities.sql',
       '009_business_fact_dimensions.sql',
       '010_memory_history_tombstones.sql',
+      '011_app_configs.sql',
     ]);
     const projectScopeSql = fake.calls.find(({ sql }) => sql.includes('ADD COLUMN IF NOT EXISTS project_id'))?.sql;
     expect(projectScopeSql).toContain('memory_entries_project_id_check');

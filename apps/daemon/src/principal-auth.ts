@@ -134,6 +134,8 @@ export function principalContextModeForApiRequest(
     // Filesystem-backed SaaS resources are tenant-scoped by the PostgreSQL
     // registry. Every read and write must therefore enter VerifiedPrincipal ALS;
     // optional mode would let a preview/tool token bypass the ownership gate.
+    if (normalizedPath === '/app-config') return 'required';
+    if (normalizedPath === '/analytics' || normalizedPath.startsWith('/analytics/')) return 'required';
     if (normalizedPath === '/brands' || normalizedPath.startsWith('/brands/')) return 'required';
     if (normalizedPath === '/design-systems' || normalizedPath.startsWith('/design-systems/')) return 'required';
     if (normalizedPath === '/library' || normalizedPath.startsWith('/library/')) return 'required';

@@ -19,6 +19,8 @@ export function resolveChatToolTokenTtlMs(inactivityTimeoutMs: number): number {
 export const MEDIA_TASK_WAIT_TOOL_ENDPOINT = '/api/media/tasks/:id/wait';
 export const HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT = '/api/tools/media/hyperframes/scaffold';
 export const PROJECT_EXPORT_TOOL_ENDPOINT = '/api/projects/:id/export/:format';
+export const OD_CLI_DOWNLOAD_TOOL_ENDPOINT = '/api/od-cli.mjs';
+export const RESEARCH_SEARCH_TOOL_ENDPOINT = '/api/tools/research/search';
 
 export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/live-artifacts/create',
@@ -32,6 +34,8 @@ export const CHAT_TOOL_ENDPOINTS = [
   HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
   PROJECT_EXPORT_TOOL_ENDPOINT,
+  OD_CLI_DOWNLOAD_TOOL_ENDPOINT,
+  RESEARCH_SEARCH_TOOL_ENDPOINT,
   '/api/tools/library/search',
   '/api/tools/library/apply',
 ] as const;
@@ -47,6 +51,8 @@ export const CHAT_TOOL_OPERATIONS = [
   'media:generate',
   'media:scaffold',
   'project:export',
+  'od-cli:download',
+  'research:search',
   'library:search',
   'library:apply',
 ] as const;

@@ -30,6 +30,16 @@ export interface RecommendInput {
   topN?: number;
 }
 
+export function preferredTemplateRecommendationPrompt(draft: string, lastSent: string): string {
+  return draft.trim() || lastSent.trim();
+}
+
+export function designTemplateRecommendations(
+  response: TemplateRecommendResponse,
+): TemplateRecommendation[] {
+  return response.recommendations.filter((item) => item.kind === 'design-template');
+}
+
 let serviceUnavailable = false;
 
 // 推荐服务是否已被探测为不可达(本地开发/未部署 backend)。

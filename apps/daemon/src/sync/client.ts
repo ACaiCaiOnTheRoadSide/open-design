@@ -52,7 +52,11 @@ class NonRetryableHttpError extends Error {}
 /** Sync is enabled only when a backend is configured (SaaS deployments). */
 export function syncTargetFromEnv(env: NodeJS.ProcessEnv = process.env): SyncTarget | null {
   const backendUrl = env.OD_BACKEND_URL;
-  const apiToken = env.OD_API_TOKEN;
+  // Sandboxed agents receive a short-lived, project-bound OD_SYNC_TOKEN.
+  // Daemon-side sync keeps the legacy OD_API_TOKEN lane. Never fall back to
+  // OD_TOOL_TOKEN here: that token is scoped to daemon tool endpoints and the
+  // backend cannot validate the daemon's in-memory grant registry.
+  const apiToken = env.OD_SYNC_TOKEN || env.OD_API_TOKEN;
   if (!backendUrl || !apiToken) return null;
   return { backendUrl: backendUrl.replace(/\/$/, ''), apiToken };
 }

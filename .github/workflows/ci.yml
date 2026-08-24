@@ -355,6 +355,48 @@ jobs:
           OD_WATCHER_TEST_DEBUG: "1"
         run: pnpm --filter @open-design/daemon test --shard=${{ matrix.shard }}/4
 
+  daemon_postgres_tests:
+    name: Daemon real PostgreSQL tests
+    needs: [scopes, runners]
+    if: ${{ needs.scopes.outputs.daemon_tests_required == 'true' }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.runs_on).workspace_unit }}
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: open_design
+          POSTGRES_PASSWORD: open_design
+          POSTGRES_DB: open_design_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U open_design -d open_design_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Configure CI parallelism
+        uses: ./.github/actions/configure-ci-parallelism
+
+      - name: Setup workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          runner-labels: ${{ toJSON(fromJSON(needs.runners.outputs.runs_on).workspace_unit) }}
+
+      - name: Run real PostgreSQL daemon tests
+        env:
+          OD_TEST_POSTGRES_URL: postgres://open_design:open_design@127.0.0.1:5432/open_design_test
+        run: >-
+          pnpm --filter @open-design/daemon exec vitest run -c vitest.config.ts
+          tests/postgres-memory-http-sse.test.ts
+          tests/postgres-owner-migration.test.ts
+          tests/storage/run-queue-postgres.test.ts
+
   windows_tools_pack_payload_tests:
     name: Windows tools-pack payload tests
     needs: [scopes, runners]
@@ -658,6 +700,7 @@ jobs:
       - preflight
       - workspace_unit_tests
       - daemon_unit_tests
+      - daemon_postgres_tests
       - windows_tools_pack_payload_tests
       - web_workspace_tests
       - e2e_vitest
@@ -704,7 +747,7 @@ jobs:
               ["scopes", "static_gate"]
               + when($out.run_preflight == "true"; ["preflight"])
               + when($out.run_workspace_unit_tests == "true"; ["workspace_unit_tests"])
-              + when($out.daemon_tests_required == "true"; ["daemon_unit_tests"])
+              + when($out.daemon_tests_required == "true"; ["daemon_unit_tests", "daemon_postgres_tests"])
               + when($out.run_windows_tools_pack_payload_tests == "true"; ["windows_tools_pack_payload_tests"])
               + when($out.run_web_workspace_tests == "true"; ["web_workspace_tests"])
               + when($out.run_e2e_vitest == "true"; ["e2e_vitest"])

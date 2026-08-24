@@ -103,6 +103,32 @@ describe('agent runtime tool environment', () => {
     expect(env.OD_TOOL_TOKEN).toBeUndefined();
   });
 
+  it('stamps only the verified run principal into the shim environment', () => {
+    const env = createAgentRuntimeEnv(
+      {
+        PATH: '/bin',
+        OD_PRINCIPAL_TENANT_ID: 'stale-tenant',
+        OD_PRINCIPAL_USER_ID: 'stale-user',
+      },
+      'http://127.0.0.1:7456',
+      null,
+      '/opt/open-design/bin/node',
+      { tenantId: 'team-1/user-1', userId: 'user-1' },
+    );
+
+    expect(env.OD_PRINCIPAL_TENANT_ID).toBe('team-1/user-1');
+    expect(env.OD_PRINCIPAL_USER_ID).toBe('user-1');
+    const withoutPrincipal = createAgentRuntimeEnv(
+      { PATH: '/bin', OD_PRINCIPAL_TENANT_ID: 'stale', OD_PRINCIPAL_USER_ID: 'stale' },
+      'http://127.0.0.1:7456',
+      null,
+      '/opt/open-design/bin/node',
+      undefined,
+    );
+    expect(withoutPrincipal.OD_PRINCIPAL_TENANT_ID).toBeUndefined();
+    expect(withoutPrincipal.OD_PRINCIPAL_USER_ID).toBeUndefined();
+  });
+
   it('does not expose the broad daemon API token to run-scoped agent sessions', () => {
     const env = createAgentRuntimeEnv(
       {

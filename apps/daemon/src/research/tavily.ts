@@ -1,4 +1,5 @@
 import type { ResearchSource } from '@open-design/contracts/api/research';
+import type { FetchLike } from './net.js';
 
 const DEFAULT_BASE_URL = 'https://api.tavily.com';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -11,7 +12,9 @@ export interface TavilySearchInput {
   searchDepth?: 'basic' | 'advanced';
   maxResults?: number;
   includeAnswer?: boolean;
-  requestInit?: Pick<RequestInit, 'dispatcher'>;
+  /** Injected fetch. Owns proxy routing (direct-first + fallback); defaults to
+   *  the global direct fetch. */
+  fetchImpl?: FetchLike;
   signal?: AbortSignal;
 }
 
@@ -62,6 +65,7 @@ export async function tavilySearch(
     include_answer: input.includeAnswer ?? true,
     include_raw_content: false,
   };
+  const doFetch: FetchLike = input.fetchImpl ?? ((url, init) => fetch(url, init));
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
   if (input.signal) {
@@ -69,8 +73,7 @@ export async function tavilySearch(
   }
   let resp: Response;
   try {
-    resp = await fetch(`${base}/search`, {
-      ...input.requestInit,
+    resp = await doFetch(`${base}/search`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

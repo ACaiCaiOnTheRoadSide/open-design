@@ -42,6 +42,37 @@ describe('research search', () => {
     } satisfies Partial<ResearchError>);
   });
 
+  it('supports Pinterest while discarding non-CDN image URLs', async () => {
+    const fetchMock = vi.fn(async (input: FetchInput) => {
+      if (String(input) === 'https://www.pinterest.com') {
+        return new Response('', { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        resource_response: { data: { results: [
+          { id: '1', auto_alt_text: 'safe', images: { orig: { url: 'https://i.pinimg.com/736x/a/b/c.jpg', width: 736, height: 900 } } },
+          { id: '2', auto_alt_text: 'ssrf', images: { orig: { url: 'http://127.0.0.1/admin', width: 1, height: 1 } } },
+        ] } },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+
+    const findings = await searchResearch({
+      projectRoot: await tempProjectRoot(),
+      query: 'editorial dashboard',
+      providers: ['pinterest'],
+      maxSources: 20,
+      fetchImpl: fetchMock,
+    });
+
+    expect(findings.provider).toBe('pinterest');
+    expect(findings.sources).toEqual([expect.objectContaining({
+      url: 'https://www.pinterest.com/pin/1/',
+      imageUrl: 'https://i.pinimg.com/736x/a/b/c.jpg',
+      resolution: [736, 900],
+    })]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toMatch(/^https:\/\/www\.pinterest\.com\/resource\/BaseSearchResource\/get\//);
+  });
+
   it('uses shallow Tavily search and normalizes JSON findings', async () => {
     process.env.OD_TAVILY_API_KEY = 'tvly-test';
     const fetchMock = vi.fn(async (_input: FetchInput, _init?: FetchInit) =>

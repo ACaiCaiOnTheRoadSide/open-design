@@ -111,8 +111,11 @@ describe('principal route policy', () => {
 
     for (const [method, path] of [
       ['DELETE', '/api/projects/id'], ['DELETE', '/projects/ID/'],
+      ['POST', '/api/projects/id/sync/pull'],
       ['POST', '/api/workspaces/ws/projects/batch-delete'],
       ['POST', '/api/projects/project-1/stats-events'],
+      ['GET', '/api/app-config'], ['PUT', '/api/app-config'],
+      ['GET', '/api/analytics/config'], ['POST', '/api/analytics/mcp/context'],
       ['GET', '/api/brands'], ['POST', '/api/brands/id/finalize'],
       ['DELETE', '/api/brands/id'], ['GET', '/api/design-systems'],
       ['GET', '/api/design-systems/id/file'], ['POST', '/api/design-systems/import/github'],
@@ -156,13 +159,13 @@ describe('background principal context', () => {
 });
 
 describe('principal auth middleware', () => {
-  it('rejects stats-events at the auth boundary with standard 401/400 responses', async () => {
+  it('lets sync/pull enter verified principal context only with token and both identity headers', async () => {
     const config = resolvePrincipalAuthConfig({
       OD_DAEMON_DB: 'postgres', OD_PRINCIPAL_SOURCE: 'trusted-proxy', OD_API_TOKEN: 'global',
     });
     const app = express();
-    const routePath = '/api/projects/:id/stats-events';
-    const mode = principalContextModeForApiRequest('POST', '/api/projects/p/stats-events', { backend: 'postgres' });
+    const routePath = '/api/projects/:id/sync/pull';
+    const mode = principalContextModeForApiRequest('POST', '/api/projects/p/sync/pull', { backend: 'postgres' });
     app.post(routePath, createPrincipalAuthMiddleware(config, mode), (_req, res) => res.json(requireRequestContext()));
     const server = await new Promise<Server>((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -170,7 +173,7 @@ describe('principal auth middleware', () => {
     servers.push(server);
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Expected TCP address');
-    const url = `http://127.0.0.1:${address.port}/api/projects/p/stats-events`;
+    const url = `http://127.0.0.1:${address.port}/api/projects/p/sync/pull`;
 
     const missingToken = await request('POST', url);
     expect(missingToken.status).toBe(401);

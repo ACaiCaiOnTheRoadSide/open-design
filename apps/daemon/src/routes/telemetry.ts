@@ -104,7 +104,10 @@ export async function resolveTrustedMcpEventContext(
 
 export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRoutesDeps): DaemonTelemetry {
   const { dataDir } = deps;
-  const analyticsService = createAnalyticsService({ dataDir });
+  const analyticsService = createAnalyticsService({
+    dataDir,
+    readAppConfig: deps.readAppConfig,
+  });
   let cachedAppVersion: any = null;
 
   // PostHog runtime config.

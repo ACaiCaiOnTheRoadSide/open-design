@@ -18,6 +18,7 @@ import type {
   AuthorizeProjectToolRequest,
 } from '../collab/project-request-authority.js';
 import { proxyDispatcherRequestInit } from '../connectionTest.js';
+import { directFirstFetch, researchProxyRequestInit } from '../research/net.js';
 import {
   aihubmixCatalogUrl,
   parseAIHubMixCatalog,
@@ -28,6 +29,7 @@ import { isSandboxModeEnabled } from '../sandbox-mode.js';
 import {
   HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
+  RESEARCH_SEARCH_TOOL_ENDPOINT,
   type ToolTokenGrant,
 } from '../tool-tokens.js';
 import { scaffoldHyperFramesComposition } from '../media/hyperframes-scaffold.js';
@@ -626,7 +628,9 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
         }
       }
       const config = await writeAppConfig(RUNTIME_DATA_DIR, req.body);
-      orbitService.configure(config.orbit);
+      // A shared hosted daemon cannot run one principal's Orbit schedule as a
+      // process-global service. Persist it per principal but keep runtime off.
+      if (ctx.appConfig.configureRuntime !== false) orbitService.configure(config.orbit);
       onAppConfigWritten?.(config);
       res.json({ config });
     } catch (err: any) {
@@ -880,28 +884,16 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     }
   });
 
-  app.post('/api/research/search', async (req, res) => {
-    if (!isLocalSameOrigin(req, getResolvedPort())) {
-      return res.status(403).json({
-        error:
-          'cross-origin request rejected: research search is restricted to the local UI / CLI',
-      });
-    }
-
+  async function handleResearchSearch(req: any, res: any) {
     try {
-      const proxyDispatcher = proxyDispatcherRequestInit(process.env);
+      const proxyDispatcher = researchProxyRequestInit(process.env);
       try {
         const result = await searchResearch({
           projectRoot: PROJECT_ROOT,
           query: req.body?.query,
-          maxSources:
-            typeof req.body?.maxSources === 'number'
-              ? req.body.maxSources
-              : undefined,
-          providers: Array.isArray(req.body?.providers)
-            ? req.body.providers
-            : undefined,
-          requestInit: proxyDispatcher.requestInit,
+          maxSources: typeof req.body?.maxSources === 'number' ? req.body.maxSources : undefined,
+          providers: Array.isArray(req.body?.providers) ? req.body.providers : undefined,
+          fetchImpl: directFirstFetch(proxyDispatcher.requestInit),
         });
         res.json(result);
       } finally {
@@ -909,17 +901,35 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       }
     } catch (err: any) {
       if (err instanceof ResearchError) {
-        return res.status(err.status).json({
-          error: { code: err.code, message: err.message },
-        });
+        return res.status(err.status).json({ error: { code: err.code, message: err.message } });
       }
       res.status(500).json({
-        error: {
-          code: 'RESEARCH_FAILED',
-          message: String(err && err.message ? err.message : err),
-        },
+        error: { code: 'RESEARCH_FAILED', message: String(err && err.message ? err.message : err) },
       });
     }
+  }
+
+  app.post('/api/research/search', async (req, res) => {
+    if (!isLocalSameOrigin(req, getResolvedPort())) {
+      return res.status(403).json({
+        error: 'cross-origin request rejected: research search is restricted to the local UI / CLI',
+      });
+    }
+    await handleResearchSearch(req, res);
+  });
+
+  app.post('/api/tools/research/search', async (req, res) => {
+    const grant = authorizeToolRequest(req, res, 'research:search', { endpoint: RESEARCH_SEARCH_TOOL_ENDPOINT });
+    if (!grant) return;
+    // The run-scoped lane is deliberately narrower than the local endpoint:
+    // Pinterest has fixed upstream origins and does not consume a user-provided
+    // base URL, preventing this capability from becoming generic SSRF.
+    const providers = Array.isArray(req.body?.providers) ? req.body.providers : ['pinterest'];
+    if (providers.length !== 1 || providers[0] !== 'pinterest') {
+      return sendApiError(res, 400, 'UNSUPPORTED_RESEARCH_PROVIDER', 'agent research permits pinterest only');
+    }
+    req.body = { ...(req.body ?? {}), providers };
+    await handleResearchSearch(req, res);
   });
 
   app.post('/api/media/tasks/:id/wait', async (req, res) => {

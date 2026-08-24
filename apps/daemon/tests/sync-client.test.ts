@@ -86,8 +86,16 @@ describe('sync client', () => {
     expect(syncTargetFromEnv({} as NodeJS.ProcessEnv)).toBeNull();
     expect(syncTargetFromEnv({ OD_BACKEND_URL: 'http://b/' } as NodeJS.ProcessEnv)).toBeNull();
     expect(
-      syncTargetFromEnv({ OD_BACKEND_URL: 'http://b/', OD_API_TOKEN: 't' } as NodeJS.ProcessEnv),
-    ).toEqual({ backendUrl: 'http://b', apiToken: 't' });
+      syncTargetFromEnv({ OD_BACKEND_URL: 'http://b/', OD_API_TOKEN: 'daemon' } as NodeJS.ProcessEnv),
+    ).toEqual({ backendUrl: 'http://b', apiToken: 'daemon' });
+    expect(
+      syncTargetFromEnv({
+        OD_BACKEND_URL: 'http://b/',
+        OD_API_TOKEN: 'must-not-win',
+        OD_SYNC_TOKEN: 'scoped',
+        OD_TOOL_TOKEN: 'daemon-tool-only',
+      } as NodeJS.ProcessEnv),
+    ).toEqual({ backendUrl: 'http://b', apiToken: 'scoped' });
   });
 
   it('times out a half-open manifest request and retries only once', async () => {

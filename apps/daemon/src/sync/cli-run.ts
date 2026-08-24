@@ -94,7 +94,7 @@ function parseArgs(args: string[]): { positional: string[]; flags: Map<string, s
 
 function resolveContext(flags: Map<string, string | boolean>): CliContext {
   const target = syncTargetFromEnv();
-  if (!target) fail('OD_BACKEND_URL and OD_API_TOKEN must be set');
+  if (!target) fail('OD_BACKEND_URL and OD_SYNC_TOKEN (or daemon-side OD_API_TOKEN) must be set');
   const projectId =
     (typeof flags.get('project') === 'string' ? (flags.get('project') as string) : '') ||
     process.env.OD_PROJECT_ID ||
@@ -502,7 +502,7 @@ export async function runSync(args: string[]): Promise<void> {
   od sync push [--project <id>] [--dir <projectDir>] [--json]
       Re-hash the working tree, upload new blobs and commit an append-only diff.
 
-Environment: OD_BACKEND_URL, OD_API_TOKEN, OD_PROJECT_ID, OD_DATA_DIR,
+Environment: OD_BACKEND_URL, OD_SYNC_TOKEN (sandbox) or OD_API_TOKEN (daemon), OD_PROJECT_ID, OD_DATA_DIR,
 OD_SYNC_STATE_DIR (default $OD_DATA_DIR/.od/sync, or $HOME/.od/sync with --dir),
 OD_SYNC_PREFETCH_MAX_BYTES (default ${DEFAULT_PREFETCH_MAX_BYTES}).`);
     process.exit(sub ? 0 : 2);

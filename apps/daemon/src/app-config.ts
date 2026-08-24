@@ -137,6 +137,18 @@ export interface AppConfigPrefs {
 // "Recent" submenu short and the config file bounded.
 export const RECENT_LINKED_DIRS_MAX = 5;
 
+export interface AppConfigPersistence {
+  read(): Promise<AppConfigPrefs>;
+  write(partial: Record<string, unknown>): Promise<AppConfigPrefs>;
+}
+
+let hostedPersistence: AppConfigPersistence | null = null;
+
+/** Installs the process-wide hosted persistence boundary; null restores local files. */
+export function configureAppConfigPersistence(persistence: AppConfigPersistence | null): void {
+  hostedPersistence = persistence;
+}
+
 const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'onboardingCompleted',
   'agentId',
@@ -684,7 +696,7 @@ function applyConfigValue(
   }
 }
 
-function filterAllowedKeys(obj: Record<string, unknown>): AppConfigPrefs {
+export function normalizeAppConfig(obj: Record<string, unknown>): AppConfigPrefs {
   const result: Record<string, unknown> = Object.create(null);
   for (const key of Object.keys(obj)) {
     if (ALLOWED_KEYS.has(key as keyof AppConfigPrefs)) {
@@ -704,7 +716,13 @@ function filterAllowedKeys(obj: Record<string, unknown>): AppConfigPrefs {
 // the user previously saved is preserved (only `undefined` gets
 // the new default), so opt-out users stay opted out across the
 // 0.7.x → 0.8.0 upgrade.
-function applyTelemetryDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
+export function normalizeAppConfigForRead(raw: Record<string, unknown>): AppConfigPrefs {
+  const prefs = normalizeAppConfig(raw);
+  if (typeof prefs.agentId === 'string' && prefs.agentId && !getAgentDef(prefs.agentId)) prefs.agentId = null;
+  return applyTelemetryDefaults(prefs);
+}
+
+export function applyTelemetryDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
   if (prefs.telemetry === undefined) {
     return {
       ...prefs,
@@ -715,6 +733,7 @@ function applyTelemetryDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
 }
 
 export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
+  if (hostedPersistence) return hostedPersistence.read();
   const base = await readAppConfigFileOnly(dataDir);
   if (typeof base.agentId === 'string' && base.agentId && !getAgentDef(base.agentId)) {
     base.agentId = null;
@@ -757,6 +776,9 @@ export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
 // legacy→channel-root migration *write*, which is a side effect rather than
 // part of the read result.
 export function readAppConfigSync(dataDir: string): AppConfigPrefs {
+  // Hosted persistence is asynchronous. Never fall back to the shared local
+  // file from a synchronous consumer, because that would reintroduce leakage.
+  if (hostedPersistence) return {};
   const base = readAppConfigFileOnlySync(dataDir);
   if (typeof base.agentId === 'string' && base.agentId && !getAgentDef(base.agentId)) {
     base.agentId = null;
@@ -780,7 +802,7 @@ function readAppConfigFileOnlySync(dataDir: string): AppConfigPrefs {
       readFileSync(configFile(dataDir), 'utf8'),
     );
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return filterAllowedKeys(parsed as Record<string, unknown>);
+      return normalizeAppConfig(parsed as Record<string, unknown>);
     }
     return {};
   } catch (err: unknown) {
@@ -796,7 +818,7 @@ async function readAppConfigFileOnly(dataDir: string): Promise<AppConfigPrefs> {
     const raw = await readFile(configFile(dataDir), 'utf8');
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return filterAllowedKeys(parsed as Record<string, unknown>);
+      return normalizeAppConfig(parsed as Record<string, unknown>);
     }
     console.warn('[app-config] Invalid shape in config file, returning empty');
     return {};
@@ -819,6 +841,7 @@ export async function writeAppConfig(
   dataDir: string,
   partial: Record<string, unknown>,
 ): Promise<AppConfigPrefs> {
+  if (hostedPersistence) return hostedPersistence.write(partial);
   const prev = writeLocks.get(dataDir) ?? Promise.resolve();
   const task = prev.catch(() => {}).then(() => doWrite(dataDir, partial));
   writeLocks.set(dataDir, task);
@@ -829,21 +852,24 @@ export async function writeAppConfig(
   }
 }
 
-async function doWrite(
-  dataDir: string,
-  partial: Record<string, unknown>,
-): Promise<AppConfigPrefs> {
-  const existing = await readAppConfig(dataDir);
+export function mergeAppConfig(existing: AppConfigPrefs, partial: Record<string, unknown>): AppConfigPrefs {
   const next: Record<string, unknown> = { ...existing };
   for (const key of Object.keys(partial)) {
     if (!ALLOWED_KEYS.has(key as keyof AppConfigPrefs)) continue;
     applyConfigValue(next, key as keyof AppConfigPrefs, partial[key]);
   }
-  const nextWithInferredIntent = Object.prototype.hasOwnProperty.call(partial, 'agentCliEnv')
+  const inferred = Object.prototype.hasOwnProperty.call(partial, 'agentCliEnv')
     ? inferAgentCliEnvIntentForExplicitEnvWrite(next as AppConfigPrefs)
     : next as AppConfigPrefs;
-  const normalizedNext = normalizeAgentCliEnvPrefs(nextWithInferredIntent);
-  const normalizedNextWithoutRetiredAgents = normalizeRetiredAgentPrefs(normalizedNext);
+  return normalizeRetiredAgentPrefs(normalizeAgentCliEnvPrefs(inferred));
+}
+
+async function doWrite(
+  dataDir: string,
+  partial: Record<string, unknown>,
+): Promise<AppConfigPrefs> {
+  const existing = await readAppConfig(dataDir);
+  const normalizedNextWithoutRetiredAgents = mergeAppConfig(existing, partial);
   const file = configFile(dataDir);
   await mkdir(path.dirname(file), { recursive: true });
   const tmp = file + '.' + randomBytes(4).toString('hex') + '.tmp';

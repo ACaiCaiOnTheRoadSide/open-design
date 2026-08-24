@@ -131,6 +131,7 @@ const MCP_INSTALL_BOOLEAN_FLAGS = new Set([
 const RESEARCH_SEARCH_STRING_FLAGS = new Set([
   'query',
   'max-sources',
+  'providers',
   'daemon-url',
 ]);
 const RESEARCH_SEARCH_BOOLEAN_FLAGS = new Set([
@@ -1587,15 +1588,23 @@ async function runResearchSearch(rawArgs) {
   const daemonUrl = await cliDaemonUrl(flags);
   const maxSources =
     flags['max-sources'] == null ? undefined : Number(flags['max-sources']);
-  const url = `${daemonUrl.replace(/\/$/, '')}/api/research/search`;
+  const providers = typeof flags.providers === 'string'
+    ? flags.providers.split(',').map((provider) => provider.trim()).filter(Boolean)
+    : undefined;
+  const token = process.env.OD_TOOL_TOKEN;
+  const url = `${daemonUrl.replace(/\/$/, '')}${token ? '/api/tools/research/search' : '/api/research/search'}`;
   let resp;
   try {
     resp = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({
         query,
         ...(Number.isFinite(maxSources) ? { maxSources } : {}),
+        ...(providers?.length ? { providers } : {}),
       }),
     });
   } catch (err) {
@@ -1617,7 +1626,7 @@ async function runArtifacts(args) {
 
 function printResearchHelp() {
   console.log(`Usage:
-  od research search --query <text> [--max-sources 5] [--daemon-url <url>]
+  od research search --query <text> [--max-sources 5] [--providers tavily|pinterest] [--daemon-url <url>]
 
 Runs Tavily-backed shallow research through the local OpenDesign daemon.
 Output is JSON only on stdout:
@@ -1625,7 +1634,8 @@ Output is JSON only on stdout:
 
 Flags:
   --query        Required search query.
-  --max-sources  Optional source cap. Defaults to 5, clamped to Tavily's max.
+  --max-sources  Optional source cap. Defaults to 5, clamped to the provider max.
+  --providers    Comma-separated provider list. Agent-scoped calls permit pinterest only.
   --daemon-url   Local daemon URL. Defaults to OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456.`);
 }
 

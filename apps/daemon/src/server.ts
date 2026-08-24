@@ -567,6 +567,7 @@ import {
 } from './mcp-tokens.js';
 import {
   agentCliEnvForAgent,
+  configureAppConfigPersistence,
   readAppConfig,
   readAppConfigSync,
   readPluginEnvKnobs,
@@ -992,6 +993,8 @@ import {
   CHAT_TOOL_ENDPOINTS,
   CHAT_TOOL_OPERATIONS,
   PROJECT_EXPORT_TOOL_ENDPOINT,
+  OD_CLI_DOWNLOAD_TOOL_ENDPOINT,
+  RESEARCH_SEARCH_TOOL_ENDPOINT,
   resolveChatToolTokenTtlMs,
   toolTokenRegistry,
 } from './tool-tokens.js';
@@ -1049,6 +1052,7 @@ import { resolveDaemonDbConfig } from './storage/daemon-db.js';
 import { resolvePgMigrationsDirectory, runPgMigrations } from './storage/pg-migrations.js';
 import { importLegacyPostgresMetadata } from './storage/legacy-metadata-import.js';
 import { closePool, getPool, runWithPgPoolCleanupOnFailure } from './storage/pg.js';
+import { createPostgresAppConfigStore } from './storage/postgres-app-config-store.js';
 import { createResourceOwnerRegistry } from './storage/resource-owner-registry.js';
 import { runWithRequestContext, requireRequestContext } from './request-context.js';
 import { createBrandDesignSystemRegistry } from './storage/brand-design-system-registry.js';
@@ -1656,6 +1660,7 @@ export function createAgentRuntimeEnv(
   daemonUrl: string,
   toolTokenGrant: { token?: string } | null = null,
   nodeBin: string = OD_NODE_BIN,
+  principal: { tenantId: string; userId: string } | undefined = getRequestContext(),
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = applySandboxRuntimeEnv(
     {
@@ -1728,6 +1733,17 @@ export function createAgentRuntimeEnv(
     env.OD_TOOL_TOKEN = toolTokenGrant.token;
   } else {
     delete env.OD_TOOL_TOKEN;
+  }
+
+  // A child callback to the PG/trusted-proxy daemon must re-assert the exact
+  // principal already authenticated for this run. Never inherit stale process
+  // values: these may come only from VerifiedPrincipal ALS (or an explicit
+  // verified caller), not ambient/client-configurable env.
+  delete env.OD_PRINCIPAL_TENANT_ID;
+  delete env.OD_PRINCIPAL_USER_ID;
+  if (principal) {
+    env.OD_PRINCIPAL_TENANT_ID = principal.tenantId;
+    env.OD_PRINCIPAL_USER_ID = principal.userId;
   }
 
   return env;
@@ -2662,6 +2678,34 @@ export async function startServer({
     process.env.OD_WORKSPACE_AUTHORITY_CACHE_MODE,
   );
   const daemonDbConfig = resolveDaemonDbConfig();
+  const hostedAppConfigStore = daemonDbConfig.kind === 'postgres'
+    ? createPostgresAppConfigStore()
+    : null;
+  // Centralize the persistence switch so consumers that import app-config
+  // directly cannot accidentally fall back to the shared JSON file.
+  configureAppConfigPersistence(hostedAppConfigStore);
+  const readRequestAppConfig = (dataDir: string) => hostedAppConfigStore
+    ? hostedAppConfigStore.read()
+    : readAppConfig(dataDir);
+  const writeRequestAppConfig = (dataDir: string, patch: Record<string, unknown>) => {
+    const principal = getRequestContext();
+    const rawOrbit = patch?.orbit;
+    const safePatch = rawOrbit && typeof rawOrbit === 'object' && !Array.isArray(rawOrbit)
+      ? (() => {
+          const { factPrincipal: _untrustedFactPrincipal, ...publicOrbit } = rawOrbit as Record<string, unknown>;
+          return {
+            ...patch,
+            orbit: {
+              ...publicOrbit,
+              ...(principal ? { factPrincipal: { tenantId: principal.tenantId, userId: principal.userId } } : {}),
+            },
+          };
+        })()
+      : patch;
+    return hostedAppConfigStore
+      ? hostedAppConfigStore.write(safePatch)
+      : writeAppConfig(dataDir, safePatch);
+  };
   const businessFacts = createBusinessFactsStore({ enabled: daemonDbConfig.kind === 'postgres' });
   const principalAuthConfig = resolvePrincipalAuthConfig(process.env);
   const requiredPrincipalMiddleware = createPrincipalAuthMiddleware(principalAuthConfig, 'required');
@@ -2769,14 +2813,14 @@ export async function startServer({
       // UI which has no proxy in the path.
       if (isLoopbackPeerAddress(req.socket?.remoteAddress)) return next();
       if (apiTokenAuthorizationMatches(req.get('authorization'), apiToken)) return next();
-      if (
-        req.method === 'POST'
-        && PROJECT_RUN_SCOPED_EXPORT_PATH_RE.test(req.path)
-        && toolTokenRegistry.validate(bearerTokenFromRequest(req), {
-          endpoint: PROJECT_EXPORT_TOOL_ENDPOINT,
-          operation: 'project:export',
-        }).ok
-      ) {
+      const scopedRequest = req.method === 'POST' && PROJECT_RUN_SCOPED_EXPORT_PATH_RE.test(req.path)
+        ? { endpoint: PROJECT_EXPORT_TOOL_ENDPOINT, operation: 'project:export' }
+        : req.method === 'POST' && req.path === '/tools/research/search'
+          ? { endpoint: RESEARCH_SEARCH_TOOL_ENDPOINT, operation: 'research:search' }
+          : req.method === 'GET' && req.path === '/od-cli.mjs'
+            ? { endpoint: OD_CLI_DOWNLOAD_TOOL_ENDPOINT, operation: 'od-cli:download' }
+            : null;
+      if (scopedRequest && toolTokenRegistry.validate(bearerTokenFromRequest(req), scopedRequest).ok) {
         return next();
       }
       res.setHeader('WWW-Authenticate', API_TOKEN_BASIC_CHALLENGE);
@@ -3398,12 +3442,18 @@ export async function startServer({
   // Warm agent-capability probes (e.g. whether the installed Claude Code
   // build advertises --include-partial-messages) so the first /api/chat
   // hits a populated cache even if /api/agents hasn't been called yet.
-  void readAppConfig(RUNTIME_DATA_DIR)
-    .then((config) => {
-      orbitService.configure(config.orbit);
-      return detectAgents(config.agentCliEnv ?? {});
-    })
-    .catch(() => detectAgents().catch(() => {}));
+  if (daemonDbConfig.kind === 'sqlite') {
+    void readAppConfig(RUNTIME_DATA_DIR)
+      .then((config) => {
+        orbitService.configure(config.orbit);
+        return detectAgents(config.agentCliEnv ?? {});
+      })
+      .catch(() => detectAgents().catch(() => {}));
+  } else {
+    // OrbitService and agent discovery are process-global. A shared hosted
+    // daemon cannot safely configure either from one user's preferences.
+    void detectAgents().catch(() => {});
+  }
 
   await recoverStaleLiveArtifactRefreshes({ projectsRoot: PROJECTS_DIR }).catch((error) => {
     console.warn('[od] Failed to recover stale live artifact refreshes:', error);
@@ -3413,7 +3463,15 @@ export async function startServer({
     app.use(express.static(staticDir));
   }
 
-  app.get('/api/od-cli.mjs', (_req, res) => {
+  app.get('/api/od-cli.mjs', (req, res) => {
+    const authorization = req.get('authorization');
+    if (authorization && !isApiTokenAuthorization(authorization)) {
+      const validation = toolTokenRegistry.validate(bearerTokenFromRequest(req), {
+        endpoint: OD_CLI_DOWNLOAD_TOOL_ENDPOINT,
+        operation: 'od-cli:download',
+      });
+      if (!validation.ok) return res.status(401).json({ error: { code: validation.code, message: validation.message } });
+    }
     const bundlePath = fileURLToPath(new URL('./od-cli.mjs', import.meta.url));
     if (!fs.existsSync(bundlePath)) {
       return res.status(404).json({
@@ -3449,11 +3507,25 @@ export async function startServer({
         req.params.id,
         { mode: 'write', capability: 'writeFiles' },
       )) return;
-    } else if (!hasValidInternalSyncSignature(
-      req.params.id,
-      req.get('x-od-sync-signature'),
-    )) {
-      return sendApiError(res, 401, 'INVALID_SYNC_SIGNATURE', 'invalid internal sync signature');
+    } else {
+      if (!hasValidInternalSyncSignature(
+        req.params.id,
+        req.get('x-od-sync-signature'),
+      )) {
+        return sendApiError(res, 401, 'INVALID_SYNC_SIGNATURE', 'invalid internal sync signature');
+      }
+      // HMAC identifies the internal callback but is not tenant authority. In
+      // hosted mode the verified principal must still match the project's
+      // durable owner; SQLite keeps the legacy unbound-project behavior.
+      if (
+        daemonDbConfig.kind === 'postgres'
+        && !await authorizeProjectRequest(
+          req,
+          res,
+          req.params.id,
+          { mode: 'write', capability: 'writeFiles' },
+        )
+      ) return;
     }
     const metadata = project.metadata as { baseDir?: unknown } | null | undefined;
     if (typeof metadata?.baseDir === 'string' && metadata.baseDir) {
@@ -3526,8 +3598,9 @@ export async function startServer({
   // recorded in — and a project-scoped collab call may only be pinned to — a
   // workspace that can actually host a team plane. See collab/team-share-scope.ts.
   const workspaceTypes = createWorkspaceTypeRegistry();
-  const configuredAmrEnv = () =>
-    agentCliEnvForAgent(readAppConfigSync(RUNTIME_DATA_DIR).agentCliEnv, 'amr');
+  const configuredAmrEnv = () => daemonDbConfig.kind === 'postgres'
+    ? {}
+    : agentCliEnvForAgent(readAppConfigSync(RUNTIME_DATA_DIR).agentCliEnv, 'amr');
   const workspaceExactAuthorityCache = createWorkspaceExactAuthorityCache({
     identity: () => velaWorkspaceDirectoryIdentity(
       readVelaControlApiContext,
@@ -7489,7 +7562,7 @@ export async function startServer({
   registerMemoryRoutes(app, {
     http: { createSseResponse, requireLocalDaemonRequest },
     paths: { RUNTIME_DATA_DIR, PROJECT_ROOT, PROJECTS_DIR },
-    appConfig: { readAppConfig },
+    appConfig: { readAppConfig: readRequestAppConfig },
   });
 
   registerAutomationRoutes(app, {
@@ -7509,8 +7582,8 @@ export async function startServer({
 
   const telemetry = registerTelemetryRoutes(app, {
     dataDir: RUNTIME_DATA_DIR,
-    readAppConfig,
-    writeAppConfig,
+    readAppConfig: readRequestAppConfig,
+    writeAppConfig: writeRequestAppConfig,
   });
   const { analyticsService } = telemetry;
   workspaceAnalyticsService = analyticsService;
@@ -7654,7 +7727,7 @@ export async function startServer({
   };
   const attributionService = registerAttributionRoutes(app, {
     analytics: analyticsService,
-    appConfig: { readAppConfig },
+    appConfig: { readAppConfig: readRequestAppConfig },
     http: httpDeps,
     paths: { RUNTIME_DATA_DIR },
     env: process.env,
@@ -7990,28 +8063,17 @@ export async function startServer({
     listElevenLabsVoiceOptions,
   };
   const appConfigDeps = {
-    readAppConfig,
-    writeAppConfig: (dataDir, patch) => {
-      if (!patch?.orbit) return writeAppConfig(dataDir, patch);
-      const principal = getRequestContext();
-      const { factPrincipal: _untrustedFactPrincipal, ...publicOrbit } = patch.orbit;
-      return writeAppConfig(dataDir, {
-        ...patch,
-        orbit: {
-          ...publicOrbit,
-          ...(principal ? { factPrincipal: { tenantId: principal.tenantId, userId: principal.userId } } : {}),
-        },
-      });
-    },
-    onAppConfigWritten: () => {
-      // AMR credentials may be overridden through Settings. Observe every
-      // completed write so even an A -> B -> A transition with no intervening
-      // directory/status read fences exact authority from the old A session.
+    readAppConfig: readRequestAppConfig,
+    writeAppConfig: writeRequestAppConfig,
+    configureRuntime: daemonDbConfig.kind === 'sqlite',
+    onAppConfigWritten: daemonDbConfig.kind === 'sqlite' ? () => {
+      // These services are process-global and therefore only observe local,
+      // single-user file config. Hosted writes remain persistence-only.
       refreshWorkspaceHubAccountIdentity();
       void attributionService.processPending().catch((err: unknown) => {
         console.warn('[attribution] pending claim failed', err);
       });
-    },
+    } : undefined,
   };
   const orbitDeps = { orbitService };
   const nativeDialogDeps = { openBrowser, openNativeFolderDialog };
@@ -8604,7 +8666,7 @@ export async function startServer({
     },
     randomId,
     resolveTranscriptAgent: async () => {
-      const config = await readAppConfig(RUNTIME_DATA_DIR);
+      const config = await readRequestAppConfig(RUNTIME_DATA_DIR);
       let agentId = typeof config.agentId === 'string' && config.agentId
         ? config.agentId
         : null;
@@ -8749,7 +8811,7 @@ export async function startServer({
 
   registerVelaRoutes(app, {
     paths: { RUNTIME_DATA_DIR },
-    appConfig: { readAppConfig },
+    appConfig: { readAppConfig: readRequestAppConfig },
     http: { getPublicBaseUrl },
     env: process.env,
     onCredentialStateObserved: refreshWorkspaceHubAccountIdentity,
@@ -9388,7 +9450,7 @@ export async function startServer({
     };
     let appConfigForPrompt = null;
     try {
-      appConfigForPrompt = await readAppConfig(RUNTIME_DATA_DIR);
+      appConfigForPrompt = await readRequestAppConfig(RUNTIME_DATA_DIR);
     } catch (err) {
       console.warn('[app-config] readAppConfig failed', err);
     }
@@ -10961,7 +11023,7 @@ export async function startServer({
     let configuredAgentEnv = {};
     let appConfigForRun = null;
     try {
-      const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
+      const appConfig = await readRequestAppConfig(RUNTIME_DATA_DIR);
       appConfigForRun = appConfig;
       configuredAgentEnv = agentCliEnvForAgent(appConfig.agentCliEnv, def.id);
     } catch {
@@ -11022,7 +11084,7 @@ export async function startServer({
       // same rewrite before spawn; keeping this earlier copy aligned prevents
       // stored concrete session models from comparing against raw `default`.
       try {
-        const resumeProbe = await resolveAmrModelProbe({ dataDir: RUNTIME_DATA_DIR, env: process.env, readAppConfig });
+        const resumeProbe = await resolveAmrModelProbe({ dataDir: RUNTIME_DATA_DIR, env: process.env, readAppConfig: readRequestAppConfig });
         const resumeCatalog = await amrModelLoadingCache.get(resumeProbe.cacheKey, {
           fetchPreset: () => fetchVelaPresetModels(resumeProbe.launchPath, resumeProbe.env),
           fetchRemote: () => fetchVelaRemoteModelsWithRetry(resumeProbe.launchPath, resumeProbe.env),
@@ -12025,7 +12087,7 @@ export async function startServer({
       // of fail-closing; vela's own `session/set_model` remains the final gate.
       let liveModels = [];
       try {
-        const probe = await resolveAmrModelProbe({ dataDir: RUNTIME_DATA_DIR, env: process.env, readAppConfig });
+        const probe = await resolveAmrModelProbe({ dataDir: RUNTIME_DATA_DIR, env: process.env, readAppConfig: readRequestAppConfig });
         const catalog = await amrModelLoadingCache.get(probe.cacheKey, {
           fetchPreset: () => fetchVelaPresetModels(probe.launchPath, probe.env),
           fetchRemote: () => fetchVelaRemoteModelsWithRetry(probe.launchPath, probe.env),
@@ -14730,7 +14792,7 @@ export async function startServer({
     // the new project before the agent has finished. Anything that depends
     // on the agent's final status (live artifact discovery, lastRun summary
     // metadata) lives inside the `completion` promise.
-    const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
+    const appConfig = await readRequestAppConfig(RUNTIME_DATA_DIR);
     let agentId = typeof appConfig.agentId === 'string' && appConfig.agentId
       ? appConfig.agentId
       : null;
@@ -14950,7 +15012,7 @@ export async function startServer({
     },
     amrWorkspaceScope: {
       isSignedIn: async () => {
-        const appConfig = await readAppConfig(RUNTIME_DATA_DIR).catch(
+        const appConfig = await readRequestAppConfig(RUNTIME_DATA_DIR).catch(
           () => ({}),
         );
         return readVelaLoginStatus(
@@ -14974,7 +15036,7 @@ export async function startServer({
       : undefined;
     const runRoutine = async () => {
     const { routine, trigger, startedAt, runId } = input;
-    const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
+    const appConfig = await readRequestAppConfig(RUNTIME_DATA_DIR);
     let agentId = routine.agentId
       || (typeof appConfig.agentId === 'string' && appConfig.agentId ? appConfig.agentId : null);
     if (!agentId) {
@@ -15466,7 +15528,7 @@ export async function startServer({
     chat: { startChatRun },
     agents: agentDeps,
     critique: critiqueDeps,
-    appConfig: { readAppConfig },
+    appConfig: { readAppConfig: readRequestAppConfig },
     validation: validationDeps,
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
     telemetry: { reportFinalizedMessage, reportFeedback },

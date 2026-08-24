@@ -24,6 +24,8 @@ export interface ResearchSource {
   snippet: string;
   publishedAt?: string;
   provider: string;
+  imageUrl?: string;
+  resolution?: [number, number];
 }
 
 export interface ResearchFindings {

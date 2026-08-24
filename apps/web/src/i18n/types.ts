@@ -5490,6 +5490,9 @@ export interface Dict {
   'templateRec.degraded': string;
   'templateRec.dismiss': string;
   'templateRec.entryHint': string;
+  'templateRec.emptyToast': string;
+  'templateRec.hoverTip': string;
+  'templateRec.applyFailed': string;
   'templateRec.entryOpen': string;
   'templateRec.loading': string;
   'templateRec.next': string;

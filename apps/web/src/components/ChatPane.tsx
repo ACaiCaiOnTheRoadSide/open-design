@@ -43,7 +43,6 @@ import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 import { projectRawUrl } from '../providers/registry';
-import { patchProject } from '../state/projects';
 import { appendResourceQuery } from '../collab/workspace-identity';
 import { useProjectCollabContext } from '../collab/collab-context';
 import { takeComposerSeedFor } from '../state/libraryHandoff';
@@ -114,6 +113,8 @@ import { TemplateRecommendTrigger } from './TemplateRecommendTrigger';
 import {
   recommendTemplates,
   templateRecommendUnavailable,
+  preferredTemplateRecommendationPrompt,
+  designTemplateRecommendations,
   type TemplateRecommendResponse,
   type TemplateRecommendation,
 } from '../state/templateRecommend';
@@ -2403,41 +2404,58 @@ export function ChatPane({
     };
   }, [composerPortalRect, composerPortalTarget, tab]);
 
-  const templateRecommendationPrompt = [...messages]
+  const lastSentTemplateRecommendationPrompt = [...messages]
     .reverse()
     .find((message) => message.role === 'user')?.content.trim() ?? '';
+  // Freeze one recommendation round's prompt so “another” keeps the same
+  // exclude set even if the composer draft changes meanwhile.
+  const templateRecommendationPromptRef = useRef('');
 
-  async function requestChatTemplateRecommendations() {
-    if (!templateRecommendationPrompt || templateRecommendLoading) return;
+  async function requestChatTemplateRecommendations(promptOverride?: string) {
+    const prompt = promptOverride ?? templateRecommendationPromptRef.current;
+    if (!prompt || templateRecommendLoading) return;
     setTemplateRecommendLoading(true);
     const result = await recommendTemplates({
-      prompt: templateRecommendationPrompt,
+      prompt,
       surface: 'project-chat',
       excludeIds: [...templateRecommendationSeenRef.current],
-      topN: 5,
+      topN: 8,
     });
     setTemplateRecommendLoading(false);
     if (!result) {
       if (templateRecommendUnavailable()) setTemplateRecommendAvailable(false);
+      else onShowToast?.(t('templateRec.emptyToast'));
       return;
     }
     result.recommendations.forEach((item) => templateRecommendationSeenRef.current.add(item.id));
-    const recommendations = result.recommendations.filter((item) => item.kind === 'design-template');
+    const recommendations = designTemplateRecommendations(result);
     setTemplateRecommendations(recommendations.length > 0 ? { ...result, recommendations } : null);
+    if (recommendations.length === 0) onShowToast?.(t('templateRec.emptyToast'));
   }
 
   async function useChatTemplateRecommendation(recommendation: TemplateRecommendation) {
-    if (recommendation.kind !== 'design-template' || !onProjectSkillChange || !projectId) return;
+    if (recommendation.kind !== 'design-template') return;
     const skillId = recommendation.id.replace(/^example-/, '');
-    const updated = await patchProject(projectId, { skillId }, workspaceContext);
-    if (!updated) return;
-    onProjectSkillChange(updated.skillId ?? skillId);
+    const skill = skills.find((item) => item.id === skillId) ?? {
+      id: skillId,
+      name: recommendation.name,
+      description: recommendation.reason,
+      triggers: [],
+      mode: 'template' as const,
+      previewType: 'html',
+      designSystemRequired: false,
+      defaultFor: [],
+      upstream: null,
+      hasBody: true,
+      examplePrompt: '',
+      aggregatesExamples: false,
+    };
+    const applied = await composerRef.current?.applyAndStageSkill(skill);
+    if (!applied) {
+      onShowToast?.(t('templateRec.applyFailed'));
+      return;
+    }
     setTemplateRecommendations(null);
-    await onSend(
-      t('templateRec.continueWith', { name: recommendation.name_zh || recommendation.name }),
-      [],
-      [],
-    );
   }
 
   const composerNode = (
@@ -2540,10 +2558,22 @@ export function ChatPane({
           {templateRecommendEnabled && templateRecommendAvailable ? (
             <TemplateRecommendTrigger
               size="compact"
-              enabled={Boolean(templateRecommendationPrompt) && !streaming && templateRecommendations === null}
+              enabled={!streaming && templateRecommendations === null}
               loading={templateRecommendLoading}
               disabledHint={templateRecommendations ? t('templateRec.entryOpen') : undefined}
-              onClick={() => { void requestChatTemplateRecommendations(); }}
+              onClick={() => {
+                const prompt = preferredTemplateRecommendationPrompt(
+                  composerRef.current?.getDraft() ?? '',
+                  lastSentTemplateRecommendationPrompt,
+                );
+                if (!prompt) {
+                  onShowToast?.(t('templateRec.entryHint'));
+                  return;
+                }
+                templateRecommendationSeenRef.current.clear();
+                templateRecommendationPromptRef.current = prompt;
+                void requestChatTemplateRecommendations(prompt);
+              }}
               data-testid="chat-template-recommend"
             />
           ) : null}

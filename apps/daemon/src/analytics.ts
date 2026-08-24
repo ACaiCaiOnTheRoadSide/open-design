@@ -263,8 +263,10 @@ const NOOP_SERVICE: AnalyticsService = {
 export function createAnalyticsService(args: {
   env?: NodeJS.ProcessEnv;
   dataDir: string;
+  readAppConfig?: typeof readAppConfig;
 }): AnalyticsService {
   const env = args.env ?? process.env;
+  const readConfig = args.readAppConfig ?? readAppConfig;
   const cfg = readPosthogConfig(env);
   if (!cfg) return NOOP_SERVICE;
 
@@ -302,7 +304,7 @@ export function createAnalyticsService(args: {
       // app-config.json adds one small file read per event; the daemon is
       // not on a hot critical path here.
       try {
-        const appCfg = await readAppConfig(args.dataDir);
+        const appCfg = await readConfig(args.dataDir);
         if (appCfg.telemetry?.metrics !== true) return;
         client.capture({
           distinctId: context.deviceId,
@@ -375,7 +377,7 @@ export function createAnalyticsService(args: {
         const resolvedDistinctId =
           distinctId && distinctId.length > 0
             ? distinctId
-            : await readInstallationIdSafe(args.dataDir);
+            : await readInstallationIdSafe(args.dataDir, readConfig);
         client.capture({
           distinctId: resolvedDistinctId,
           event: eventName,
@@ -401,7 +403,7 @@ export function createAnalyticsService(args: {
     },
     mergeAnonymousPerson: async ({ anonymousDistinctId, distinctId, properties, insertId }) => {
       try {
-        const appCfg = await readAppConfig(args.dataDir);
+        const appCfg = await readConfig(args.dataDir);
         if (appCfg.telemetry?.metrics !== true) return;
         if (!anonymousDistinctId || !distinctId || anonymousDistinctId === distinctId) return;
         const setProperties = cleanPosthogPersonProperties(properties ?? {});
@@ -423,7 +425,7 @@ export function createAnalyticsService(args: {
     },
     identifyGroup: async ({ context, groupType, groupKey, properties }) => {
       try {
-        const appCfg = await readAppConfig(args.dataDir);
+        const appCfg = await readConfig(args.dataDir);
         if (appCfg.telemetry?.metrics !== true) return;
         const cleanProperties = cleanPosthogPersonProperties(properties);
         if (!groupKey || Object.keys(cleanProperties).length === 0) return;
@@ -473,9 +475,12 @@ function cleanPosthogPersonProperties(properties: Record<string, unknown>): Reco
 
 const SYNTHETIC_DISTINCT_ID = `daemon-anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
-async function readInstallationIdSafe(dataDir: string): Promise<string> {
+async function readInstallationIdSafe(
+  dataDir: string,
+  readConfig: typeof readAppConfig = readAppConfig,
+): Promise<string> {
   try {
-    const cfg = await readAppConfig(dataDir);
+    const cfg = await readConfig(dataDir);
     if (typeof cfg.installationId === 'string' && cfg.installationId.length > 0) {
       return cfg.installationId;
     }

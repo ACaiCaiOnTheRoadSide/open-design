@@ -40,6 +40,17 @@ describe('template recommendation client', () => {
     }));
   });
 
+  it('prefers an unsent draft and detects filtered-empty project results', async () => {
+    const client = await import('../../src/state/templateRecommend');
+    expect(client.preferredTemplateRecommendationPrompt('  new brief  ', 'old brief')).toBe('new brief');
+    expect(client.preferredTemplateRecommendationPrompt(' ', ' old brief ')).toBe('old brief');
+    expect(client.designTemplateRecommendations({
+      recommendations: [{ id: 'plugin', kind: 'plugin', name: 'Plugin', reason: 'x', confidence: 1 }],
+      degraded: false,
+      index_version: 'test',
+    })).toEqual([]);
+  });
+
   it('marks the optional entry unavailable when the hosted route is absent', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
     const client = await import('../../src/state/templateRecommend');
