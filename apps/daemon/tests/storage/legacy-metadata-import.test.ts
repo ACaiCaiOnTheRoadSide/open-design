@@ -284,7 +284,19 @@ describe('legacy PostgreSQL metadata import', () => {
     expect(db.prepare('SELECT count(*) AS count FROM external_metadata_imports').get()).toEqual({ count: 0 });
   });
 
-  it('fails closed on an orphan and rolls back rows and marker', async () => {
+  it('clears an orphaned nullable parent while preserving the child', async () => {
+    const db = fullManifestSqlite(); databases.push(db);
+    const orphanRows = fullManifestFixture(path.resolve('/trusted-pvc'));
+    orphanRows.templates![0]!.source_project_id = 'missing';
+
+    await expect(importLegacyPostgresMetadata({ sqlite: db, pg: pgSource(orphanRows), schema: 'legacy' }))
+      .resolves.toMatchObject({ status: 'imported' });
+    expect(db.prepare('SELECT id, source_project_id FROM templates').get()).toEqual({
+      id: 'template-1', source_project_id: null,
+    });
+  });
+
+  it('fails closed on a required orphan and rolls back rows and marker', async () => {
     const db = sqlite(); databases.push(db);
     const orphanRows = structuredClone(fullRows);
     orphanRows.conversations![0]!.project_id = 'missing';

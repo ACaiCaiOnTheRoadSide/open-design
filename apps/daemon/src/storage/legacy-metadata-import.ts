@@ -97,11 +97,16 @@ function quoteSqliteIdentifier(identifier: string): string { if (!IDENTIFIER.tes
 function sqliteColumns(db: Database.Database, name: string): Set<string> { return new Set((db.prepare(`PRAGMA table_info(${quoteSqliteIdentifier(name)})`).all() as Array<{ name: string }>).map((x) => x.name)); }
 function markerId(schema: string): string { return `legacy-postgres-full-metadata:${schema}:v${IMPORT_VERSION}`; }
 function createMarkerTable(db: Database.Database): void { db.exec('CREATE TABLE IF NOT EXISTS external_metadata_imports (source_id TEXT PRIMARY KEY, imported_at INTEGER NOT NULL)'); }
-function assertParentExists(db: Database.Database, spec: TableSpec, row: Row): void {
+function normalizeParentReferences(db: Database.Database, spec: TableSpec, row: Row): void {
   for (const parent of spec.parents ?? []) {
     const value = row[parent.column];
     if (value == null && parent.nullable) continue;
-    if (value == null || db.prepare(`SELECT 1 FROM ${quoteSqliteIdentifier(parent.table)} WHERE ${quoteSqliteIdentifier(parent.targetColumn)} = ?`).get(value) == null) throw new Error(`Legacy metadata import rejected orphan ${spec.name}.${parent.column}`);
+    const exists = value != null && db.prepare(`SELECT 1 FROM ${quoteSqliteIdentifier(parent.table)} WHERE ${quoteSqliteIdentifier(parent.targetColumn)} = ?`).get(value) != null;
+    if (exists) continue;
+    // Historical deletes could leave optional links dangling; preserving the
+    // child without its stale association is safer than blocking startup.
+    if (parent.nullable) { row[parent.column] = null; continue; }
+    throw new Error(`Legacy metadata import rejected orphan ${spec.name}.${parent.column}`);
   }
 }
 function validOwner(value: unknown): value is string { return typeof value === 'string' && value.length > 0 && value !== '__legacy__' && value !== QUARANTINE_TENANT; }
@@ -210,8 +215,8 @@ export async function importLegacyPostgresMetadata(options: LegacyMetadataImport
       for (let offset = 0; ; offset += pageSize) {
         const page = await options.pg.query<Row>(`SELECT ${selectList} FROM ${quotedSchema}.${quotePgIdentifier(spec.name)} ORDER BY ${orderBy} LIMIT $1 OFFSET $2`, [pageSize, offset]);
         for (const sourceRow of page.rows) {
-          const targetRow = Object.fromEntries(columns.map((column) => [column, sourceRow[column]])); assertParentExists(options.sqlite, spec, targetRow);
-          importedRows += insert.run(...columns.map((column) => sourceRow[column])).changes;
+          const targetRow = Object.fromEntries(columns.map((column) => [column, sourceRow[column]])); normalizeParentReferences(options.sqlite, spec, targetRow);
+          importedRows += insert.run(...columns.map((column) => targetRow[column])).changes;
           if (spec.name === 'projects') {
             const owner = validOwner(sourceRow.tenant_id) && validOwner(sourceRow.creator_id)
               ? { tenant: sourceRow.tenant_id, creator: sourceRow.creator_id }
