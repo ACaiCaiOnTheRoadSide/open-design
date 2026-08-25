@@ -47,6 +47,7 @@ import {
 import { Toast } from './components/Toast';
 import { FeedbackQuickButton } from './components/FeedbackQuickButton';
 import { ThemeQuickMenu } from './components/ThemeQuickMenu';
+import { LanguageMenu } from './components/LanguageMenu';
 import { ConfirmDialogHost } from './components/confirm-dialog-host';
 import { CenteredLoader } from './components/Loading';
 import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
@@ -5468,6 +5469,7 @@ function AppInner() {
         />
       )}
       <div className="quick-entry-cluster">
+        <LanguageMenu compact placement="down" align="end" />
         <ThemeQuickMenu
           config={config}
           onThemeChange={handleQuickThemeChange}
