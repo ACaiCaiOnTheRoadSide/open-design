@@ -117,8 +117,10 @@
   pointer-events: none;
 }
 .home-hero__title {
-  /* Extra bottom margin widens just the title → input-card gap (adds to the
-     6px flex gap → ~26px total) without touching the logo → title spacing. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-4);
   margin: 0 0 var(--spacing-20);
   font-family: var(--serif);
   font-weight: 600;
@@ -127,6 +129,9 @@
   letter-spacing: -0.02em;
   color: var(--text-strong);
   text-align: center;
+}
+.home-hero__title > span {
+  display: block;
 }
 .home-hero__subtitle {
   margin: 0;
