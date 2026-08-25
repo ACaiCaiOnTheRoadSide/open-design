@@ -2084,6 +2084,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               onChange={onDesignSystemChange}
             />
           ) : null}
+          {onDesignSystemChange && stagedRowAccessory ? (
+            <span className="home-hero__workdir-divider" aria-hidden />
+          ) : null}
           {stagedRowAccessory}
           {(onDesignSystemChange || stagedRowAccessory) && onPickWorkingDir ? (
             <span className="home-hero__workdir-divider" aria-hidden />

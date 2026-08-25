@@ -4,7 +4,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
   border: 1px solid var(--accent-tint, var(--border));
   border-radius: var(--radius-pill, 999px);
   background: var(--accent-tint, transparent);

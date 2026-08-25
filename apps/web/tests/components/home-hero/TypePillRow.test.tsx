@@ -63,6 +63,7 @@ function renderPillRow(labelFor: (chipId: string) => string) {
 
 describe('TypePillRow', () => {
   it('keeps a strict ordered prefix inline and moves the remaining suffix into All', () => {
+    renderedPillWidth = 50;
     renderPillRow((chipId) => chipId);
 
     expect(screen.queryByTestId('home-hero-type-pill-deck')).not.toBeNull();
@@ -74,6 +75,15 @@ describe('TypePillRow', () => {
     fireEvent.click(screen.getByTestId('home-hero-type-pills-more'));
     expect(screen.queryByTestId('home-hero-type-pill-image-more')).not.toBeNull();
     expect(screen.queryByTestId('home-hero-type-pill-video-more')).not.toBeNull();
+  });
+
+  it('takes the All trigger out of layout when every type fits', () => {
+    renderPillRow((chipId) => chipId);
+
+    expect(screen.queryByTestId('home-hero-type-pill-image')).not.toBeNull();
+    expect(screen.queryByTestId('home-hero-type-pill-video')).not.toBeNull();
+    expect(screen.getByTestId('home-hero-type-pills-more').closest('.home-hero__type-pills-tail'))
+      .toHaveClass('is-measure-only');
   });
 
   it('recomputes the inline split when rendered labels change without resizing the container', () => {

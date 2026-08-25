@@ -81,6 +81,7 @@ export function ThemeQuickMenu({
           <AccentColorPicker
             value={normalizeAccentColor(config.accentColor) ?? DEFAULT_ACCENT_COLOR}
             onChange={onAccentColorChange}
+            showCustom={false}
           />
         </div>
       ) : null}

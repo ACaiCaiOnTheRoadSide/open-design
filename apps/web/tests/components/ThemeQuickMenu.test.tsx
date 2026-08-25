@@ -8,7 +8,7 @@ import { ACCENT_SWATCHES } from '../../src/state/appearance';
 afterEach(cleanup);
 
 describe('ThemeQuickMenu', () => {
-  it('supports keyboard theme selection, accent presets, custom color, Escape, and outside dismiss', () => {
+  it('supports keyboard theme selection, accent presets, Escape, and outside dismiss', () => {
     const onThemeChange = vi.fn();
     const onAccentColorChange = vi.fn();
     render(
@@ -33,8 +33,7 @@ describe('ThemeQuickMenu', () => {
     expect(colorRadios).toHaveLength(ACCENT_SWATCHES.length);
     fireEvent.click(screen.getByRole('radio', { name: '#F04142' }));
     expect(onAccentColorChange).toHaveBeenCalledWith('#F04142');
-    fireEvent.change(screen.getByLabelText('Custom theme color'), { target: { value: '#123456' } });
-    expect(onAccentColorChange).toHaveBeenLastCalledWith('#123456');
+    expect(screen.queryByLabelText('Custom theme color')).toBeNull();
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByTestId('theme-quick-menu')).toBeNull();
@@ -57,6 +56,6 @@ describe('ThemeQuickMenu', () => {
     fireEvent.click(screen.getByTestId('theme-quick-menu-trigger'));
     expect(screen.queryByText('System')).toBeNull();
     expect(screen.getAllByRole('radio')).toHaveLength(ACCENT_SWATCHES.length);
-    expect(screen.getByLabelText('Custom theme color')).toBeTruthy();
+    expect(screen.queryByLabelText('Custom theme color')).toBeNull();
   });
 });

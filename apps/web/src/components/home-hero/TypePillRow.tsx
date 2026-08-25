@@ -32,6 +32,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
   const probeRef = useRef<HTMLDivElement | null>(null);
   const tailRef = useRef<HTMLDivElement | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [hasOverflow, setHasOverflow] = useState(false);
   const flowing = chips.slice(0, MAX_PILLS);
   const measurementSignature = [
     ...flowing.map((chip) => `${chip.id}:${labelFor(chip.id)}`),
@@ -49,16 +50,28 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
       // jsdom (unit tests) lays out nothing — keep every pill "fitting"
       // there rather than collapsing the row to zero.
       if (wrap.clientWidth === 0) {
+        setHasOverflow(false);
         setFitCount(flowing.length);
         return;
       }
-      // The tail (pinned pills + 全部 trigger) is part of the visible row, so
-      // its width — including its own leading gap — is reserved up front.
+      const widths = Array.from(probe.children, (el) => (el as HTMLElement).offsetWidth);
+      const allPillsWidth = widths.reduce((sum, width) => sum + width, 0)
+        + Math.max(0, widths.length - 1) * PILL_GAP;
+      if (allPillsWidth <= wrap.clientWidth) {
+        setHasOverflow(false);
+        setMoreOpen(false);
+        setFitCount(flowing.length);
+        return;
+      }
+
+      setHasOverflow(true);
+      // Reserve the 全部 trigger only when the natural-width pill set really
+      // overflows. SaaS deployments can hide native types, so keeping an
+      // unnecessary trigger would leave a ragged, misleading row.
       const available = wrap.clientWidth - tail.offsetWidth - PILL_GAP;
       let used = 0;
       let count = 0;
-      for (const el of probe.children) {
-        const width = (el as HTMLElement).offsetWidth;
+      for (const width of widths) {
         const next = used + (count > 0 ? PILL_GAP : 0) + width;
         if (next > available) break;
         used = next;
@@ -131,11 +144,12 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
       data-testid="home-hero-type-pills"
     >
       {inlineChips.map((chip) => pillButton(chip, false))}
-      {/* Tail: the 全部 trigger is one measured unit so the fit computation
-          reserves its width. The trigger is ALWAYS mounted —
-          geometry that came and went with the overflow set would oscillate
-          the measurement at boundary widths. */}
-      <div className="home-hero__type-pills-tail" ref={tailRef}>
+      {/* Keep the trigger measurable while taking it out of the visible row
+          whenever every available type already fits. */}
+      <div
+        className={`home-hero__type-pills-tail${hasOverflow ? '' : ' is-measure-only'}`}
+        ref={tailRef}
+      >
         <div className="home-hero__type-pills-more">
           <button
             type="button"
@@ -149,7 +163,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
             <span>{t('common.all')}</span>
             <Icon name="chevron-down" size={14} />
           </button>
-          {moreOpen ? (
+          {hasOverflow && moreOpen ? (
             <div
               className="home-hero__type-pills-popover"
               role="listbox"

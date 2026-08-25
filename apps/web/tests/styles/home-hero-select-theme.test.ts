@@ -6,8 +6,9 @@ const homeHeroCss = readFileSync(new URL('../../src/styles/home/home-hero.css', 
 function cssDeclarations(selector: string): string {
   const blocks: string[] = [];
   const rulePattern = /([^{}]+)\{([^}]*)\}/g;
+  const cssWithoutComments = homeHeroCss.replace(/\/\*[\s\S]*?\*\//g, '');
   let match: RegExpExecArray | null;
-  while ((match = rulePattern.exec(homeHeroCss)) !== null) {
+  while ((match = rulePattern.exec(cssWithoutComments)) !== null) {
     const selectors = (match[1] ?? '').split(',').map((item) => item.trim());
     if (selectors.includes(selector)) blocks.push(match[2] ?? '');
   }
@@ -45,5 +46,20 @@ describe('HomeHero footer select theme styles', () => {
         `html:not([data-theme="light"]) .home-hero__model-option-icon--${icon} img`,
       );
     }
+  });
+
+  it('uses the configurable accent for Home selection and action highlights', () => {
+    expect(ruleValue(cssDeclarations('.home-hero__type-pill.is-active'), 'color'))
+      .toBe('var(--accent)');
+    expect(ruleValue(
+      cssDeclarations(".home-hero__footer-option--select[data-field-name='template'].has-selection"),
+      'background-color',
+    )).toBe('var(--accent-tint)');
+    expect(ruleValue(
+      cssDeclarations('.home-hero__template-option.has-selection .home-hero__footer-select-label'),
+      'color',
+    )).toBe('var(--accent)');
+    expect(ruleValue(cssDeclarations('.home-hero__submit'), '--home-hero-submit-fg'))
+      .toContain('var(--accent)');
   });
 });

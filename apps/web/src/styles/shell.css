@@ -2580,7 +2580,7 @@ a.avatar-item:visited {
   top: calc(100% + 6px);
   right: 0;
   z-index: 1900;
-  width: 250px;
+  width: 204px;
   max-width: calc(100vw - 24px);
   padding: 12px;
   display: flex;
@@ -2628,10 +2628,14 @@ a.avatar-item:visited {
   gap: 8px;
 }
 
-.theme-quick-menu__popover .appearance-accent-swatch,
-.theme-quick-menu__popover .appearance-accent-custom {
-  width: 24px;
-  height: 24px;
+.theme-quick-menu__popover .appearance-accent-options {
+  justify-content: center;
+  gap: 10px;
+}
+
+.theme-quick-menu__popover .appearance-accent-swatch {
+  width: 28px;
+  height: 28px;
 }
 
 .appearance-theme-option:focus-visible,

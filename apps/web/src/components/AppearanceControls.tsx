@@ -75,10 +75,12 @@ export function AccentColorPicker({
   value,
   onChange,
   className = '',
+  showCustom = true,
 }: {
   value?: string;
   onChange: (color: string) => void;
   className?: string;
+  showCustom?: boolean;
 }) {
   const t = useT();
   const active = normalizeAccentColor(value) ?? DEFAULT_ACCENT_COLOR;
@@ -104,15 +106,17 @@ export function AccentColorPicker({
           />
         );
       })}
-      <label className="settings-accent-custom appearance-accent-custom" title={t('settings.accentColorCustom')}>
-        <input
-          type="color"
-          value={active}
-          aria-label={t('settings.accentColorCustom')}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        <Icon name="palette" size={16} />
-      </label>
+      {showCustom ? (
+        <label className="settings-accent-custom appearance-accent-custom" title={t('settings.accentColorCustom')}>
+          <input
+            type="color"
+            value={active}
+            aria-label={t('settings.accentColorCustom')}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          <Icon name="palette" size={16} />
+        </label>
+      ) : null}
     </div>
   );
 }
