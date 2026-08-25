@@ -29,4 +29,17 @@ describe('business facts PostgreSQL migration contract', () => {
     expect(sql).not.toContain('media_usage');
     expect(sql).not.toContain('monkeycode');
   });
+
+  it('supplies timestamps required by legacy conversations tables', async () => {
+    const sql = await readFile(
+      path.join(resolvePgMigrationsDirectory(), '012_legacy_conversation_timestamps.sql'),
+      'utf8',
+    );
+    expect(sql).toContain("table_name = 'conversations'");
+    expect(sql).toContain("column_name = 'created_at'");
+    expect(sql).toContain('ALTER COLUMN created_at SET DEFAULT');
+    expect(sql).toContain("column_name = 'updated_at'");
+    expect(sql).toContain('ALTER COLUMN updated_at SET DEFAULT');
+    expect(sql).toContain('EXTRACT(EPOCH FROM clock_timestamp()) * 1000');
+  });
 });
