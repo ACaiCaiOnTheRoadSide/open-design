@@ -4,7 +4,7 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
   gap: 12px;
 }
 
@@ -12,6 +12,11 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  width: 100%;
+  height: auto;
+  min-width: 0;
   overflow: hidden;
   padding: 0;
   border: 2px solid var(--border);
@@ -19,6 +24,8 @@
   background: var(--bg-panel);
   color: inherit;
   font: inherit;
+  line-height: normal;
+  white-space: normal;
   text-align: left;
   cursor: pointer;
   transition:
