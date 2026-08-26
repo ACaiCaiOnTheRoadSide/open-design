@@ -169,11 +169,18 @@ describe('HomeHero intent rail', () => {
 
   it('keeps the visible primary template categories interactive while plugins load', () => {
     const { onPickChip } = renderHero({ pluginsLoading: true });
+    const initialPreview = screen
+      .getAllByTestId('home-hero-sidebar-prompt-example')[0]
+      ?.querySelector('img')
+      ?.getAttribute('src');
     const imageCategory = screen.getByTestId('home-hero-type-pill-image');
     expect(imageCategory).not.toBeDisabled();
     fireEvent.click(imageCategory);
     expect(imageCategory.getAttribute('aria-selected')).toBe('true');
     expect(onPickChip).toHaveBeenCalledWith(findChip('image'));
+    expect(
+      screen.getAllByTestId('home-hero-sidebar-prompt-example')[0]?.querySelector('img')?.getAttribute('src'),
+    ).not.toBe(initialPreview);
   });
 
   it('switches second-level categories independently from plugin discovery', () => {

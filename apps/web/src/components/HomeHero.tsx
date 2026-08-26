@@ -1312,58 +1312,68 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     contextWorkspaceItems.length > 0;
   let optionRenderIndex = 0;
   const visibleError = error?.startsWith('Bundled scenario "') ? null : error;
+  const templateGalleryKey = `${railActiveChipId ?? 'all'}:${selectedSubcategory ?? 'all'}`;
+  const selectedSubcategoryIndex = activeSubChips.findIndex((sub) => sub.slug === selectedSubcategory);
+  const selectedSubcategoryLabel = selectedSubcategoryIndex >= 0 ? activeSubChips[selectedSubcategoryIndex]?.label : null;
+  const visiblePromptExamples = selectedSubcategoryLabel
+    ? activePromptExamples.map((example) => `${selectedSubcategoryLabel} · ${example}`)
+    : activePromptExamples;
+  const templatePreviewOffset = Math.max(0, templateChips.findIndex((chip) => chip.id === railActiveChipId))
+    + Math.max(0, selectedSubcategoryIndex);
 
   return (
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
-      <aside className="home-hero__template-rail" aria-label={t('homeHero.templatePicker.label')}>
+      <nav className="home-hero__template-catalog-dock" aria-label={t('homeHero.templatePicker.label')}>
         <div className="home-hero__template-rail-head">
           <span>{t('homeHero.templatePicker.label')}</span>
-          <span className="home-hero__template-rail-direction" aria-hidden>↕</span>
         </div>
-        <div className="home-hero__template-rail-body">
-          <div className="home-hero__template-catalogs">
-            <TypePillRow
-              chips={templateChips}
-              activeChipId={railActiveChipId}
-              disabled={pendingChipId !== null || pendingPluginId !== null}
-              labelFor={(id) => homeHeroChipLabel(id, t)}
-              onPick={handlePickTaskChip}
-              vertical
-            />
-            <div className="home-hero__secondary-category-row">
-              {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
-                <SubTypeRow
-                  subChips={activeSubChips}
-                  selectedSlug={selectedSubcategory}
-                  pluginsLoading={false}
-                  onPickSubChip={(sub) => {
-                    trackHomeChatComposerClick(analytics.track, {
-                      page_name: 'home',
-                      area: 'chat_composer',
-                      element: 'subcategory_chip',
-                      chip_id: railActiveChipId ?? undefined,
-                      subcategory: sub.slug,
-                    });
-                    const next = selectedSubcategory === sub.slug ? null : sub;
-                    setLocalSelectedSubcategory(next?.slug ?? null);
-                    if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(next);
-                  }}
-                  scrollable
-                  onSelectAll={() => {
-                    setLocalSelectedSubcategory(null);
-                    if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(null);
-                  }}
-                />
-              ) : (
-                <div className="home-hero__category-strip home-hero__category-strip--secondary" aria-hidden>
-                  <span className="home-hero__category-tab is-active">{t('common.all')}</span>
-                </div>
-              )}
-            </div>
+        <div className="home-hero__template-catalogs">
+          <TypePillRow
+            chips={templateChips}
+            activeChipId={railActiveChipId}
+            disabled={pendingChipId !== null || pendingPluginId !== null}
+            labelFor={(id) => homeHeroChipLabel(id, t)}
+            onPick={handlePickTaskChip}
+            vertical
+          />
+          <div className="home-hero__secondary-category-row">
+            {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
+              <SubTypeRow
+                subChips={activeSubChips}
+                selectedSlug={selectedSubcategory}
+                pluginsLoading={false}
+                onPickSubChip={(sub) => {
+                  trackHomeChatComposerClick(analytics.track, {
+                    page_name: 'home',
+                    area: 'chat_composer',
+                    element: 'subcategory_chip',
+                    chip_id: railActiveChipId ?? undefined,
+                    subcategory: sub.slug,
+                  });
+                  const next = selectedSubcategory === sub.slug ? null : sub;
+                  setLocalSelectedSubcategory(next?.slug ?? null);
+                  if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(next);
+                }}
+                scrollable
+                onSelectAll={() => {
+                  setLocalSelectedSubcategory(null);
+                  if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(null);
+                }}
+              />
+            ) : (
+              <div className="home-hero__category-strip home-hero__category-strip--secondary" aria-hidden>
+                <span className="home-hero__category-tab is-active">{t('common.all')}</span>
+              </div>
+            )}
           </div>
+        </div>
+      </nav>
+      <aside className="home-hero__template-rail" aria-label={t('homeHero.promptExamples')}>
+        <div className="home-hero__template-rail-body">
           <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
           {filteredExamplePlugins.length > 0 && railActiveChipId ? (
             <PluginPromptPresets
+              key={templateGalleryKey}
               chipId={railActiveChipId}
               plugins={filteredExamplePlugins}
               activePluginId={activePluginRecord?.id ?? null}
@@ -1373,9 +1383,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               pulseFirstPreset={guidePulseFirstPreset}
               workspaceContext={workspaceContext}
             />
-          ) : activePromptExamples.length > 0 ? (
-            <div className="home-hero__fallback-presets">
-              {activePromptExamples.slice(0, 4).map((example, index) => (
+          ) : visiblePromptExamples.length > 0 ? (
+            <div key={templateGalleryKey} className="home-hero__fallback-presets">
+              {visiblePromptExamples.slice(0, 4).map((example, index) => (
                 <button
                   key={example}
                   type="button"
@@ -1384,14 +1394,17 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                   onClick={() => usePromptExample(example)}
                 >
                   <span className="home-hero__fallback-preset-preview" aria-hidden>
-                    <img src={HOME_TEMPLATE_PREVIEW_IMAGES[index]} alt="" />
+                    <img
+                      src={HOME_TEMPLATE_PREVIEW_IMAGES[(index + templatePreviewOffset) % HOME_TEMPLATE_PREVIEW_IMAGES.length]}
+                      alt=""
+                    />
                   </span>
                   <span className="home-hero__fallback-preset-title">{example}</span>
                 </button>
               ))}
             </div>
           ) : (
-            <div className="home-hero__fallback-presets">
+            <div key={templateGalleryKey} className="home-hero__fallback-presets">
               {templateChips.slice(0, 4).map((chip, index) => (
                 <button
                   key={chip.id}
@@ -1401,7 +1414,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                   onClick={() => handlePickTaskChip(chip)}
                 >
                   <span className="home-hero__fallback-preset-preview" aria-hidden>
-                    <img src={HOME_TEMPLATE_PREVIEW_IMAGES[index]} alt="" />
+                    <img
+                      src={HOME_TEMPLATE_PREVIEW_IMAGES[(index + templatePreviewOffset) % HOME_TEMPLATE_PREVIEW_IMAGES.length]}
+                      alt=""
+                    />
                   </span>
                   <span className="home-hero__fallback-preset-title">{homeHeroChipLabel(chip.id, t)}</span>
                 </button>
