@@ -4148,12 +4148,12 @@
 
 /* Final Studio home layout — stable two-column desktop workspace. */
 .home-view {
-  width: min(1120px, calc(100% - 650px));
+  width: min(1120px, calc(100% - 710px));
   min-height: min(820px, calc(100vh - 92px));
   margin: 20px auto 32px;
   padding: 28px;
   overflow: visible;
-  transform: translateX(325px);
+  transform: translateX(355px);
 }
 .home-view::before,
 .home-view__pearl-fluid {
@@ -4335,13 +4335,13 @@
 }
 .home-hero__template-catalog-dock {
   position: absolute;
-  top: -10px;
-  left: -670px;
+  top: -29px;
+  left: -694px;
   z-index: 3;
   box-sizing: border-box;
-  width: 190px;
-  height: min(640px, calc(100vh - 150px));
-  min-height: 500px;
+  width: 220px;
+  height: min(820px, calc(100vh - 84px));
+  min-height: 520px;
   padding: 14px 10px 12px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
@@ -4395,11 +4395,12 @@
 .home-hero__template-catalogs .home-hero__subtype-chip {
   width: 100%;
   min-width: 0;
-  min-height: 32px;
+  min-height: 36px;
   height: auto;
   flex: 0 0 auto;
   justify-content: flex-start;
-  padding: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
   border-radius: 8px;
   white-space: normal;
   line-height: 1.25;
@@ -4660,14 +4661,14 @@
   background: var(--accent);
 }
 
-@media (min-width: 1101px) and (max-width: 1500px) {
+@media (min-width: 1281px) and (max-width: 1500px) {
   .home-view {
-    width: calc(100% - 650px);
-    transform: translateX(325px);
+    width: calc(100% - 710px);
+    transform: translateX(355px);
   }
   .home-hero__template-catalog-dock {
-    left: -650px;
-    width: 180px;
+    left: -694px;
+    width: 220px;
   }
   .home-hero__template-rail {
     top: -29px;
@@ -4677,7 +4678,7 @@
   }
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   .home-view {
     width: calc(100% - 12px);
     min-height: 0;
