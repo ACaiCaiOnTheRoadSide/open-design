@@ -1320,45 +1320,48 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
           <span>{t('homeHero.templatePicker.label')}</span>
           <span className="home-hero__template-rail-direction" aria-hidden>↕</span>
         </div>
-        <TypePillRow
-          chips={templateChips}
-          activeChipId={railActiveChipId}
-          disabled={pendingChipId !== null || pendingPluginId !== null}
-          labelFor={(id) => homeHeroChipLabel(id, t)}
-          onPick={handlePickTaskChip}
-          vertical
-        />
-        <div className="home-hero__secondary-category-row">
-          {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
-            <SubTypeRow
-              subChips={activeSubChips}
-              selectedSlug={selectedSubcategory}
-              pluginsLoading={false}
-              onPickSubChip={(sub) => {
-                trackHomeChatComposerClick(analytics.track, {
-                  page_name: 'home',
-                  area: 'chat_composer',
-                  element: 'subcategory_chip',
-                  chip_id: railActiveChipId ?? undefined,
-                  subcategory: sub.slug,
-                });
-                const next = selectedSubcategory === sub.slug ? null : sub;
-                setLocalSelectedSubcategory(next?.slug ?? null);
-                if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(next);
-              }}
-              scrollable
-              onSelectAll={() => {
-                setLocalSelectedSubcategory(null);
-                if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(null);
-              }}
+        <div className="home-hero__template-rail-body">
+          <div className="home-hero__template-catalogs">
+            <TypePillRow
+              chips={templateChips}
+              activeChipId={railActiveChipId}
+              disabled={pendingChipId !== null || pendingPluginId !== null}
+              labelFor={(id) => homeHeroChipLabel(id, t)}
+              onPick={handlePickTaskChip}
+              vertical
             />
-          ) : (
-            <div className="home-hero__category-strip home-hero__category-strip--secondary" aria-hidden>
-              <span className="home-hero__category-tab is-active">{t('common.all')}</span>
+            <div className="home-hero__secondary-category-row">
+              {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
+                <SubTypeRow
+                  subChips={activeSubChips}
+                  selectedSlug={selectedSubcategory}
+                  pluginsLoading={false}
+                  onPickSubChip={(sub) => {
+                    trackHomeChatComposerClick(analytics.track, {
+                      page_name: 'home',
+                      area: 'chat_composer',
+                      element: 'subcategory_chip',
+                      chip_id: railActiveChipId ?? undefined,
+                      subcategory: sub.slug,
+                    });
+                    const next = selectedSubcategory === sub.slug ? null : sub;
+                    setLocalSelectedSubcategory(next?.slug ?? null);
+                    if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(next);
+                  }}
+                  scrollable
+                  onSelectAll={() => {
+                    setLocalSelectedSubcategory(null);
+                    if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(null);
+                  }}
+                />
+              ) : (
+                <div className="home-hero__category-strip home-hero__category-strip--secondary" aria-hidden>
+                  <span className="home-hero__category-tab is-active">{t('common.all')}</span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
+          </div>
+          <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
           {filteredExamplePlugins.length > 0 && railActiveChipId ? (
             <PluginPromptPresets
               chipId={railActiveChipId}
@@ -1405,6 +1408,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               ))}
             </div>
           )}
+          </div>
         </div>
       </aside>
 
