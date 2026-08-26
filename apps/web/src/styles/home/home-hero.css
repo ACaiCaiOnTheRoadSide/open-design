@@ -4148,12 +4148,12 @@
 
 /* Final Studio home layout — stable two-column desktop workspace. */
 .home-view {
-  width: min(1120px, calc(100% - 400px));
+  width: min(1120px, calc(100% - 478px));
   min-height: min(820px, calc(100vh - 92px));
   margin: 20px auto 32px;
   padding: 28px;
   overflow: visible;
-  transform: translateX(192px);
+  transform: translateX(239px);
 }
 .home-view::before,
 .home-view__pearl-fluid {
@@ -4238,7 +4238,7 @@
 .home-hero__template-rail {
   position: absolute;
   top: -29px;
-  left: -434px;
+  left: -478px;
   z-index: 2;
   box-sizing: border-box;
   width: 410px;
@@ -4561,12 +4561,12 @@
 
 @media (min-width: 901px) and (max-width: 1500px) {
   .home-view {
-    width: min(900px, calc(100% - 320px));
-    transform: translateX(150px);
+    width: calc(100% - 478px);
+    transform: translateX(239px);
   }
   .home-hero__template-rail {
     top: -29px;
-    left: -430px;
+    left: -478px;
     width: 410px;
     height: min(820px, calc(100vh - 84px));
   }
