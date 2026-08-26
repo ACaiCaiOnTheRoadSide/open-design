@@ -102,6 +102,13 @@ import { LibraryPicker } from './LibraryPicker';
 import { ComposerModePicker } from './ComposerModePicker';
 import { assetTitle } from './LibraryAssetMeta';
 import { libraryAssetRawUrl } from '../providers/registry';
+
+const HOME_TEMPLATE_PREVIEW_IMAGES = [
+  '/community-templates/open-design-landing.webp',
+  '/community-templates/mobile-flow.webp',
+  '/community-templates/pitch-deck.webp',
+  '/community-templates/dashboard.webp',
+] as const;
 import type { LibraryAsset } from '@open-design/contracts';
 import { WorkingDirPicker } from './WorkingDirPicker';
 import {
@@ -1297,6 +1304,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     contextOnlyConnectors.length > 0 ||
     contextWorkspaceItems.length > 0;
   let optionRenderIndex = 0;
+  const visibleError = error?.startsWith('Bundled scenario "') ? null : error;
 
   return (
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
@@ -1357,7 +1365,41 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               pulseFirstPreset={guidePulseFirstPreset}
               workspaceContext={workspaceContext}
             />
-          ) : null}
+          ) : activePromptExamples.length > 0 ? (
+            <div className="home-hero__fallback-presets">
+              {activePromptExamples.slice(0, 4).map((example, index) => (
+                <button
+                  key={example}
+                  type="button"
+                  className="home-hero__fallback-preset"
+                  data-testid="home-hero-sidebar-prompt-example"
+                  onClick={() => usePromptExample(example)}
+                >
+                  <span className="home-hero__fallback-preset-preview" aria-hidden>
+                    <img src={HOME_TEMPLATE_PREVIEW_IMAGES[index]} alt="" />
+                  </span>
+                  <span className="home-hero__fallback-preset-title">{example}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="home-hero__fallback-presets">
+              {templateChips.slice(0, 4).map((chip, index) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  className="home-hero__fallback-preset"
+                  disabled={pendingChipId !== null || pendingPluginId !== null}
+                  onClick={() => handlePickTaskChip(chip)}
+                >
+                  <span className="home-hero__fallback-preset-preview" aria-hidden>
+                    <img src={HOME_TEMPLATE_PREVIEW_IMAGES[index]} alt="" />
+                  </span>
+                  <span className="home-hero__fallback-preset-title">{homeHeroChipLabel(chip.id, t)}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -2215,9 +2257,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         </div>
       ) : null}
 
-      {error ? (
+      {visibleError ? (
         <div role="alert" className="home-hero__error">
-          {error}
+          {visibleError}
         </div>
       ) : null}
       {previewHomeFile && previewHomeFileUrl ? createPortal(

@@ -3173,6 +3173,7 @@ export function HomeView({
         projects={projects}
         designSystems={designSystems}
         showEmptyState
+        onCreateEmptyProject={() => { void startBlankProject(); }}
         {...(isSharedProject ? { isSharedProject } : {})}
         {...(onProjectShared ? { onProjectShared } : {})}
         {...(onProjectShareFailed ? { onProjectShareFailed } : {})}

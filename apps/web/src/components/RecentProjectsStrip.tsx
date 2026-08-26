@@ -106,6 +106,7 @@ interface Props {
   description?: string;
   /** Keep the compact Home filmstrip visible when a workspace has no projects. */
   showEmptyState?: boolean;
+  onCreateEmptyProject?: () => void;
   /** Return false when opening failed and the grid stayed mounted, so aborted
    * background cover work can resume after the foreground attempt finishes. */
   onOpen: (id: string) => boolean | void | Promise<boolean | void>;
@@ -339,6 +340,7 @@ export function RecentProjectsStrip({
   heading,
   description,
   showEmptyState = false,
+  onCreateEmptyProject,
   onOpen,
   onViewAll,
   onDelete,
@@ -1674,7 +1676,18 @@ export function RecentProjectsStrip({
         role="list"
       >
         {showEmptyState && visibleProjects.length === 0 ? (
-          <div className="recent-projects__home-empty">{t('recentProjects.empty')}</div>
+          <div className="recent-projects__home-empty">
+            <span className="recent-projects__home-empty-mark" aria-hidden>+</span>
+            <span className="recent-projects__home-empty-copy">
+              <strong>{t('homeHero.startBlankProject')}</strong>
+              <span>{t('recentProjects.empty')}</span>
+            </span>
+            {onCreateEmptyProject ? (
+              <button type="button" onClick={onCreateEmptyProject}>
+                {t('homeHero.startBlankProject')}
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {visibleProjects.map(({ project, creator }) => {
           const cover = projectCover(
