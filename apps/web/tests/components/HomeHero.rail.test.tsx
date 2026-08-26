@@ -233,7 +233,7 @@ describe('HomeHero intent rail', () => {
     // kicker alone reads as empty.
     rerender(<HomeHero {...baseProps} activeChipId={null} />);
     const trigger = screen.getByTestId('home-hero-template-trigger');
-    expect(trigger.textContent).toContain('Templates');
+    expect(trigger.textContent).toContain('Template library');
     expect(trigger.textContent).not.toContain('Slide deck');
   });
 

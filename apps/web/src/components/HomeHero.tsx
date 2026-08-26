@@ -1369,6 +1369,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
       {/* #5517 wraps the input card + workdir row into one visible composer
           card so they read as a single surface. */}
       <div className="home-hero__composer-card">
+      <h2 className="home-hero__composer-title">{t('homeHero.startBlankProject')}</h2>
       <div
         className={`home-hero__input-card${
           authoringLayoutActive ? ' home-hero__input-card--compact-authoring' : ''
