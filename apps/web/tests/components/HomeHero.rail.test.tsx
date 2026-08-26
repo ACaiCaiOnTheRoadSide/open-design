@@ -167,6 +167,25 @@ describe('HomeHero intent rail', () => {
     expect(onPickChip).toHaveBeenCalledWith(findChip('image'));
   });
 
+  it('keeps the visible primary template categories interactive while plugins load', () => {
+    const { onPickChip } = renderHero({ pluginsLoading: true });
+    const imageCategory = screen.getByTestId('home-hero-type-pill-image');
+    expect(imageCategory).not.toBeDisabled();
+    fireEvent.click(imageCategory);
+    expect(imageCategory.getAttribute('aria-selected')).toBe('true');
+    expect(onPickChip).toHaveBeenCalledWith(findChip('image'));
+  });
+
+  it('switches second-level categories independently from plugin discovery', () => {
+    const onPickPrototypeSubtype = vi.fn();
+    renderHero({ activeChipId: 'prototype', pluginsLoading: true, onPickPrototypeSubtype });
+    const mobile = screen.getByTestId('home-hero-subtype-mobile');
+    expect(mobile).not.toBeDisabled();
+    fireEvent.click(mobile);
+    expect(mobile.getAttribute('aria-selected')).toBe('true');
+    expect(onPickPrototypeSubtype).toHaveBeenCalled();
+  });
+
   it('moves the active creation chip into the composer and hides the tab row', () => {
     renderHero({ activeChipId: 'video' });
     expect(screen.queryByTestId('home-hero-type-tabs')).toBeNull();
@@ -285,12 +304,11 @@ describe('HomeHero intent rail', () => {
     expect(screen.queryByTestId('home-hero-active-example')).toBeNull();
   });
 
-  it('reserves the example rail while the plugin catalog is still loading', () => {
+  it('keeps useful template examples visible while the plugin catalog loads', () => {
     renderHero({ activeChipId: null, pluginsLoading: true });
 
-    const loading = screen.getByTestId('home-hero-examples-loading');
-    expect(loading.getAttribute('aria-busy')).toBe('true');
-    expect(screen.queryByTestId('home-hero-prompt-examples')).toBeNull();
+    expect(screen.getAllByTestId('home-hero-sidebar-prompt-example').length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('home-hero-examples-loading')).toBeNull();
     expect(screen.queryByTestId('home-hero-plugin-presets')).toBeNull();
   });
 

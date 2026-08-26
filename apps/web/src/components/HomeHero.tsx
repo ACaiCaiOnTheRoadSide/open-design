@@ -417,8 +417,12 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // every scene binds the Prototype action, while Mobile/Wireframe additionally
   // retain the project metadata from their former top-level actions.
   const [localSelectedSubcategory, setLocalSelectedSubcategory] = useState<string | null>(null);
+  const [railSelectedChipId, setRailSelectedChipId] = useState<string | null>(activeChipId);
+  useEffect(() => {
+    if (activeChipId) setRailSelectedChipId(activeChipId);
+  }, [activeChipId]);
   const selectedSubcategory =
-    activeChipId === 'prototype' && activePrototypeSubtypeId !== undefined
+    (railSelectedChipId ?? activeChipId) === 'prototype' && activePrototypeSubtypeId !== undefined
       ? activePrototypeSubtypeId
       : localSelectedSubcategory;
   // Footer Template pill preview: the create-rail card the pointer is over,
@@ -732,6 +736,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     ),
     [hiddenTemplateChipIds],
   );
+  const railActiveChipId = railSelectedChipId ?? activeChipId ?? templateChips[0]?.id ?? null;
   // A surface outside the hero (e.g. the workspace tabs-bar) can hand off a
   // template pick through this window event; apply the chip exactly as if it
   // was clicked here. Deliberately depless (re-subscribes each render) so the
@@ -749,10 +754,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   });
   const activeExamplePlugins = useMemo(
     () =>
-      activeChipId
-        ? homeHeroExamplePluginsForChip(activeChipId, pluginOptions, locale)
+      railActiveChipId
+        ? homeHeroExamplePluginsForChip(railActiveChipId, pluginOptions, locale)
         : [],
-    [activeChipId, locale, pluginOptions],
+    [railActiveChipId, locale, pluginOptions],
   );
   // Derive sub-category pills from the FULL install set so the rail mirrors the
   // Community section exactly — same sub-category set and same order. (Earlier
@@ -760,8 +765,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // that left the rail showing fewer types than Community; the empty case is
   // now handled by the full-catalog fallback in `filteredExamplePlugins`.)
   const activeSubChips = useMemo(
-    () => subChipsForChip(activeChipId, pluginOptions),
-    [activeChipId, pluginOptions],
+    () => subChipsForChip(railActiveChipId, pluginOptions),
+    [railActiveChipId, pluginOptions],
   );
   // When a sub-category pill is active, show the SAME set the Community section
   // shows for that sub-category — every matching plugin from the full install
@@ -773,22 +778,22 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // plugin's primary category to be this chip AND match the sub-category, so a
   // deck/image plugin that merely carries a "brand" tag is not pulled in.
   const filteredExamplePlugins = useMemo(() => {
-    if (!selectedSubcategory || !isSubChipParent(activeChipId)) return activeExamplePlugins;
+    if (!selectedSubcategory || !isSubChipParent(railActiveChipId)) return activeExamplePlugins;
     // Mobile shares the existing Apps facet. Wireframe is a generation
     // constraint rather than a plugin taxonomy, so keep the Prototype starter
     // pool visible while the selected action carries its lo-fi metadata.
     const facetSubcategory =
-      activeChipId === 'prototype' && selectedSubcategory === 'mobile'
+      railActiveChipId === 'prototype' && selectedSubcategory === 'mobile'
         ? 'app-prototypes'
-        : activeChipId === 'prototype' && selectedSubcategory === 'wireframe'
+        : railActiveChipId === 'prototype' && selectedSubcategory === 'wireframe'
           ? null
           : selectedSubcategory;
     if (!facetSubcategory) return activeExamplePlugins;
     const pool = pluginOptions.filter((plugin) => plugin.manifest?.od?.kind !== 'atom');
     return sortByVisualAppeal(
-      applyFacetSelection(pool, { category: activeChipId, subcategory: facetSubcategory }),
+      applyFacetSelection(pool, { category: railActiveChipId, subcategory: facetSubcategory }),
     );
-  }, [activeExamplePlugins, activeChipId, selectedSubcategory, pluginOptions]);
+  }, [activeExamplePlugins, railActiveChipId, selectedSubcategory, pluginOptions]);
 
   // First-run guide, beat 1: pulse the Prototype chip for brand-new users only
   // when Home could not bind a default type. A successfully seeded default has
@@ -821,10 +826,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   }, [firstRunGuide]);
 
   const activePromptExamples = useMemo(
-    () => activeChipId && activeExamplePlugins.length === 0
-      ? homeHeroChipPromptExamples(activeChipId, locale)
+    () => railActiveChipId && activeExamplePlugins.length === 0
+      ? homeHeroChipPromptExamples(railActiveChipId, locale)
       : [],
-    [activeChipId, activeExamplePlugins.length, locale],
+    [railActiveChipId, activeExamplePlugins.length, locale],
   );
 
   // Beat 2: once the picked chip's example cards render, pulse the first
@@ -1260,6 +1265,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // The task-type rail (原型 / 幻灯片 / HyperFrames / 视频 / …). Records which
   // task type the user picked before delegating to the host's chip handler.
   function handlePickTaskChip(chip: HomeHeroChip) {
+    setRailSelectedChipId(chip.id);
+    setLocalSelectedSubcategory(null);
     trackHomeChatComposerClick(analytics.track, {
       page_name: 'home',
       area: 'chat_composer',
@@ -1315,34 +1322,34 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         </div>
         <TypePillRow
           chips={templateChips}
-          activeChipId={activeChipId}
-          disabled={pluginsLoading || pendingChipId !== null || pendingPluginId !== null}
+          activeChipId={railActiveChipId}
+          disabled={pendingChipId !== null || pendingPluginId !== null}
           labelFor={(id) => homeHeroChipLabel(id, t)}
           onPick={handlePickTaskChip}
           vertical
         />
         <div className="home-hero__secondary-category-row">
-          {activeSubChips.length > 0 && isSubChipParent(activeChipId) ? (
+          {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
             <SubTypeRow
               subChips={activeSubChips}
               selectedSlug={selectedSubcategory}
-              pluginsLoading={pluginsLoading}
+              pluginsLoading={false}
               onPickSubChip={(sub) => {
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',
                   area: 'chat_composer',
                   element: 'subcategory_chip',
-                  chip_id: activeChipId ?? undefined,
+                  chip_id: railActiveChipId ?? undefined,
                   subcategory: sub.slug,
                 });
                 const next = selectedSubcategory === sub.slug ? null : sub;
                 setLocalSelectedSubcategory(next?.slug ?? null);
-                if (activeChipId === 'prototype') onPickPrototypeSubtype?.(next);
+                if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(next);
               }}
               scrollable
               onSelectAll={() => {
                 setLocalSelectedSubcategory(null);
-                if (activeChipId === 'prototype') onPickPrototypeSubtype?.(null);
+                if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(null);
               }}
             />
           ) : (
@@ -1352,11 +1359,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
           )}
         </div>
         <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
-          {pluginsLoading ? (
-            <PluginPromptPresetsLoading />
-          ) : filteredExamplePlugins.length > 0 && activeChipId ? (
+          {filteredExamplePlugins.length > 0 && railActiveChipId ? (
             <PluginPromptPresets
-              chipId={activeChipId}
+              chipId={railActiveChipId}
               plugins={filteredExamplePlugins}
               activePluginId={activePluginRecord?.id ?? null}
               pendingPluginId={pendingPluginId}
