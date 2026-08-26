@@ -104,6 +104,8 @@ interface Props {
    *  omits this and keeps the compact "最近项目 / 查看全部" header. */
   heading?: string;
   description?: string;
+  /** Keep the compact Home filmstrip visible when a workspace has no projects. */
+  showEmptyState?: boolean;
   /** Return false when opening failed and the grid stayed mounted, so aborted
    * background cover work can resume after the foreground attempt finishes. */
   onOpen: (id: string) => boolean | void | Promise<boolean | void>;
@@ -336,6 +338,7 @@ export function RecentProjectsStrip({
   designSystems = EMPTY_DESIGN_SYSTEMS,
   heading,
   description,
+  showEmptyState = false,
   onOpen,
   onViewAll,
   onDelete,
@@ -1013,7 +1016,7 @@ export function RecentProjectsStrip({
   // must keep their header + filter toolbar even when the current owner/type
   // filter matches nothing — collapsing them stranded the user with no way to
   // change the filter back.
-  if (visibleProjects.length === 0 && !fullPageGrid) {
+  if (visibleProjects.length === 0 && !fullPageGrid && !showEmptyState) {
     return null;
   }
 
@@ -1670,6 +1673,9 @@ export function RecentProjectsStrip({
         className={`recent-projects__row${fullPageGrid ? ` recent-projects__row--${view}` : ''}${menuOpenId ? ' recent-projects__row--menu-open' : ''}${selectionMode ? ' is-selecting' : ''}`}
         role="list"
       >
+        {showEmptyState && visibleProjects.length === 0 ? (
+          <div className="recent-projects__home-empty">{t('recentProjects.empty')}</div>
+        ) : null}
         {visibleProjects.map(({ project, creator }) => {
           const cover = projectCover(
             project,

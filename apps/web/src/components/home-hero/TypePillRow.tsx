@@ -24,9 +24,11 @@ interface Props {
   disabled?: boolean;
   labelFor: (chipId: string) => string;
   onPick: (chip: HomeHeroChip) => void;
+  /** Render the creation types as visual template frames in the Studio rail. */
+  vertical?: boolean;
 }
 
-export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }: Props) {
+export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick, vertical = false }: Props) {
   const t = useT();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const probeRef = useRef<HTMLDivElement | null>(null);
@@ -109,6 +111,38 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
   }, [moreOpen]);
 
   if (flowing.length === 0) return null;
+
+  if (vertical) {
+    return (
+      <div
+        className="home-hero__category-strip home-hero__category-strip--primary"
+        role="listbox"
+        aria-label={t('homeHero.templatePicker.label')}
+        data-testid="home-hero-type-pills"
+      >
+        {flowing.map((chip) => {
+          const isActive = chip.id === activeChipId;
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              role="option"
+              aria-selected={isActive}
+              className={`home-hero__category-tab${isActive ? ' is-active' : ''}`}
+              disabled={disabled}
+              data-testid={`home-hero-type-pill-${chip.id}`}
+              onClick={() => {
+                if (chip.id !== activeChipId) onPick(chip);
+              }}
+            >
+              <Icon name={chip.icon} size={13} />
+              <span>{labelFor(chip.id)}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
 
   const inlineChips = flowing.slice(0, fitCount);
   const hiddenChips = flowing.slice(fitCount);

@@ -896,7 +896,7 @@ export const zhTW: Dict = {
   "homeHero.title": "今天想和你的 Agent 一起設計什麼？",
   "homeHero.startWithTemplate": "從範本開始…",
   "homeHero.startBlankProject": "建立一個空白專案",
-  "homeHero.templatePicker.label": "創作類型",
+  "homeHero.templatePicker.label": "範本",
   "homeHero.templatePicker.searchPlaceholder": "搜尋範本",
   "homeHero.templatePicker.projectTypes": "專案類型",
   "homeHero.templatesScrollHint": "向上捲動以探索更多範本",

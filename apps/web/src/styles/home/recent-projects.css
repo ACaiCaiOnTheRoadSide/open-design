@@ -1176,3 +1176,104 @@
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   color: var(--text-strong);
 }
+
+/* Home project grid: personal work continues beneath the template filmstrip. */
+.home-view > .recent-projects {
+  gap: 14px;
+}
+.home-view > .recent-projects .recent-projects__head {
+  align-items: center;
+}
+.home-view > .recent-projects .recent-projects__title {
+  font-family: var(--sans);
+  font-size: 17px;
+  font-weight: 650;
+}
+.home-view > .recent-projects .recent-projects__description {
+  color: color-mix(in srgb, var(--text-muted) 88%, #8b6c98);
+}
+.home-view > .recent-projects .recent-projects__view-all {
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-panel) 48%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.home-view > .recent-projects .recent-projects__row {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 13px;
+  padding: 2px 2px 10px;
+  overflow: visible;
+}
+.home-view > .recent-projects .recent-projects__row::-webkit-scrollbar {
+  display: none;
+}
+.home-view > .recent-projects .recent-projects__card {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel) 48%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 10px 24px rgba(77, 55, 92, 0.07);
+  -webkit-backdrop-filter: blur(16px) saturate(116%);
+  backdrop-filter: blur(16px) saturate(116%);
+  transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+}
+.home-view > .recent-projects .recent-projects__card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.7));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 16px 30px rgba(77, 55, 92, 0.12);
+}
+.home-view > .recent-projects .recent-projects__card-main,
+.home-view > .recent-projects .recent-projects__row .recent-projects__card-main {
+  padding: 7px;
+}
+.home-view > .recent-projects .recent-projects__card-thumb {
+  border-radius: 11px;
+  overflow: hidden;
+}
+.home-view > .recent-projects .recent-projects__home-empty {
+  grid-column: 1 / -1;
+  min-height: 62px;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.72));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel) 54%, transparent);
+  color: color-mix(in srgb, var(--text-muted) 84%, var(--text-strong));
+  font-size: 13px;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .home-view > .recent-projects .recent-projects__row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .home-view > .recent-projects .recent-projects__row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .home-view > .recent-projects .recent-projects__view-all,
+  .home-view > .recent-projects .recent-projects__card {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--bg-panel);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-view > .recent-projects .recent-projects__card {
+    transition: none;
+  }
+}

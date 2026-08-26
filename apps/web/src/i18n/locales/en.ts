@@ -889,7 +889,7 @@ export const en: Dict = {
   'homeHero.title': 'What will you design with your agent today?',
   'homeHero.startWithTemplate': 'Start with a template…',
   'homeHero.startBlankProject': 'start a blank project',
-  'homeHero.templatePicker.label': 'Creation type',
+  'homeHero.templatePicker.label': 'Templates',
   'homeHero.templatePicker.searchPlaceholder': 'Search templates',
   'homeHero.templatePicker.projectTypes': 'Project types',
   'homeHero.templatesScrollHint': 'Scroll up to explore more templates',

@@ -102,7 +102,7 @@ import {
   type TemplateRecommendResponse,
   type TemplateRecommendation,
 } from '../state/templateRecommend';
-import { AppWashKineticGrid } from './AppWashKineticGrid';
+import { HomePearlFluidBackground } from './HomePearlFluidBackground';
 import { findChip, HOME_HERO_CHIPS, type HomeHeroChip } from './home-hero/chips';
 import {
   prototypeSubChipForActionChipId,
@@ -3024,7 +3024,7 @@ export function HomeView({
         metricsConsent={deepSeekV4FlashCampaignMetricsConsent}
         installationId={deepSeekV4FlashCampaignInstallationId}
       />
-      {isActive ? <AppWashKineticGrid clipBottomTo=".home-hero" /> : null}
+      {isActive ? <HomePearlFluidBackground /> : null}
       <HomeHero
         workspaceContext={workspaceContext}
         ref={inputRef}
@@ -3168,12 +3168,11 @@ export function HomeView({
         />
       ) : null}
 
-      {recentProjectsEmpty ? null : (
       <RecentProjectsStrip
         isActive={isActive}
         projects={projects}
         designSystems={designSystems}
-        heading={t('recentProjects.title')}
+        showEmptyState
         {...(isSharedProject ? { isSharedProject } : {})}
         {...(onProjectShared ? { onProjectShared } : {})}
         {...(onProjectShareFailed ? { onProjectShareFailed } : {})}
@@ -3208,7 +3207,6 @@ export function HomeView({
         {...(onDuplicateProject ? { onDuplicate: onDuplicateProject } : {})}
         {...(onRenameProject ? { onRename: onRenameProject } : {})}
       />
-      )}
 
       <AnimatePresence>
         {detailsRecord && detailsTemplate ? (

@@ -229,11 +229,11 @@ describe('HomeHero intent rail', () => {
     expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Slide deck');
 
     // Clear nulls the active chip — the pill must fall back to the empty
-    // state. Round-4 skin: no "None" placeholder text at rest; the gray
-    // The creation-type kicker alone reads as empty.
+    // state. Round-4 skin: no "None" placeholder text at rest; the template
+    // kicker alone reads as empty.
     rerender(<HomeHero {...baseProps} activeChipId={null} />);
     const trigger = screen.getByTestId('home-hero-template-trigger');
-    expect(trigger.textContent).toContain('Creation type');
+    expect(trigger.textContent).toContain('Templates');
     expect(trigger.textContent).not.toContain('Slide deck');
   });
 

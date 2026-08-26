@@ -894,7 +894,7 @@ export const zhCN: Dict = {
   "homeHero.title": "今天想和你的 Agent 一起设计什么？",
   "homeHero.startWithTemplate": "从模板开始…",
   "homeHero.startBlankProject": "创建一个空白项目",
-  "homeHero.templatePicker.label": "创作类型",
+  "homeHero.templatePicker.label": "模板",
   "homeHero.templatePicker.searchPlaceholder": "搜索模板",
   "homeHero.templatePicker.projectTypes": "项目类型",
   "homeHero.templatesScrollHint": "向上滑动探索更多模板",

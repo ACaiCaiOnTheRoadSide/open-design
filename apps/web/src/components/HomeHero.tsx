@@ -1300,21 +1300,71 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
 
   return (
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
-      <h1 className="home-hero__title">
-        <span>AIDesign</span>
-        <span>全场景设计台</span>
-      </h1>
+      <aside className="home-hero__template-rail" aria-label={t('homeHero.templatePicker.label')}>
+        <div className="home-hero__template-rail-head">
+          <span>{t('homeHero.templatePicker.label')}</span>
+          <span className="home-hero__template-rail-direction" aria-hidden>↕</span>
+        </div>
+        <TypePillRow
+          chips={templateChips}
+          activeChipId={activeChipId}
+          disabled={pluginsLoading || pendingChipId !== null || pendingPluginId !== null}
+          labelFor={(id) => homeHeroChipLabel(id, t)}
+          onPick={handlePickTaskChip}
+          vertical
+        />
+        <div className="home-hero__secondary-category-row">
+          {activeSubChips.length > 0 && isSubChipParent(activeChipId) ? (
+            <SubTypeRow
+              subChips={activeSubChips}
+              selectedSlug={selectedSubcategory}
+              pluginsLoading={pluginsLoading}
+              onPickSubChip={(sub) => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'subcategory_chip',
+                  chip_id: activeChipId ?? undefined,
+                  subcategory: sub.slug,
+                });
+                const next = selectedSubcategory === sub.slug ? null : sub;
+                setLocalSelectedSubcategory(next?.slug ?? null);
+                if (activeChipId === 'prototype') onPickPrototypeSubtype?.(next);
+              }}
+              scrollable
+              onSelectAll={() => {
+                setLocalSelectedSubcategory(null);
+                if (activeChipId === 'prototype') onPickPrototypeSubtype?.(null);
+              }}
+            />
+          ) : (
+            <div className="home-hero__category-strip home-hero__category-strip--secondary" aria-hidden>
+              <span className="home-hero__category-tab is-active">{t('common.all')}</span>
+            </div>
+          )}
+        </div>
+        <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
+          {pluginsLoading ? (
+            <PluginPromptPresetsLoading />
+          ) : filteredExamplePlugins.length > 0 && activeChipId ? (
+            <PluginPromptPresets
+              chipId={activeChipId}
+              plugins={filteredExamplePlugins}
+              activePluginId={activePluginRecord?.id ?? null}
+              pendingPluginId={pendingPluginId}
+              locale={locale}
+              onPick={pickExamplePluginPreset}
+              pulseFirstPreset={guidePulseFirstPreset}
+              workspaceContext={workspaceContext}
+            />
+          ) : null}
+        </div>
+      </aside>
 
-      {/* Capsule type row: the 10 top-level create-scenario types as pill chips above
-          the composer (per product — replaces the fanned card carousel); the
-          selected pill carries the accent tint, click switches. */}
-      <TypePillRow
-        chips={templateChips}
-        activeChipId={activeChipId}
-        disabled={pluginsLoading || pendingChipId !== null || pendingPluginId !== null}
-        labelFor={(id) => homeHeroChipLabel(id, t)}
-        onPick={handlePickTaskChip}
-      />
+      <div className="home-hero__title-block">
+        <h1 className="home-hero__title">{t('homeHero.title')}</h1>
+        <p className="home-hero__subtitle">{t('homeHero.subtitlePrefix')}</p>
+      </div>
 
       {/* #5517 wraps the input card + workdir row into one visible composer
           card so they read as a single surface. */}
@@ -2129,51 +2179,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
 
       {recommendationSlot}
 
-      {activeSubChips.length > 0 && isSubChipParent(activeChipId) ? (
-        <SubTypeRow
-          subChips={activeSubChips}
-          selectedSlug={selectedSubcategory}
-          pluginsLoading={pluginsLoading}
-          onPickSubChip={(sub) => {
-            trackHomeChatComposerClick(analytics.track, {
-              page_name: 'home',
-              area: 'chat_composer',
-              element: 'subcategory_chip',
-              chip_id: activeChipId ?? undefined,
-              subcategory: sub.slug,
-            });
-            const next = selectedSubcategory === sub.slug ? null : sub;
-            setLocalSelectedSubcategory(next?.slug ?? null);
-            if (activeChipId === 'prototype') onPickPrototypeSubtype?.(next);
-          }}
-          onSelectAll={() => {
-            trackHomeChatComposerClick(analytics.track, {
-              page_name: 'home',
-              area: 'chat_composer',
-              element: 'subcategory_chip',
-              chip_id: activeChipId ?? undefined,
-              subcategory: 'all',
-            });
-            setLocalSelectedSubcategory(null);
-            if (activeChipId === 'prototype') onPickPrototypeSubtype?.(null);
-          }}
-        />
-      ) : null}
-
-      {pluginsLoading ? (
-        <PluginPromptPresetsLoading />
-      ) : filteredExamplePlugins.length > 0 && activeChipId ? (
-        <PluginPromptPresets
-          chipId={activeChipId}
-          plugins={filteredExamplePlugins}
-          activePluginId={activePluginRecord?.id ?? null}
-          pendingPluginId={pendingPluginId}
-          locale={locale}
-          onPick={pickExamplePluginPreset}
-          pulseFirstPreset={guidePulseFirstPreset}
-          workspaceContext={workspaceContext}
-        />
-      ) : activePromptExamples.length > 0 ? (
+      {!pluginsLoading && filteredExamplePlugins.length === 0 && activePromptExamples.length > 0 ? (
         <div
           className="home-hero__prompt-examples"
           data-testid="home-hero-prompt-examples"
@@ -3491,12 +3497,14 @@ function SubTypeRow({
   pluginsLoading,
   onPickSubChip,
   onSelectAll,
+  scrollable = false,
 }: {
   subChips: HomeHeroSubChip[];
   selectedSlug: string | null;
   pluginsLoading: boolean;
   onPickSubChip: (sub: HomeHeroSubChip) => void;
   onSelectAll: () => void;
+  scrollable?: boolean;
 }) {
   const t = useT();
   const allActive = selectedSlug === null;
@@ -3570,8 +3578,8 @@ function SubTypeRow({
     };
   }, [moreOpen]);
 
-  const visibleChips = subChips.slice(0, visibleCount);
-  const overflowChips = subChips.slice(visibleCount);
+  const visibleChips = scrollable ? subChips : subChips.slice(0, visibleCount);
+  const overflowChips = scrollable ? [] : subChips.slice(visibleCount);
   const overflowActive = overflowChips.some((sub) => sub.slug === selectedSlug);
   const allChip = (
     <button
@@ -3591,7 +3599,7 @@ function SubTypeRow({
   return (
     <div
       ref={rowRef}
-      className="home-hero__subtype-row"
+      className={`home-hero__subtype-row${scrollable ? ' home-hero__subtype-row--scrollable' : ''}`}
       data-testid="home-hero-subtype-row"
       role="tablist"
       aria-label={t('homeHero.subTypeAria')}

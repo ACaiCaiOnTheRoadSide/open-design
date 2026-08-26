@@ -1286,6 +1286,20 @@
 .entry-main__inner--wide {
   max-width: 1600px;
 }
+/* The Studio home is an immersive workspace rather than a document list.
+   Let its pearl stage use the available viewport while keeping the existing
+   1600px cap for Projects, Design systems, and every other wide view. */
+.entry-main__inner:has(> .entry-main__view-home) {
+  max-width: none;
+  padding-left: 24px;
+  padding-right: 24px;
+}
+@media (max-width: 900px) {
+  .entry-main__inner:has(> .entry-main__view-home) {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
 /* Uniform left/right gutters across the home view AND the wide sub-views
    (全部项目 / 草稿 / design-systems / …): the recent-projects grid and the
    project lists all breathe away from the window edges by the same 35px, so
