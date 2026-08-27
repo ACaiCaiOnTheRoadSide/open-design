@@ -5,16 +5,11 @@ const read = (relative: string) =>
   readFileSync(new URL(relative, import.meta.url), 'utf8');
 
 const homeHeroSource = read('../../src/components/HomeHero.tsx');
+const aidesignWordmarkSource = read('../../src/components/AIDesignWordmark.tsx');
 const entryNavRailSource = read('../../src/components/EntryNavRail.tsx');
 const logoSvg = read('../../public/logo.svg');
 const brandIconSvg = read('../../public/brand-icon.svg');
-// #5517: the home hero header shows the full OpenDesign logotype instead of
-// the small glyph + name pair; the asset must ship with the app.
-const heroLogotypeSvg = read('../../public/logo-03.svg');
-// Round 7: the static logotype is now driven by the WebGL pixel-scan wordmark
-// (see home-hero/pixel-scan/engine.ts), which samples this SVG's alpha
-// channel as the glyph mask it assembles out of coloured blocks.
-const heroPixelScanSvg = read('../../public/logo-scan.svg');
+const heroLogotypeSvg = read('../../public/aidesign-wordmark.svg');
 
 // The current OpenDesign brand glyph is the ink superellipse tile introduced
 // with the landing-page rebrand (landing PR #3444): its outline starts with
@@ -38,15 +33,20 @@ describe('Home logo assets', () => {
     expect(brandIconSvg).toContain('currentColor');
   });
 
-  it('renders the brand mark on the Home hero', () => {
-    // #5517: the hero renders the shipped logotype image (not the glyph pair).
-    expect(heroLogotypeSvg).toContain('<svg');
-    // Round 7: the hero mounts the animated PixelScanLogo component instead of
-    // a plain <img>; the logotype now ships as the pixel-scan engine's sample
-    // source (logo-scan.svg) rather than an inline `src="/logo-03.svg"`.
-    expect(heroPixelScanSvg).toContain('<svg');
-    expect(homeHeroSource).toContain('<PixelScanLogo');
-    expect(homeHeroSource).not.toContain('src="/logo-03.svg"');
+  it('renders the AIDesign wordmark on the Home hero', () => {
+    expect(heroLogotypeSvg).toContain('<title id="title">AIDesign</title>');
+    expect(heroLogotypeSvg).toContain('#F1BC45');
+    expect(heroLogotypeSvg).toContain('#F3C6D8');
+    expect(heroLogotypeSvg).toContain('viewBox="0 36 640 266"');
+    expect(homeHeroSource).toContain("import { AIDesignWordmark } from './AIDesignWordmark'");
+    expect(homeHeroSource).toContain('<AIDesignWordmark />');
+    expect(homeHeroSource).not.toContain('aidesignWordmark.src');
+    expect(aidesignWordmarkSource).toContain('viewBox="0 36 640 266"');
+    expect(aidesignWordmarkSource).toContain('fill="#F1BC45"');
+    expect(aidesignWordmarkSource).toContain('fill="#F3C6D8"');
+    expect(homeHeroSource).toContain('home-hero__logo-particle');
+    expect(homeHeroSource).toContain('home-hero__logo-bird');
+    expect(homeHeroSource).not.toContain("t('homeHero.subtitlePrefix')");
     expect(homeHeroSource).not.toContain('src="/app-icon.svg"');
 
     // #6156 cut the rail's signed-out brand header entirely — with no cloud
