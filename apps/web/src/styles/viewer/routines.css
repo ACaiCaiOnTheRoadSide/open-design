@@ -2889,14 +2889,14 @@
 
 .app .df-panel,
 .app .df-main {
-  background: #fff;
+  background: color-mix(in srgb, var(--bg-panel) 86%, var(--bg-subtle));
 }
 .app .df-main {
   border-right-color: var(--border);
 }
 .app .df-body {
   padding: 4px 20px 20px;
-  background: #fff;
+  background: color-mix(in srgb, var(--bg-panel) 86%, var(--bg-subtle));
 }
 .app .df-controls-row {
   margin: 0 0 14px;

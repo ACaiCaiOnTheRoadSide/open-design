@@ -688,6 +688,9 @@
   cursor: pointer;
 }
 .df-empty {
+  --df-empty-action: #443564;
+  --df-empty-action-hover: #5f4b8b;
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -697,27 +700,45 @@
   color: var(--text-muted);
   font-size: 13px;
   min-height: 320px;
-  /* Plain pure-white surface — grid pattern removed. */
-  background-color: #fff;
+  background-color: color-mix(in srgb, var(--bg-panel) 86%, var(--bg-subtle));
+  background-image:
+    radial-gradient(
+      circle at 50% 46%,
+      color-mix(in srgb, var(--bg) 86%, transparent) 0,
+      color-mix(in srgb, var(--bg) 48%, transparent) 30%,
+      transparent 58%
+    ),
+    radial-gradient(
+      circle,
+      color-mix(in srgb, var(--text-faint) 24%, transparent) 0.7px,
+      transparent 0.8px
+    );
+  background-size: 100% 100%, 22px 22px;
 }
 .df-empty-pill {
-  /* Chrome-less: the illustration / title / actions sit directly on the
-     empty-state surface — no card border, fill, or shadow around them. */
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 0;
-  max-width: min(560px, 92%);
+  gap: 16px;
+  width: min(560px, 92%);
+  padding: 34px 32px 30px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--bg) 91%, transparent);
+  box-shadow:
+    0 24px 60px -38px color-mix(in srgb, var(--text-strong) 42%, transparent),
+    0 2px 10px -7px color-mix(in srgb, var(--text-strong) 24%, transparent);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   text-align: center;
 }
 /* Fanned deck of blank ghost cards above the title — suggests "your generated
    designs will fan out here". Three cards spread from a shared bottom pivot. */
 .df-empty-stack {
   position: relative;
-  width: 148px;
-  height: 96px;
-  margin-bottom: 2px;
+  width: 154px;
+  height: 100px;
+  margin: 0 0 2px;
 }
 .df-empty-stack-card {
   position: absolute;
@@ -730,12 +751,9 @@
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  /* Borderless white cards — the shadow alone lifts the fan off the page.
-     Each card carries its CTA's icon (pencil / globe / blocks) instead of
-     skeleton shapes; the icon takes the CTA's accent on the paired hover. */
-  border: 0;
-  background: var(--bg-app, #fff);
-  box-shadow: 0 6px 16px -9px rgba(15, 15, 15, 0.28);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  background: var(--bg);
+  box-shadow: 0 12px 26px -16px color-mix(in srgb, var(--text-strong) 44%, transparent);
   color: var(--text-faint);
   transform-origin: bottom center;
   transition:
@@ -777,9 +795,7 @@
   box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
 }
 /* Hovering a CTA below pops its counterpart card in the fan — left / front /
-   right ↔ New sketch (red) / New Browser (green) / Create design system
-   (blue) — and its icon takes the CTA's accent. No border or wash: the pop +
-   icon color alone carry the pairing. */
+   right ↔ New sketch / New Browser / Create design system. */
 .df-empty-pill:has(.df-empty-cta-primary:hover:not(:disabled)) .df-empty-stack-card--left {
   transform: translateX(-30px) rotate(-13deg) scale(1.12);
   z-index: 3;
@@ -795,14 +811,10 @@
   z-index: 3;
   box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
 }
-.df-empty-pill:has(.df-empty-cta-primary:hover:not(:disabled)) .df-empty-stack-card--left .od-icon {
-  color: var(--red);
-}
-.df-empty-pill:has(.df-empty-cta-secondary:hover:not(:disabled)) .df-empty-stack-card--front .od-icon {
-  color: var(--green);
-}
+.df-empty-pill:has(.df-empty-cta-primary:hover:not(:disabled)) .df-empty-stack-card--left .od-icon,
+.df-empty-pill:has(.df-empty-cta-secondary:hover:not(:disabled)) .df-empty-stack-card--front .od-icon,
 .df-empty-pill:has(.df-empty-cta-tertiary:hover:not(:disabled)) .df-empty-stack-card--right .od-icon {
-  color: var(--blue);
+  color: var(--df-empty-action);
 }
 @media (prefers-reduced-motion: reduce) {
   .df-empty-stack-card {
@@ -810,9 +822,9 @@
   }
 }
 .df-empty-title {
-  font-size: 16px;
+  font-size: 17px;
   color: var(--text-strong);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.005em;
   line-height: 1.3;
 }
@@ -835,19 +847,18 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
 }
 .df-empty-cta {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 36px;
   padding: 7px 14px;
-  /* Hairline a step lighter than the default --border so the pills read
-     softly against the white panel. */
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-pill);
-  background: var(--bg);
-  color: var(--text);
+  border: 1px solid var(--df-empty-action);
+  border-radius: 10px;
+  background: var(--df-empty-action);
+  color: #fff;
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -859,67 +870,38 @@
   cursor: not-allowed;
   opacity: 0.42;
 }
-.df-empty-cta-primary {
-  background: var(--bg);
-  border-color: var(--border-soft);
-  color: var(--text);
-}
-.df-empty-cta-secondary {
-  background: var(--bg);
-  border-color: var(--border-soft);
-  color: var(--text);
-}
+.df-empty-cta-primary,
+.df-empty-cta-secondary,
 .df-empty-cta-tertiary {
-  background: var(--bg);
-  border-color: var(--border-soft);
-  color: var(--text);
+  background: var(--df-empty-action);
+  border-color: var(--df-empty-action);
+  color: #fff;
 }
-/* Icon accents — the spec's semantic red / green / blue tokens (tokens.css),
-   one per action, in button order. Selector targets the Remix Icon <i>
-   (.od-icon) the Icon component actually renders — not svg. Text stays
-   neutral per the spec's neutral-button rule; tokens flip with the theme. */
-.df-empty-cta-primary .od-icon {
-  color: var(--red);
+.df-empty-cta .od-icon {
+  color: currentColor;
 }
-.df-empty-cta-secondary .od-icon {
-  color: var(--green);
-}
-.df-empty-cta-tertiary .od-icon {
-  color: var(--blue);
-}
-/* Moved-in doc / upload pills (from the top toolbar). No purple design token
-   exists (--purple resolves to ink gray), so the violet is a literal — the
-   same #8b5cf6 the community accents already use. */
-.df-empty-cta-doc .od-icon {
-  color: var(--green);
-}
-.df-empty-cta-upload .od-icon {
-  color: #8b5cf6;
-}
-/* Hover: only the pill's stroke takes the icon's color — the surface stays
-   white and the label stays neutral. */
 .df-empty-cta:hover:not(:disabled) {
-  background: var(--bg);
-  color: var(--text);
-}
-.df-empty-cta-primary:hover:not(:disabled) {
-  border-color: var(--red);
-}
-.df-empty-cta-secondary:hover:not(:disabled) {
-  border-color: var(--green);
-}
-.df-empty-cta-tertiary:hover:not(:disabled) {
-  border-color: var(--blue);
-}
-.df-empty-cta-doc:hover:not(:disabled) {
-  border-color: var(--green);
-}
-.df-empty-cta-upload:hover:not(:disabled) {
-  border-color: #8b5cf6;
+  background: var(--df-empty-action-hover);
+  border-color: var(--df-empty-action-hover);
+  color: #fff;
 }
 .df-empty-cta:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--df-empty-action);
   outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .df-empty {
+    padding: 24px 16px;
+  }
+  .df-empty-pill {
+    width: 100%;
+    max-width: 100%;
+    padding: 28px 18px 24px;
+  }
+  .df-empty-actions {
+    width: 100%;
+  }
 }
 
 /* Drag-to-upload: the whole panel is a drop target. While dragging files
