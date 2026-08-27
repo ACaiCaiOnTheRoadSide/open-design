@@ -58,6 +58,7 @@ import { homeHeroChipLabel } from './home-hero/chip-labels';
 import { ScenarioArt } from './home-hero/ScenarioArt';
 import { useEdgeAutoScroll, EdgeScrollZones } from './home-hero/EdgeAutoScroll';
 import {
+  filterPluginsBySubChip,
   isSubChipParent,
   prototypeSubChipForSlug,
   subChipsForChip,
@@ -86,8 +87,6 @@ import { pluginCategoryLabel } from './plugins-home/categoryLabel';
 import { readHomeGuideStage, writeHomeGuideStage } from './home-hero/firstRunGuide';
 import { curatedPluginPriorityForChip } from './plugins-home/curatedPriority';
 import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
-import { sortByVisualAppeal } from './plugins-home/visualScore';
-import { applyFacetSelection } from './plugins-home/facets';
 import { notifyCompletionFeedbackGesture } from '../utils/notifications';
 import { inferPluginPreview } from './plugins-home/preview';
 import { pluginSubfacetLabel } from './plugins-home/subfacetLabel';
@@ -405,6 +404,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   const [figmaHelpOpen, setFigmaHelpOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const homeHeroRef = useRef<HTMLElement | null>(null);
+  const templateCurveRef = useRef<HTMLDivElement | null>(null);
   // Two-flash attention pulse on the send button; armed via the
   // imperative `pulseSend()` handle, cleared when the animation ends.
   const [sendAttention, setSendAttention] = useState(false);
@@ -768,32 +768,19 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     () => subChipsForChip(railActiveChipId, pluginOptions),
     [railActiveChipId, pluginOptions],
   );
-  // When a sub-category pill is active, show the SAME set the Community section
-  // shows for that sub-category — every matching plugin from the full install
-  // set, in the same visual-appeal order — rather than the small curated
-  // example showcase. This keeps the example-prompt count consistent with the
-  // Community count badge (e.g. Brand / design shows all 16, not just 1).
-  // Atoms are excluded to match Community's `visiblePlugins` derivation, and
-  // `applyFacetSelection` is the exact filter Community uses — it requires the
-  // plugin's primary category to be this chip AND match the sub-category, so a
-  // deck/image plugin that merely carries a "brand" tag is not pulled in.
+  // Keep the gallery tied to the same first-level collection the user is
+  // looking at, then narrow that collection by the selected second-level facet.
+  // Filtering the full install catalog here made the sidebar appear unchanged
+  // for overlapping facets and bypassed the curated first-level result order.
   const filteredExamplePlugins = useMemo(() => {
     if (!selectedSubcategory || !isSubChipParent(railActiveChipId)) return activeExamplePlugins;
-    // Mobile shares the existing Apps facet. Wireframe is a generation
-    // constraint rather than a plugin taxonomy, so keep the Prototype starter
-    // pool visible while the selected action carries its lo-fi metadata.
+    // Mobile is a Home-only alias for the existing Apps taxonomy bucket.
     const facetSubcategory =
       railActiveChipId === 'prototype' && selectedSubcategory === 'mobile'
         ? 'app-prototypes'
-        : railActiveChipId === 'prototype' && selectedSubcategory === 'wireframe'
-          ? null
-          : selectedSubcategory;
-    if (!facetSubcategory) return activeExamplePlugins;
-    const pool = pluginOptions.filter((plugin) => plugin.manifest?.od?.kind !== 'atom');
-    return sortByVisualAppeal(
-      applyFacetSelection(pool, { category: railActiveChipId, subcategory: facetSubcategory }),
-    );
-  }, [activeExamplePlugins, railActiveChipId, selectedSubcategory, pluginOptions]);
+        : selectedSubcategory;
+    return filterPluginsBySubChip(activeExamplePlugins, railActiveChipId, facetSubcategory);
+  }, [activeExamplePlugins, railActiveChipId, selectedSubcategory]);
 
   // First-run guide, beat 1: pulse the Prototype chip for brand-new users only
   // when Home could not bind a default type. A successfully seeded default has
@@ -1320,6 +1307,43 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     : activePromptExamples;
   const templatePreviewOffset = Math.max(0, templateChips.findIndex((chip) => chip.id === railActiveChipId))
     + Math.max(0, selectedSubcategoryIndex);
+  const updateTemplateGalleryFocus = useCallback(() => {
+    const gallery = templateCurveRef.current;
+    if (!gallery) return;
+    const cards = Array.from(
+      gallery.querySelectorAll<HTMLElement>('.home-hero__fallback-preset, .home-hero__plugin-preset-cell'),
+    );
+    if (cards.length === 0) return;
+    const galleryRect = gallery.getBoundingClientRect();
+    const cardRects = cards.map((card) => card.getBoundingClientRect());
+    const isHorizontal = cardRects.length > 1 && Math.abs(cardRects[1]!.top - cardRects[0]!.top) < 20;
+    const focusPoint = isHorizontal
+      ? galleryRect.left + galleryRect.width * 0.35
+      : galleryRect.top + galleryRect.height * 0.35;
+    const centers = cardRects.map((rect) => isHorizontal
+      ? rect.left + rect.width / 2
+      : rect.top + rect.height / 2);
+    let focusedIndex = 0;
+    let focusedDistance = Number.POSITIVE_INFINITY;
+    centers.forEach((center, index) => {
+      const distance = Math.abs(center - focusPoint);
+      if (distance < focusedDistance) {
+        focusedIndex = index;
+        focusedDistance = distance;
+      }
+    });
+    cards.forEach((card, index) => {
+      const isFocused = index === focusedIndex;
+      card.classList.toggle('is-gallery-focus', isFocused);
+      card.classList.toggle('is-before-gallery-focus', !isFocused && centers[index]! < focusPoint);
+      card.classList.toggle('is-after-gallery-focus', !isFocused && centers[index]! > focusPoint);
+    });
+  }, []);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(updateTemplateGalleryFocus);
+    return () => window.cancelAnimationFrame(frame);
+  }, [templateGalleryKey, updateTemplateGalleryFocus]);
 
   return (
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
@@ -1370,7 +1394,12 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
       </nav>
       <aside className="home-hero__template-rail" aria-label={t('homeHero.promptExamples')}>
         <div className="home-hero__template-rail-body">
-          <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
+          <div
+            ref={templateCurveRef}
+            className="home-hero__template-curve"
+            aria-label={t('homeHero.promptExamples')}
+            onScrollCapture={() => window.requestAnimationFrame(updateTemplateGalleryFocus)}
+          >
           {filteredExamplePlugins.length > 0 && railActiveChipId ? (
             <PluginPromptPresets
               key={templateGalleryKey}
