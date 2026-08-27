@@ -30,6 +30,7 @@ import {
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import { useGlideIndicator } from '../hooks/useGlideIndicator';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 
 type WorkspaceChromeTab =
   | {
@@ -1764,22 +1765,20 @@ export function WorkspaceTabsBar({
               onDragEnd={handleTabDragEnd}
             >
               {isPinned && active && tab.view === 'home' ? (
-                /* Home view: the pinned tab is the brand-logo button. The
-                   COLLAPSE control moved into the rail (after its search box),
-                   so the logo only re-opens a collapsed rail — with the rail
-                   open it is inert (you are already home, nothing to expand). */
+                /* In hosted SaaS this is navigation-only: the entry rail stays
+                   unavailable and the control consistently represents Home. */
                 <button
                   type="button"
-                  className={`workspace-tab__rail-toggle od-tooltip${entryRailOpen ? ' is-inert' : ''}`}
-                  aria-label={entryRailOpen ? t('entry.navHome') : t('entry.navExpand')}
-                  aria-expanded={entryRailOpen}
-                  title={entryRailOpen ? undefined : t('entry.navExpand')}
-                  data-tooltip={entryRailOpen ? undefined : t('entry.navExpand')}
+                  className={`workspace-tab__rail-toggle od-tooltip${entryRailOpen || WHITE_LABEL_SAAS ? ' is-inert' : ''}`}
+                  aria-label={WHITE_LABEL_SAAS || entryRailOpen ? t('entry.navHome') : t('entry.navExpand')}
+                  aria-expanded={WHITE_LABEL_SAAS ? undefined : entryRailOpen}
+                  title={WHITE_LABEL_SAAS ? t('entry.navHome') : entryRailOpen ? undefined : t('entry.navExpand')}
+                  data-tooltip={WHITE_LABEL_SAAS ? t('entry.navHome') : entryRailOpen ? undefined : t('entry.navExpand')}
                   data-tooltip-placement="bottom"
                   data-testid="workspace-home-rail-toggle"
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (!entryRailOpen) {
+                    if (!WHITE_LABEL_SAAS && !entryRailOpen) {
                       window.dispatchEvent(new CustomEvent(ENTRY_RAIL_TOGGLE_EVENT));
                     }
                   }}

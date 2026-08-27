@@ -5433,17 +5433,17 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
     border: 1px solid rgba(255, 255, 255, 0.42);
     border-radius: 999px;
     color: #fff;
-    background: rgba(31, 27, 37, 0.86);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 6px 14px rgba(43, 33, 50, 0.2);
+    background: #6d5dfc;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 6px 14px rgba(109, 93, 252, 0.28);
     font-size: 11px;
     transition: transform 150ms var(--ease-out), background 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
   }
 
   .home-hero__template-sidebar .home-hero__plugin-preset-use:hover:not(:disabled),
   .home-hero__template-sidebar .home-hero__plugin-preset-use:focus-visible {
-    border-color: rgba(255, 255, 255, 0.58);
-    background: var(--accent);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 8px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+    border-color: rgba(255, 255, 255, 0.64);
+    background: #5948e8;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px rgba(109, 93, 252, 0.34);
     transform: translateY(-1px);
   }
 

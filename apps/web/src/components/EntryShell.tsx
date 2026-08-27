@@ -113,6 +113,7 @@ import { LibrarySection } from './LibrarySection';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
 import { DeepSeekHarnessSetupDialog } from './DeepSeekHarnessSetupDialog';
+import { WHITE_LABEL_SAAS } from '../features/whiteLabel';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
 import { installDeepSeekHarnessCompanion } from '../providers/agent-companion';
 import { AmrLowBalanceDialog, type AmrLowBalanceDecision } from './AmrLowBalanceDialog';
@@ -1082,7 +1083,10 @@ export function EntryShell({
   // Its open/collapsed state is persisted (localStorage) so it survives a
   // home -> project -> home round trip (EntryShell unmounts on the project
   // route) and a reload, instead of snapping back to collapsed.
-  const [railOpen, setRailOpen] = useState<boolean>(readStoredRailOpen);
+  const [storedRailOpen, setRailOpen] = useState<boolean>(readStoredRailOpen);
+  // Hosted SaaS keeps the navigation rail unavailable; the pinned Home control
+  // is navigation-only in this edition.
+  const railOpen = !WHITE_LABEL_SAAS && storedRailOpen;
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
 
   // ⌘K / Ctrl+K opens the project search palette — same as clicking the rail
@@ -1111,6 +1115,7 @@ export function EntryShell({
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey;
       if (
+        !WHITE_LABEL_SAAS &&
         primary &&
         !event.altKey &&
         !event.shiftKey &&
@@ -1135,6 +1140,7 @@ export function EntryShell({
   // The pinned Home tab (WorkspaceTabsBar) carries a sidebar toggle; it lives
   // in a sibling tree, so the request arrives as a window event.
   useEffect(() => {
+    if (WHITE_LABEL_SAAS) return undefined;
     const onToggle = () => setRailOpen((v) => !v);
     window.addEventListener(ENTRY_RAIL_TOGGLE_EVENT, onToggle);
     return () => window.removeEventListener(ENTRY_RAIL_TOGGLE_EVENT, onToggle);

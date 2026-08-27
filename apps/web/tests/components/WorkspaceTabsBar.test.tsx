@@ -13,6 +13,7 @@ import {
 import { navigate, type Route } from '../../src/router';
 import type { Project } from '../../src/types';
 import { setWorkspaceTabsDock } from '../../src/components/workspaceTabsDock';
+import { ENTRY_RAIL_TOGGLE_EVENT } from '../../src/components/entryRailBridge';
 
 afterEach(() => {
   setWorkspaceTabsDock(null);
@@ -159,6 +160,20 @@ describe('WorkspaceTabsBar navigation semantics', () => {
   afterEach(() => {
     cleanup();
     document.querySelector('[data-testid="blank-workspace-area"]')?.remove();
+  });
+
+  it('uses the hosted Home control only for navigation', () => {
+    const railToggleListener = vi.fn();
+    window.addEventListener(ENTRY_RAIL_TOGGLE_EVENT, railToggleListener);
+
+    render(<WorkspaceTabsBar route={homeRoute} projects={[project]} />);
+    fireEvent.click(screen.getByTestId('workspace-home-rail-toggle'));
+
+    expect(railToggleListener).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(screen.getByTestId('workspace-home-rail-toggle')).toHaveAttribute('aria-label', 'Home');
+
+    window.removeEventListener(ENTRY_RAIL_TOGGLE_EVENT, railToggleListener);
   });
 
   it('keeps Home tab as a singleton and avoids duplication', async () => {
