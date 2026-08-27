@@ -2470,10 +2470,11 @@ a.avatar-item:visited {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  /* Content-layer panel: Regular standard material (材质规范). */
-  background: var(--material-regular);
-  -webkit-backdrop-filter: var(--material-regular-backdrop);
-  backdrop-filter: var(--material-regular-backdrop);
+  /* Airy glass, matching the home surface: the app wash stays visible through
+     the large reading area while the blur keeps dense transcript text calm. */
+  background: var(--material-ultrathin);
+  -webkit-backdrop-filter: var(--material-ultrathin-backdrop);
+  backdrop-filter: var(--material-ultrathin-backdrop);
   overflow: hidden;
 }
 .split-resize-handle {
