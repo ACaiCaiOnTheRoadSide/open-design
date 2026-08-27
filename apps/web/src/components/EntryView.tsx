@@ -86,6 +86,8 @@ interface Props {
   // sticky top-bar can expose the active CLI/BYOK + model and persist
   // changes through the same channels as the project view.
   config: AppConfig;
+  /** Disable OpenDesign Cloud identity gates when the host platform owns authentication. */
+  openDesignAuthEnabled?: boolean;
   providerModelsCache?: Record<string, ProviderModelOption[]>;
   onProviderModelsCacheChange?: Dispatch<SetStateAction<Record<string, ProviderModelOption[]>>>;
   integrationInitialTab?: IntegrationTab;
@@ -262,6 +264,7 @@ export function EntryView({
   amrSessionState,
   amrAccountPlan,
   config,
+  openDesignAuthEnabled = true,
   providerModelsCache,
   onProviderModelsCacheChange,
   integrationInitialTab,
@@ -388,6 +391,7 @@ export function EntryView({
       designSystemsLoading={designSystemsLoading}
       projectsLoading={projectsLoading}
       config={config}
+      openDesignAuthEnabled={openDesignAuthEnabled}
       providerModelsCache={providerModelsCache}
       onProviderModelsCacheChange={onProviderModelsCacheChange}
       agents={agents}

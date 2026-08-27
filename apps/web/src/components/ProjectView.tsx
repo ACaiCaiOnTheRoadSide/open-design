@@ -616,6 +616,8 @@ interface Props {
    */
   routeConversationId?: string | null;
   config: AppConfig;
+  /** Disable OpenDesign Cloud identity and wallet gates when the host owns authentication. */
+  openDesignAuthEnabled?: boolean;
   agents: AgentInfo[];
   // Mentionable functional skills — already filtered by config.disabledSkills
   // upstream, so this drives only the chat composer's @-picker scope. For
@@ -1767,6 +1769,7 @@ export function ProjectView({
   routeFileName,
   routeConversationId = null,
   config,
+  openDesignAuthEnabled = true,
   agents,
   skills,
   designTemplates,
@@ -1908,7 +1911,8 @@ export function ProjectView({
   // preflight context; they must never fall through to the Personal wallet.
   const projectRunPreflightContext =
     projectRunBillingContext ?? projectRunWorkspaceContext;
-  const cloudModelSelected = config.mode === 'daemon' && config.agentId === 'amr';
+  const cloudModelSelected =
+    openDesignAuthEnabled && config.mode === 'daemon' && config.agentId === 'amr';
   const projectRunRequiresWorkspaceScope = cloudModelSelected;
   // An OpenDesign Cloud run needs a wallet, and the ONLY client-side veto is
   // "there is no billing principal at all". Either witness suffices: the
@@ -6679,7 +6683,7 @@ export function ProjectView({
       // spawned, surfacing the subscription dialog instead of a mid-run
       // AMR_INSUFFICIENT_BALANCE failure. Sends the home submit already gated
       // (amrGatePrechecked) pass straight through — the user answered there.
-      if (config.mode === 'daemon' && config.agentId === 'amr' && !meta?.amrGatePrechecked) {
+      if (cloudModelSelected && !meta?.amrGatePrechecked) {
         const gateConversationId = activeConversationId;
         // The gate's await opens a window where the conversation is not yet
         // marked busy. A second send arriving during that window behaves like

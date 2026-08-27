@@ -428,6 +428,8 @@ interface Props {
   // top-bar `InlineModelSwitcher` can render the active mode/agent/model
   // and persist changes through the same callbacks the project view uses.
   config: AppConfig;
+  /** SaaS hosts authenticate at their platform gateway, not with OpenDesign Cloud. */
+  openDesignAuthEnabled?: boolean;
   providerModelsCache?: ProviderModelsCache;
   onProviderModelsCacheChange?: Dispatch<SetStateAction<ProviderModelsCache>>;
   agents: AgentInfo[];
@@ -568,6 +570,7 @@ export function EntryShell({
   designSystemsLoading = false,
   projectsLoading = false,
   config,
+  openDesignAuthEnabled = true,
   providerModelsCache: sharedProviderModelsCache,
   onProviderModelsCacheChange,
   agents,
@@ -616,7 +619,8 @@ export function EntryShell({
   // to /design-systems lands on that section. We derive the active
   // view from the route rather than keeping it in component state.
   const route = useRoute();
-  const view: EntryViewKind = route.kind === 'home' ? route.view : 'home';
+  const routedView: EntryViewKind = route.kind === 'home' ? route.view : 'home';
+  const view: EntryViewKind = !openDesignAuthEnabled && routedView === 'onboarding' ? 'home' : routedView;
   // The one shared workspace context. Any non-null context is a real workspace
   // (personal or team); workspace surfaces gate on B's permission bits, not on
   // workspaceType.
@@ -625,22 +629,32 @@ export function EntryShell({
   // unresolved or unavailable authority into an anonymous, unbound create.
   const workspaceContextState = useWorkspaceContext();
   const { context: workspaceContext, loading: workspaceLoading } = workspaceContextState;
-  const accountFooterState = resolveEntryRailAccountFooterState(
-    workspaceContextState,
-    amrLoggedIn,
-    amrSessionState,
-  );
+  const accountFooterState = !openDesignAuthEnabled
+    ? 'hidden'
+    : resolveEntryRailAccountFooterState(
+        workspaceContextState,
+        amrLoggedIn,
+        amrSessionState,
+      );
   const railWorkspaceContext = accountFooterState === 'sign-in'
     ? null
     : workspaceContext;
-  const usesOpenDesignCloud = config.mode === 'daemon' && config.agentId === 'amr';
+  const usesOpenDesignCloud =
+    openDesignAuthEnabled && config.mode === 'daemon' && config.agentId === 'amr';
   const amrAuthRequired =
-    workspaceContextState.failure === 'reauth-required'
-    || (
-      usesOpenDesignCloud
-      && requiresAmrReauthentication(amrSessionState, workspaceContextState.failure)
+    openDesignAuthEnabled
+    && (
+      workspaceContextState.failure === 'reauth-required'
+      || (
+        usesOpenDesignCloud
+        && requiresAmrReauthentication(amrSessionState, workspaceContextState.failure)
+      )
     );
   useEffect(() => {
+    if (!openDesignAuthEnabled && routedView === 'onboarding') {
+      navigate({ kind: 'home', view: 'home' }, { replace: true });
+      return;
+    }
     // The entry shell is an authenticated surface. Both an explicit signed-out
     // status and a definitive credential rejection return to the existing
     // Cloud identity gate. Passive reauthentication preserves the saved model
@@ -648,7 +662,7 @@ export function EntryShell({
     const selectedCloudIdentityRejected = usesOpenDesignCloud && amrLoggedIn === false;
     if ((!selectedCloudIdentityRejected && !amrAuthRequired) || view === 'onboarding') return;
     navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
-  }, [amrAuthRequired, amrLoggedIn, usesOpenDesignCloud, view]);
+  }, [amrAuthRequired, amrLoggedIn, openDesignAuthEnabled, routedView, usesOpenDesignCloud, view]);
   let accountFooterNotice: ReactNode = null;
   if (accountFooterState === 'syncing') {
     accountFooterNotice = <RailAccountSyncTip />;
@@ -1391,7 +1405,7 @@ export function EntryShell({
     // in ProjectView.handleSend.
     let amrGatePrecheckWitness: AmrBalanceGateScope | undefined;
     let amrGatePrecheckPassed = false;
-    if (config.mode === 'daemon' && config.agentId === 'amr') {
+    if (usesOpenDesignCloud) {
       // PRODUCT INVARIANT: Send never starts Workspace identity discovery.
       // Billing consumes the shell's current in-memory snapshot; if it has not
       // arrived yet, the existing account-scoped gate is used. The daemon's
@@ -1539,7 +1553,8 @@ export function EntryShell({
       return await create();
     } catch (error) {
       if (
-        error instanceof ProjectCreateError
+        openDesignAuthEnabled
+        && error instanceof ProjectCreateError
         && error.code === 'AMR_AUTH_REQUIRED'
       ) {
         navigate({ kind: 'home', view: 'onboarding' }, { replace: true });

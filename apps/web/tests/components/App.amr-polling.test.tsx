@@ -351,7 +351,7 @@ describe('App AMR polling', () => {
     expect(mockedFetchAmrModels).toHaveBeenCalledTimes(2);
   });
 
-  it('returns every authenticated surface to onboarding when Cloud auth definitively expires', async () => {
+  it('keeps the SaaS surface active when OpenDesign Cloud auth expires', async () => {
     mockedLoadConfig.mockReturnValue({
       ...baseConfig,
       mode: 'daemon',
@@ -376,11 +376,12 @@ describe('App AMR polling', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(mockedNavigate).toHaveBeenCalledWith(
-        { kind: 'home', view: 'onboarding' },
-        { replace: true },
-      );
+      expect(mockedFetchVelaLoginStatus).toHaveBeenCalled();
     });
+    expect(mockedNavigate).not.toHaveBeenCalledWith(
+      { kind: 'home', view: 'onboarding' },
+      { replace: true },
+    );
   });
 
   it('starts AMR preset polling before the agent probe resolves', { timeout: 10_000 }, async () => {

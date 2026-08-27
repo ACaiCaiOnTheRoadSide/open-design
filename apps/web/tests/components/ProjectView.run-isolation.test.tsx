@@ -1452,6 +1452,32 @@ describe('ProjectView conversation run isolation', () => {
     expect(streamViaDaemon).not.toHaveBeenCalled();
   });
 
+  it('uses the host platform identity without OpenDesign wallet gating', async () => {
+    conversationAMessages = [];
+    fetchAmrWalletSnapshot.mockResolvedValue({
+      status: 'available',
+      profile: 'prod',
+      user: null,
+      balanceUsd: '0',
+      updatedAt: null,
+      fetchedAt: '2026-07-02T00:00:00.000Z',
+    });
+
+    renderProjectView(
+      { ...config, agentId: 'amr' },
+      project,
+      undefined,
+      { openDesignAuthEnabled: false },
+    );
+
+    await waitFor(() => expect(screen.getByTestId('send-message')).toHaveProperty('disabled', false));
+    fireEvent.click(screen.getByTestId('send-message'));
+
+    await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(1));
+    expect(fetchAmrWalletSnapshot).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
+  });
+
   it('soft-warns on a low AMR wallet and proceeds with the same send on confirmation', async () => {
     conversationAMessages = [];
     fetchAmrWalletSnapshot.mockResolvedValue({
@@ -3607,6 +3633,7 @@ function renderProjectView(
     onAgentChange?: (agentId: string) => void;
     onOpenSettings?: (section?: SettingsSection) => void;
     onOpenAmrSettings?: () => void;
+    openDesignAuthEnabled?: boolean;
     onArmAmrAuthRetryContinuation?: (
       continuation: Omit<AmrAuthRetryContinuation, 'accountIdAtArm' | 'createdAtMs'>,
     ) => void;
@@ -3627,6 +3654,7 @@ function projectViewElement(
     onAgentChange?: (agentId: string) => void;
     onOpenSettings?: (section?: SettingsSection) => void;
     onOpenAmrSettings?: () => void;
+    openDesignAuthEnabled?: boolean;
     onArmAmrAuthRetryContinuation?: (
       continuation: Omit<AmrAuthRetryContinuation, 'accountIdAtArm' | 'createdAtMs'>,
     ) => void;
@@ -3637,6 +3665,7 @@ function projectViewElement(
       project={renderProject}
       routeFileName={null}
       config={renderConfig}
+      openDesignAuthEnabled={handlers.openDesignAuthEnabled}
       agents={renderAgents}
       skills={[]}
       designTemplates={[]}

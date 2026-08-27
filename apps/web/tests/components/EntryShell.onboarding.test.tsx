@@ -683,6 +683,38 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(props.onAgentChange).not.toHaveBeenCalled();
   });
 
+  it('normalizes a stale onboarding route when the host platform owns authentication', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse({})) as typeof fetch;
+
+    renderHome({ openDesignAuthEnabled: false }, '/onboarding');
+
+    expect(await screen.findByTestId('home-hero-input')).toBeTruthy();
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    expect(screen.queryByRole('heading', { name: 'Sign in to OpenDesign' })).toBeNull();
+  });
+
+  it('uses the host platform identity for Home submit without OpenDesign sign-in', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ loggedIn: false, profile: 'prod', configPath: '/x', user: null }),
+    ) as typeof fetch;
+    const onCreateProject = vi.fn(async () => true);
+
+    renderHome({
+      config: baseConfig({ mode: 'daemon', agentId: 'amr' }),
+      amrLoggedIn: false,
+      openDesignAuthEnabled: false,
+      onCreateProject,
+    });
+
+    await screen.findByTestId('home-hero-input');
+    setHomeHeroPrompt('Build a platform-authenticated page');
+    fireEvent.click(await screen.findByTestId('home-hero-submit'));
+
+    await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
+    expect(window.location.pathname).toBe('/');
+    expect(screen.queryByRole('heading', { name: 'Sign in to OpenDesign' })).toBeNull();
+  });
+
   it.each([
     ['Local CLI', baseConfig({ mode: 'daemon', agentId: 'claude-code' })],
     ['BYOK', baseConfig({

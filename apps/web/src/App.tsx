@@ -1782,7 +1782,7 @@ function AppInner() {
     nextWorkspaceBucket: nextTabScopeWorkspaceId,
     nextAccountBucket: nextTabScopeAccountId,
   } = deriveTabIdentityScope({
-    amrLoginStatus,
+    amrLoginStatus: WHITE_LABEL_SAAS ? null : amrLoginStatus,
     workspaceContext,
     workspaceContextLoading,
     previousWorkspaceBucket: tabScopeWorkspaceIdRef.current,
@@ -1984,6 +1984,7 @@ function AppInner() {
   }, [applyAmrLoginStatus]);
 
   useEffect(() => {
+    if (WHITE_LABEL_SAAS) return;
     const usesOpenDesignCloud =
       config.mode === 'daemon'
       && config.agentId === AMR_AGENT_ID;
@@ -2248,7 +2249,7 @@ function AppInner() {
         // banner keys off `privacyDecisionAt`. They may coexist on the
         // first launch; the banner sits above the modal layer so it
         // stays actionable regardless of the active view.
-        if (shouldRouteToFirstRunOnboarding(next, window.location.pathname)) {
+        if (!WHITE_LABEL_SAAS && shouldRouteToFirstRunOnboarding(next, window.location.pathname)) {
           navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
         }
         setDaemonConfigLoaded(true);
@@ -5257,6 +5258,7 @@ function AppInner() {
           routeFileName={route.fileName}
           routeConversationId={route.conversationId ?? null}
           config={config}
+          openDesignAuthEnabled={!WHITE_LABEL_SAAS}
           agents={agents}
           skills={enabledFunctionalSkills}
           designTemplates={designTemplates}
@@ -5313,6 +5315,7 @@ function AppInner() {
           || null
         }
         config={config}
+        openDesignAuthEnabled={!WHITE_LABEL_SAAS}
         providerModelsCache={providerModelsCache}
         onProviderModelsCacheChange={setProviderModelsCache}
         integrationInitialTab={integrationInitialTab}
