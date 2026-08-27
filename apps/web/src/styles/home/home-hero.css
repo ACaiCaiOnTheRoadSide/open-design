@@ -2776,7 +2776,7 @@
   /* Caption sits flush with the card/preview left edge (no horizontal
      inset — dogfood 2026-07-28) and 12px under the preview's bottom line:
      the 8px grid row gap + this 4px. Overflowing titles ellipsize at the
-     card edge (nowrap + ellipsis on the title below). */
+     card edge; the title below wraps and clamps inside this width. */
   padding: 4px 0 8px;
 }
 .home-hero__plugin-preset-category {
@@ -2795,10 +2795,15 @@
   text-overflow: ellipsis;
 }
 .home-hero__plugin-preset-title {
+  display: -webkit-box;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   /* No horizontal padding of its own: the title nests inside
      `__plugin-preset-meta`, whose 8px inset IS the text-to-card-edge
      distance — a second inset here silently doubles it. */
@@ -4694,10 +4699,15 @@
 }
 .home-hero__fallback-preset-title {
   display: -webkit-box;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
