@@ -137,6 +137,17 @@ function isLiveArtifactPlugin(record: InstalledPluginRecord): boolean {
   return (CURATED_LIVE_ARTIFACT_PLUGIN_IDS as readonly string[]).includes(record.id);
 }
 
+// WebGL membership must come from concrete example/template semantics plus an
+// exact technology tag. Shader/GPU words alone also describe extraction and
+// HyperFrames workflows, so broad record-slug matching is unsafe here.
+export function isWebglExampleTemplate(record: InstalledPluginRecord): boolean {
+  const tags = new Set(manifestTagSlugs(record));
+  return (
+    (tags.has('example') || tags.has('template')) &&
+    (tags.has('webgl') || tags.has('webgl2'))
+  );
+}
+
 // Curated artifact-kind list. Keep this aligned with the Home creation
 // intents and the app's artifact product types.
 const PRIMARY_CATEGORIES: readonly CategoryDef[] = [
@@ -150,7 +161,11 @@ const PRIMARY_CATEGORIES: readonly CategoryDef[] = [
     slug: 'prototype',
     label: 'Prototype',
     starterPrompt: 'Create an OpenDesign plugin that generates an interactive prototype from a product brief.',
-    test: (record) => byMode('prototype')(record) && !isLiveArtifactPlugin(record),
+    test: (record) => (
+      byMode('prototype')(record) &&
+      !isLiveArtifactPlugin(record) &&
+      !isWebglExampleTemplate(record)
+    ),
   },
   {
     slug: 'live-artifact',

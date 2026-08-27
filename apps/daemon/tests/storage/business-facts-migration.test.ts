@@ -42,4 +42,18 @@ describe('business facts PostgreSQL migration contract', () => {
     expect(sql).toContain('ALTER COLUMN updated_at SET DEFAULT');
     expect(sql).toContain('EXTRACT(EPOCH FROM clock_timestamp()) * 1000');
   });
+
+  it('defines the pending App Stats run result queue', async () => {
+    const sql = await readFile(
+      path.join(resolvePgMigrationsDirectory(), '013_appstats_run_results.sql'),
+      'utf8',
+    );
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS appstats_run_results');
+    expect(sql).toContain('event_key text PRIMARY KEY');
+    expect(sql).toContain("CHECK (access_mode = 'online')");
+    expect(sql).toContain("CHECK (feature = 'agent.run')");
+    expect(sql).toContain("CHECK (result IN ('success', 'failed'))");
+    expect(sql).toContain('idx_appstats_run_results_pending');
+    expect(sql).toContain('WHERE reported_at IS NULL');
+  });
 });

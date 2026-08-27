@@ -33,6 +33,16 @@ export interface UsageFact {
   createdAt: number;
 }
 
+export interface AgentRunResultFact {
+  eventKey: string;
+  runId: string;
+  attempt: number;
+  accessMode: 'online';
+  feature: 'agent.run';
+  result: 'success' | 'failed';
+  completedAt: number;
+}
+
 export interface BusinessFactsStore {
   readonly enabled: boolean;
   upsertProject(fact: ProjectFact): Promise<void>;
@@ -46,6 +56,7 @@ export interface BusinessFactsStore {
   upsertMessage(fact: MessageFact, usage?: UsageFact): Promise<void>;
   incrementProjectCounter(projectId: string, counter: 'download_count' | 'published_count'): Promise<void>;
   recordProjectEvent(projectId: string, event: 'download' | 'publish', eventKey: string): Promise<void>;
+  recordAgentRunResult(fact: AgentRunResultFact, principal: Readonly<VerifiedPrincipal>): Promise<void>;
 }
 
 type TransactionRunner = <T>(work: (client: PgQueryable) => Promise<T>) => Promise<T>;
@@ -85,6 +96,7 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
       upsertMessage: noop,
       incrementProjectCounter: noop,
       recordProjectEvent: noop,
+      recordAgentRunResult: noop,
     };
   }
 
@@ -287,6 +299,22 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
         [eventKey, projectId, event, Date.now(), actor.tenantId],
       );
       if (result.rowCount !== 1 && result.rowCount !== 0) throw new Error('Unexpected project event result');
+    },
+    async recordAgentRunResult(fact, actor) {
+      if (!actor.tenantId || !actor.userId) throw new Error('Business facts require a verified principal');
+      if (fact.eventKey !== `agent-run:${fact.runId}:${fact.attempt}`) {
+        throw new Error('Invalid agent run result event key');
+      }
+      await runQuery(
+        `INSERT INTO appstats_run_results
+           (event_key, run_id, attempt, user_id, tenant_id, access_mode, feature, result, completed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (event_key) DO NOTHING`,
+        [
+          fact.eventKey, fact.runId, fact.attempt, actor.userId, actor.tenantId,
+          fact.accessMode, fact.feature, fact.result, fact.completedAt,
+        ],
+      );
     },
     async incrementProjectCounter(projectId, counter) {
       const actor = identity();

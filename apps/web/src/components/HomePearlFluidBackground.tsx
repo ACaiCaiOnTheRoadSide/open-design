@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 const VERTEX_SHADER = `
 attribute vec2 a_position;
@@ -43,6 +44,21 @@ float fbm(vec2 p) {
   return value;
 }
 
+float pearlSparkle(vec2 p, float scale, float seed, float time) {
+  vec2 cellPosition = p * scale;
+  vec2 cell = floor(cellPosition);
+  vec2 local = fract(cellPosition);
+  float random = hash(cell + seed);
+  vec2 point = vec2(
+    hash(cell + vec2(17.3, 41.7) + seed),
+    hash(cell + vec2(53.1, 9.2) + seed)
+  );
+  float distanceToPoint = length(local - point);
+  float glint = 1.0 - smoothstep(0.012, 0.075, distanceToPoint);
+  float twinkle = 0.64 + 0.36 * sin(time * (0.42 + random * 0.36) + random * 6.2831);
+  return glint * twinkle * smoothstep(0.58, 0.94, random);
+}
+
 void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution.xy;
   float aspect = u_resolution.x / max(u_resolution.y, 1.0);
@@ -54,29 +70,54 @@ void main() {
 
   vec2 direction = delta / max(distanceToPointer, 0.035);
   vec2 tangent = vec2(-direction.y, direction.x);
-  vec2 drift = vec2(0.035, -0.018) * u_time;
-  vec2 cursorFlow = (tangent * (0.075 + length(u_velocity) * 0.16)
-    + u_velocity * 0.22) * wake;
+  vec2 drift = vec2(0.022, -0.014) * u_time;
+  float pointerSpeed = min(length(u_velocity) * 8.0, 1.0);
+  vec2 cursorFlow = (tangent * (0.055 + pointerSpeed * 0.12)
+    + u_velocity * 0.24) * wake;
+  vec2 pearlPosition = p + drift + cursorFlow;
 
-  float broad = fbm(p * 2.15 + drift + cursorFlow);
-  float folds = fbm(p * 4.0 - vec2(broad * 0.58, broad * 0.34) - drift * 0.7 + cursorFlow * 1.7);
-  float ripple = sin(distanceToPointer * 24.0 - u_time * 2.1) * wake * 0.055;
-  float field = smoothstep(0.18, 0.88, broad * 0.52 + folds * 0.62 + ripple);
+  float film = fbm(pearlPosition * 3.65 + vec2(u_time * 0.032, -u_time * 0.021));
+  float microFilm = fbm(pearlPosition * 8.8 - vec2(film * 0.34, film * 0.22));
+  float angle = film * 5.8 + microFilm * 2.4 + p.x * 1.8 - p.y * 1.25 + u_time * 0.34;
 
-  vec3 pearl = vec3(0.987, 0.978, 0.990);
-  vec3 lavender = vec3(0.895, 0.850, 0.952);
-  vec3 blush = vec3(0.982, 0.858, 0.910);
-  vec3 ice = vec3(0.825, 0.914, 0.965);
+  float fineSparkle = pearlSparkle(pearlPosition, 112.0, 3.7, u_time);
+  float dustSparkle = pearlSparkle(pearlPosition + vec2(0.031, -0.019), 168.0, 19.4, u_time * 0.82);
+  float softSparkle = pearlSparkle(pearlPosition - vec2(0.016, 0.027), 72.0, 41.2, u_time * 0.64);
+  float sparkle = fineSparkle * 0.78 + dustSparkle * 0.56 + softSparkle * 0.42;
 
-  float sheen = 0.5 + 0.5 * sin((folds - broad) * 11.0 + p.x * 3.2 - p.y * 2.1);
-  vec3 color = mix(pearl, lavender, field * 0.34);
-  color = mix(color, blush, smoothstep(0.56, 0.94, broad + ripple) * 0.19);
-  color = mix(color, ice, smoothstep(0.62, 0.96, sheen) * (0.12 + wake * 0.08));
-  color += vec3(1.0, 0.995, 0.985) * smoothstep(0.76, 1.0, folds) * 0.08;
+  float cursorSheen = exp(-distanceToPointer * 8.5) * u_influence;
+  float directionalGlint = max(0.0, dot(direction, normalize(vec2(0.72, 0.38) + u_velocity * 2.0)));
+  float dragRipple = sin(distanceToPointer * 68.0 - u_time * 5.2) * 0.5 + 0.5;
+  dragRipple *= exp(-distanceToPointer * 10.5) * u_influence * (0.38 + pointerSpeed * 0.62);
+  float cloudStrength = u_influence * (0.42 + pointerSpeed * 0.58);
+  vec2 trailOffset = u_velocity * vec2(aspect, 1.0) * 0.9;
+  float blueCloud = exp(-length(delta + vec2(0.035, -0.025) + trailOffset * 0.35) * 11.5) * cloudStrength;
+  float pinkCloud = exp(-length(delta - vec2(0.045, 0.02) + trailOffset * 0.7) * 12.5) * cloudStrength;
+  float violetCloud = exp(-length(delta + vec2(0.012, 0.052) + trailOffset) * 14.0) * cloudStrength;
+  sparkle *= 1.0 + cursorSheen * (0.82 + directionalGlint * 0.9);
 
-  float edge = smoothstep(0.88, 0.12, length((uv - 0.5) * vec2(0.72, 1.0)));
-  color = mix(vec3(0.982, 0.976, 0.988), color, 0.72 + edge * 0.28);
-  gl_FragColor = vec4(color, 1.0);
+  vec3 lavender = vec3(0.69, 0.54, 0.97);
+  vec3 blush = vec3(1.0, 0.62, 0.78);
+  vec3 ice = vec3(0.46, 0.83, 1.0);
+  vec3 champagne = vec3(1.0, 0.88, 0.64);
+
+  float spectrum = 0.5 + 0.5 * sin(angle);
+  vec3 pearlColor = mix(lavender, ice, spectrum);
+  pearlColor = mix(pearlColor, blush, 0.5 + 0.5 * sin(angle + 2.094));
+  pearlColor = mix(pearlColor, champagne, (0.5 + 0.5 * sin(angle + 4.188)) * 0.3);
+  vec3 color = mix(pearlColor, vec3(1.0), min(sparkle, 1.0) * 0.46);
+
+  float broadSheen = 0.5 + 0.5 * sin(angle * 0.86 - u_time * 0.24);
+  float ribbonSheen = smoothstep(0.42, 0.9, 0.5 + 0.5 * sin(angle * 1.55 + u_time * 0.18));
+  float filmSheen = smoothstep(0.38, 0.84, microFilm);
+  color = mix(color, vec3(0.38, 0.72, 1.0), min(blueCloud * 0.88 + dragRipple * 0.18, 0.88));
+  color = mix(color, vec3(1.0, 0.44, 0.72), min(pinkCloud * 0.82, 0.82));
+  color = mix(color, vec3(0.6, 0.36, 1.0), min(violetCloud * 0.84, 0.84));
+  float pointerCloud = blueCloud + pinkCloud + violetCloud;
+  float alpha = 0.036 + broadSheen * 0.058 + ribbonSheen * 0.038
+    + filmSheen * 0.02 + sparkle * 0.28
+    + pointerCloud * 0.21 + dragRipple * 0.075;
+  gl_FragColor = vec4(color, min(alpha, 0.56));
 }
 `;
 
@@ -106,9 +147,10 @@ export function HomePearlFluidBackground() {
     if (reducedMotion) return;
 
     const gl = canvas.getContext('webgl', {
-      alpha: false,
+      alpha: true,
       antialias: false,
       depth: false,
+      premultipliedAlpha: false,
       powerPreference: 'low-power',
       preserveDrawingBuffer: false,
     });
@@ -163,7 +205,7 @@ export function HomePearlFluidBackground() {
     };
     resize();
     const observer = new ResizeObserver(resize);
-    observer.observe(host);
+    observer.observe(canvas);
 
     const target = { x: 0.52, y: 0.48 };
     const pointer = { x: target.x, y: target.y };
@@ -188,8 +230,8 @@ export function HomePearlFluidBackground() {
     const onPointerLeave = () => {
       influence *= 0.45;
     };
-    host.addEventListener('pointermove', onPointerMove, { passive: true });
-    host.addEventListener('pointerleave', onPointerLeave);
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('blur', onPointerLeave);
 
     const startedAt = performance.now();
     let animationFrame = 0;
@@ -215,12 +257,16 @@ export function HomePearlFluidBackground() {
     return () => {
       cancelAnimationFrame(animationFrame);
       observer.disconnect();
-      host.removeEventListener('pointermove', onPointerMove);
-      host.removeEventListener('pointerleave', onPointerLeave);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('blur', onPointerLeave);
       gl.deleteBuffer(buffer);
       gl.deleteProgram(program);
     };
   }, []);
 
-  return <canvas ref={canvasRef} className="home-view__pearl-fluid" aria-hidden />;
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <canvas ref={canvasRef} className="home-view__pearl-fluid" aria-hidden />,
+    document.body,
+  );
 }

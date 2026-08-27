@@ -744,6 +744,7 @@ export function RecentProjectsStrip({
       files = await fetchProjectFiles(project.id, {
         signal,
         workspaceContext: requestWorkspaceContext,
+        requireAuthoritative: true,
         ...(freshFiles ? { fresh: true } : {}),
       });
     } catch {

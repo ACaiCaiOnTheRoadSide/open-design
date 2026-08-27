@@ -3152,6 +3152,21 @@ export async function startServer({
   const pluginIntentStore = daemonDbConfig.kind === 'postgres'
     ? createPluginInstallIntentStore(getPool())
     : null;
+  const registerBackendIntentPlugin = async (
+    pluginId: string,
+    source: string | null,
+    localPath: string | null,
+  ): Promise<void> => {
+    if (!resourceOwnerRegistry) return;
+    await resourceOwnerRegistry.registerBackend({
+      kind: 'plugin',
+      id: pluginId,
+      sourceKind: 'backend',
+      retrievalUrl: source,
+      localPath,
+      metadata: { management: 'plugin-intent' },
+    });
+  };
   const pluginIntentReconciler = pluginIntentStore
     ? createPluginIntentReconciler({
         store: pluginIntentStore,
@@ -3159,7 +3174,12 @@ export async function startServer({
           isMaterialized: async (pluginId, source) => {
             const plugin = getInstalledPlugin(db, pluginId);
             if (!plugin || !plugin.fsPath || !fs.existsSync(plugin.fsPath)) return false;
-            return source === null || plugin.source === source;
+            if (source !== null && plugin.source !== source) return false;
+            // Existing intent-managed templates may predate SaaS ownership rows.
+            // Repair them during every reconciliation pass so they remain visible
+            // to all tenants without requiring a reinstall or data migration.
+            await registerBackendIntentPlugin(pluginId, source, plugin.fsPath);
+            return true;
           },
           install: async (pluginId, source, signal) => {
             for await (const event of installPlugin(db, {
@@ -3169,7 +3189,10 @@ export async function startServer({
               lockfilePath: PLUGIN_LOCKFILE_PATH,
               signal,
             })) {
-              if (event.kind === 'success') return { pluginId: event.plugin.id };
+              if (event.kind === 'success') {
+                await registerBackendIntentPlugin(event.plugin.id, source, event.plugin.fsPath ?? null);
+                return { pluginId: event.plugin.id };
+              }
               if (event.kind === 'error') throw new Error(event.message);
             }
             throw new Error('plugin install ended without a terminal event');
@@ -7633,6 +7656,8 @@ export async function startServer({
     db,
     reportLangfuse: reportRunCompletedFromDaemon,
     runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
+    recordAgentRunResult: (fact, principal) =>
+      businessFactsOutbox.recordAgentRunResult(fact, principal),
   }).then((reconciled) => {
     if (reconciled.interrupted > 0 || reconciled.messagesReconciled > 0) {
       console.warn('[runs] reconciled interrupted run terminals', reconciled);

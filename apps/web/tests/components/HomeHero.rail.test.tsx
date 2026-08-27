@@ -169,18 +169,12 @@ describe('HomeHero intent rail', () => {
 
   it('keeps the visible primary template categories interactive while plugins load', () => {
     const { onPickChip } = renderHero({ pluginsLoading: true });
-    const initialPreview = screen
-      .getAllByTestId('home-hero-sidebar-prompt-example')[0]
-      ?.querySelector('img')
-      ?.getAttribute('src');
     const imageCategory = screen.getByTestId('home-hero-type-pill-image');
     expect(imageCategory).not.toBeDisabled();
     fireEvent.click(imageCategory);
     expect(imageCategory.getAttribute('aria-selected')).toBe('true');
     expect(onPickChip).toHaveBeenCalledWith(findChip('image'));
-    expect(
-      screen.getAllByTestId('home-hero-sidebar-prompt-example')[0]?.querySelector('img')?.getAttribute('src'),
-    ).not.toBe(initialPreview);
+    expect(screen.getByTestId('home-hero-examples-loading')).toBeTruthy();
   });
 
   it('switches second-level categories independently from plugin discovery', () => {
@@ -311,11 +305,11 @@ describe('HomeHero intent rail', () => {
     expect(screen.queryByTestId('home-hero-active-example')).toBeNull();
   });
 
-  it('keeps useful template examples visible while the plugin catalog loads', () => {
+  it('shows a loading state instead of fake templates while the catalog loads', () => {
     renderHero({ activeChipId: null, pluginsLoading: true });
 
-    expect(screen.getAllByTestId('home-hero-sidebar-prompt-example').length).toBeGreaterThan(0);
-    expect(screen.queryByTestId('home-hero-examples-loading')).toBeNull();
+    expect(screen.queryByTestId('home-hero-sidebar-prompt-example')).toBeNull();
+    expect(screen.getByTestId('home-hero-examples-loading')).toBeTruthy();
     expect(screen.queryByTestId('home-hero-plugin-presets')).toBeNull();
   });
 
@@ -329,21 +323,53 @@ describe('HomeHero intent rail', () => {
 
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
     expect(presets).toHaveLength(1);
-    // The preset card is now a thumbnail + name only; the prompt blurb was
-    // dropped from the card face but is still passed through on click below.
     expect(presets[0]?.textContent).toContain('Investor deck');
 
-    // The whole card is the single click-to-use affordance (2026-07 removed
-    // the hover-revealed Use/Remix overlay and the card-click-opens-details
-    // behavior, restoring the #5517 baseline) — clicking it directly seeds
-    // the composer with the preset's brief.
+    // The card is a preview affordance; using the template remains an explicit,
+    // separate action so users can inspect the larger detail image first.
     fireEvent.click(presets[0]!);
+    expect(onOpenPluginDetails).toHaveBeenCalledWith(deckPlugin);
+    expect(onPickExamplePlugin).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use: Investor deck' }));
     expect(onPickExamplePlugin).toHaveBeenCalledWith(
       deckPlugin,
       'deck',
       'Create with a focused brief using Investor deck',
     );
-    expect(onOpenPluginDetails).not.toHaveBeenCalled();
+  });
+
+  it('does not fill an empty selected category with templates from other categories', () => {
+    renderHero({ activeChipId: 'live-artifact', pluginOptions: [] });
+
+    expect(screen.queryByTestId('home-hero-sidebar-prompt-example')).toBeNull();
+    expect(document.querySelector('.home-hero__template-empty')).toBeTruthy();
+  });
+
+  it('shows the complete category catalog instead of the capped prompt showcase', () => {
+    const plugins = Array.from({ length: 20 }, (_, index) =>
+      makePlugin(`example-dashboard-${index}`, 'prototype', `Dashboard ${index}`, ['dashboard']),
+    );
+    renderHero({ activeChipId: 'prototype', pluginOptions: plugins });
+
+    expect(screen.getAllByTestId('home-hero-plugin-preset')).toHaveLength(20);
+    expect(screen.queryByTestId('home-hero-sidebar-prompt-example')).toBeNull();
+  });
+
+  it('narrows the current first-level template list when a second-level category is selected', () => {
+    const dashboard = makePlugin('example-dashboard', 'prototype', 'Analytics dashboard', ['dashboard']);
+    const landing = makePlugin('example-landing', 'prototype', 'Marketing landing page', ['landing-page']);
+    renderHero({
+      activeChipId: 'prototype',
+      pluginOptions: [dashboard, landing],
+    });
+
+    expect(screen.getAllByTestId('home-hero-plugin-preset')).toHaveLength(2);
+    fireEvent.click(screen.getByTestId('home-hero-subtype-landing-marketing'));
+
+    const presets = screen.getAllByTestId('home-hero-plugin-preset');
+    expect(presets).toHaveLength(1);
+    expect(presets[0]?.getAttribute('data-plugin-id')).toBe('example-landing');
   });
 
   it('maps powered WebGL presets to the WebGL chip without exposing a Worker chip', () => {

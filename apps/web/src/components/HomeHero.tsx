@@ -58,7 +58,6 @@ import { homeHeroChipLabel } from './home-hero/chip-labels';
 import { ScenarioArt } from './home-hero/ScenarioArt';
 import { useEdgeAutoScroll, EdgeScrollZones } from './home-hero/EdgeAutoScroll';
 import {
-  filterPluginsBySubChip,
   isSubChipParent,
   prototypeSubChipForSlug,
   subChipsForChip,
@@ -87,6 +86,8 @@ import { pluginCategoryLabel } from './plugins-home/categoryLabel';
 import { readHomeGuideStage, writeHomeGuideStage } from './home-hero/firstRunGuide';
 import { curatedPluginPriorityForChip } from './plugins-home/curatedPriority';
 import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
+import { sortByVisualAppeal } from './plugins-home/visualScore';
+import { applyFacetSelection, isWebglExampleTemplate } from './plugins-home/facets';
 import { notifyCompletionFeedbackGesture } from '../utils/notifications';
 import { inferPluginPreview } from './plugins-home/preview';
 import { pluginSubfacetLabel } from './plugins-home/subfacetLabel';
@@ -102,12 +103,6 @@ import { ComposerModePicker } from './ComposerModePicker';
 import { assetTitle } from './LibraryAssetMeta';
 import { libraryAssetRawUrl } from '../providers/registry';
 
-const HOME_TEMPLATE_PREVIEW_IMAGES = [
-  '/community-templates/open-design-landing.webp',
-  '/community-templates/mobile-flow.webp',
-  '/community-templates/pitch-deck.webp',
-  '/community-templates/dashboard.webp',
-] as const;
 import type { LibraryAsset } from '@open-design/contracts';
 import { WorkingDirPicker } from './WorkingDirPicker';
 import {
@@ -404,7 +399,6 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   const [figmaHelpOpen, setFigmaHelpOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const homeHeroRef = useRef<HTMLElement | null>(null);
-  const templateCurveRef = useRef<HTMLDivElement | null>(null);
   // Two-flash attention pulse on the send button; armed via the
   // imperative `pulseSend()` handle, cleared when the animation ends.
   const [sendAttention, setSendAttention] = useState(false);
@@ -759,28 +753,53 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         : [],
     [railActiveChipId, locale, pluginOptions],
   );
-  // Derive sub-category pills from the FULL install set so the rail mirrors the
-  // Community section exactly — same sub-category set and same order. (Earlier
-  // this read only `activeExamplePlugins` to guarantee non-empty slices, but
-  // that left the rail showing fewer types than Community; the empty case is
-  // now handled by the full-catalog fallback in `filteredExamplePlugins`.)
   const activeSubChips = useMemo(
     () => subChipsForChip(railActiveChipId, pluginOptions),
     [railActiveChipId, pluginOptions],
   );
-  // Keep the gallery tied to the same first-level collection the user is
-  // looking at, then narrow that collection by the selected second-level facet.
-  // Filtering the full install catalog here made the sidebar appear unchanged
-  // for overlapping facets and bypassed the curated first-level result order.
+  // The sidebar is a template catalog, not the small prompt-preset showcase.
+  // Use the same complete, non-atom collection and facet logic as Community;
+  // fall back to the chip-specific matcher only for Home-only categories.
+  const catalogPlugins = useMemo(
+    () => pluginOptions.filter((plugin) => (
+      plugin.manifest?.od?.kind !== 'atom' && !EXAMPLE_PRESET_HIDDEN_PLUGIN_IDS.has(plugin.id)
+    )),
+    [pluginOptions],
+  );
+  const categoryTemplatePlugins = useMemo(() => {
+    if (!railActiveChipId) return [];
+    // Home's visible catalog tabs are mutually exclusive product buckets. The
+    // shared Community facets intentionally overlap (for example many documents
+    // render in prototype mode), so use the stricter Home matcher here.
+    if (['prototype', 'deck', 'document', 'web-clone', 'audio', 'live-artifact', 'webgl'].includes(railActiveChipId)) {
+      return activeExamplePlugins;
+    }
+    const matches = applyFacetSelection(catalogPlugins, {
+      category: railActiveChipId,
+      subcategory: null,
+    });
+    if (matches.length === 0) return activeExamplePlugins;
+    const ordered = [...matches].sort((a, b) => comparePluginPresetOrder(a, b, railActiveChipId));
+    return railActiveChipId === 'image'
+      ? movePluginPresetToEnd(ordered, 'example-hatch-pet')
+      : ordered;
+  }, [activeExamplePlugins, catalogPlugins, railActiveChipId]);
   const filteredExamplePlugins = useMemo(() => {
-    if (!selectedSubcategory || !isSubChipParent(railActiveChipId)) return activeExamplePlugins;
-    // Mobile is a Home-only alias for the existing Apps taxonomy bucket.
+    if (!selectedSubcategory || !isSubChipParent(railActiveChipId)) {
+      return categoryTemplatePlugins;
+    }
+    if (railActiveChipId === 'prototype' && selectedSubcategory === 'wireframe') {
+      return categoryTemplatePlugins.filter((plugin) => pluginMatchesExampleChip(plugin, 'wireframe'));
+    }
     const facetSubcategory =
       railActiveChipId === 'prototype' && selectedSubcategory === 'mobile'
         ? 'app-prototypes'
         : selectedSubcategory;
-    return filterPluginsBySubChip(activeExamplePlugins, railActiveChipId, facetSubcategory);
-  }, [activeExamplePlugins, railActiveChipId, selectedSubcategory]);
+    return sortByVisualAppeal(applyFacetSelection(catalogPlugins, {
+      category: railActiveChipId,
+      subcategory: facetSubcategory,
+    }));
+  }, [catalogPlugins, categoryTemplatePlugins, railActiveChipId, selectedSubcategory]);
 
   // First-run guide, beat 1: pulse the Prototype chip for brand-new users only
   // when Home could not bind a default type. A successfully seeded default has
@@ -1300,53 +1319,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   let optionRenderIndex = 0;
   const visibleError = error?.startsWith('Bundled scenario "') ? null : error;
   const templateGalleryKey = `${railActiveChipId ?? 'all'}:${selectedSubcategory ?? 'all'}`;
-  const selectedSubcategoryIndex = activeSubChips.findIndex((sub) => sub.slug === selectedSubcategory);
-  const selectedSubcategoryLabel = selectedSubcategoryIndex >= 0 ? activeSubChips[selectedSubcategoryIndex]?.label : null;
-  const visiblePromptExamples = selectedSubcategoryLabel
-    ? activePromptExamples.map((example) => `${selectedSubcategoryLabel} · ${example}`)
-    : activePromptExamples;
-  const templatePreviewOffset = Math.max(0, templateChips.findIndex((chip) => chip.id === railActiveChipId))
-    + Math.max(0, selectedSubcategoryIndex);
-  const updateTemplateGalleryFocus = useCallback(() => {
-    const gallery = templateCurveRef.current;
-    if (!gallery) return;
-    const cards = Array.from(
-      gallery.querySelectorAll<HTMLElement>('.home-hero__fallback-preset, .home-hero__plugin-preset-cell'),
-    );
-    if (cards.length === 0) return;
-    const galleryRect = gallery.getBoundingClientRect();
-    const cardRects = cards.map((card) => card.getBoundingClientRect());
-    const isHorizontal = cardRects.length > 1 && Math.abs(cardRects[1]!.top - cardRects[0]!.top) < 20;
-    const focusPoint = isHorizontal
-      ? galleryRect.left + galleryRect.width * 0.35
-      : galleryRect.top + galleryRect.height * 0.35;
-    const centers = cardRects.map((rect) => isHorizontal
-      ? rect.left + rect.width / 2
-      : rect.top + rect.height / 2);
-    let focusedIndex = 0;
-    let focusedDistance = Number.POSITIVE_INFINITY;
-    centers.forEach((center, index) => {
-      const distance = Math.abs(center - focusPoint);
-      if (distance < focusedDistance) {
-        focusedIndex = index;
-        focusedDistance = distance;
-      }
-    });
-    cards.forEach((card, index) => {
-      const isFocused = index === focusedIndex;
-      card.classList.toggle('is-gallery-focus', isFocused);
-      card.classList.toggle('is-before-gallery-focus', !isFocused && centers[index]! < focusPoint);
-      card.classList.toggle('is-after-gallery-focus', !isFocused && centers[index]! > focusPoint);
-    });
-  }, []);
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(updateTemplateGalleryFocus);
-    return () => window.cancelAnimationFrame(frame);
-  }, [templateGalleryKey, updateTemplateGalleryFocus]);
 
   return (
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
+      <div className="home-hero__template-sidebar">
       <nav className="home-hero__template-catalog-dock" aria-label={t('homeHero.templatePicker.label')}>
         <div className="home-hero__template-rail-head">
           <span>{t('homeHero.templatePicker.label')}</span>
@@ -1394,13 +1370,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
       </nav>
       <aside className="home-hero__template-rail" aria-label={t('homeHero.promptExamples')}>
         <div className="home-hero__template-rail-body">
-          <div
-            ref={templateCurveRef}
-            className="home-hero__template-curve"
-            aria-label={t('homeHero.promptExamples')}
-            onScrollCapture={() => window.requestAnimationFrame(updateTemplateGalleryFocus)}
-          >
-          {filteredExamplePlugins.length > 0 && railActiveChipId ? (
+          <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
+          {pluginsLoading ? (
+            <PluginPromptPresetsLoading />
+          ) : filteredExamplePlugins.length > 0 && railActiveChipId ? (
             <PluginPromptPresets
               key={templateGalleryKey}
               chipId={railActiveChipId}
@@ -1409,53 +1382,19 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               pendingPluginId={pendingPluginId}
               locale={locale}
               onPick={pickExamplePluginPreset}
+              onPreview={onOpenPluginDetails}
               pulseFirstPreset={guidePulseFirstPreset}
               workspaceContext={workspaceContext}
             />
-          ) : visiblePromptExamples.length > 0 ? (
-            <div key={templateGalleryKey} className="home-hero__fallback-presets">
-              {visiblePromptExamples.slice(0, 4).map((example, index) => (
-                <button
-                  key={example}
-                  type="button"
-                  className="home-hero__fallback-preset"
-                  data-testid="home-hero-sidebar-prompt-example"
-                  onClick={() => usePromptExample(example)}
-                >
-                  <span className="home-hero__fallback-preset-preview" aria-hidden>
-                    <img
-                      src={HOME_TEMPLATE_PREVIEW_IMAGES[(index + templatePreviewOffset) % HOME_TEMPLATE_PREVIEW_IMAGES.length]}
-                      alt=""
-                    />
-                  </span>
-                  <span className="home-hero__fallback-preset-title">{example}</span>
-                </button>
-              ))}
-            </div>
           ) : (
-            <div key={templateGalleryKey} className="home-hero__fallback-presets">
-              {templateChips.slice(0, 4).map((chip, index) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  className="home-hero__fallback-preset"
-                  disabled={pendingChipId !== null || pendingPluginId !== null}
-                  onClick={() => handlePickTaskChip(chip)}
-                >
-                  <span className="home-hero__fallback-preset-preview" aria-hidden>
-                    <img
-                      src={HOME_TEMPLATE_PREVIEW_IMAGES[(index + templatePreviewOffset) % HOME_TEMPLATE_PREVIEW_IMAGES.length]}
-                      alt=""
-                    />
-                  </span>
-                  <span className="home-hero__fallback-preset-title">{homeHeroChipLabel(chip.id, t)}</span>
-                </button>
-              ))}
+            <div key={templateGalleryKey} className="home-hero__template-empty">
+              {t('newproj.noTemplatesTitle')}
             </div>
           )}
           </div>
         </div>
       </aside>
+      </div>
 
       <div className="home-hero__title-block">
         <h1 className="home-hero__title">{t('homeHero.title')}</h1>
@@ -2274,7 +2213,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
       ) : null}
       </div>
 
-      {recommendationSlot}
+      {recommendationSlot ? (
+        <div className="home-hero__recommendation-slot">{recommendationSlot}</div>
+      ) : null}
 
       {!pluginsLoading && filteredExamplePlugins.length === 0 && activePromptExamples.length > 0 ? (
         <div
@@ -2380,6 +2321,7 @@ function PluginPromptPresets({
   chipId,
   locale,
   onPick,
+  onPreview,
   pendingPluginId,
   plugins,
   pulseFirstPreset = false,
@@ -2389,6 +2331,7 @@ function PluginPromptPresets({
   chipId: string;
   locale: Locale;
   onPick: (record: InstalledPluginRecord, chipId: string, promptText: string) => void;
+  onPreview: (record: InstalledPluginRecord) => void;
   pendingPluginId: string | null;
   plugins: InstalledPluginRecord[];
   workspaceContext?: WorkspaceCollabContext | null;
@@ -2424,6 +2367,7 @@ function PluginPromptPresets({
               disabled={pendingPluginId !== null}
               pulse={pulseFirstPreset && index === 0}
               onPick={onPick}
+              onPreview={onPreview}
               workspaceContext={workspaceContext}
             />
           ))}
@@ -2518,6 +2462,7 @@ function PluginPromptPresetCard({
   disabled,
   locale,
   onPick,
+  onPreview,
   pending,
   pulse = false,
   record,
@@ -2528,6 +2473,7 @@ function PluginPromptPresetCard({
   disabled: boolean;
   locale: Locale;
   onPick: (record: InstalledPluginRecord, chipId: string, promptText: string) => void;
+  onPreview: (record: InstalledPluginRecord) => void;
   pending: boolean;
   pulse?: boolean;
   record: InstalledPluginRecord;
@@ -2566,7 +2512,8 @@ function PluginPromptPresetCard({
         data-plugin-id={record.id}
         {...(typeof odMode === 'string' ? { 'data-od-mode': odMode } : {})}
         disabled={disabled}
-        onClick={() => onPick(record, chipId, seedPrompt)}
+        onClick={() => onPreview(record)}
+        aria-label={`${t('common.preview')}: ${title}`}
       >
         <span className="home-hero__plugin-preset-preview" aria-hidden ref={presetPreviewRef}>
           <PreviewSurface
@@ -2575,6 +2522,9 @@ function PluginPromptPresetCard({
             preview={preview}
             eager={odMode === 'deck'}
           />
+          <span className="home-hero__plugin-preset-preview-action">
+            {t('common.preview')}
+          </span>
           {active ? (
             <span className="home-hero__plugin-preset-check" aria-hidden>
               <Icon name="check" size={12} />
@@ -2582,12 +2532,20 @@ function PluginPromptPresetCard({
           ) : null}
         </span>
         <span className="home-hero__plugin-preset-meta">
-          {/* Category tag dropped (dogfood 2026-07-28): the filter chips above
-              the rail already scope the row, so the per-card pill was noise. */}
-          <span className="home-hero__plugin-preset-title">
-            {title}
-          </span>
+          <span className="home-hero__plugin-preset-title">{title}</span>
+          {categoryLabel ? (
+            <span className="home-hero__plugin-preset-category">{categoryLabel}</span>
+          ) : null}
         </span>
+      </button>
+      <button
+        type="button"
+        className="home-hero__plugin-preset-use"
+        disabled={disabled}
+        onClick={() => onPick(record, chipId, seedPrompt)}
+        aria-label={`${t('pluginCard.use')}: ${title}`}
+      >
+        {pending ? t('common.loading') : t('pluginCard.use')}
       </button>
     </span>
   );
@@ -4071,12 +4029,33 @@ export function pluginMatchesExampleChip(record: InstalledPluginRecord, chipId: 
       all.some((slug) => slug === value || slug.includes(value) || slug.split('-').includes(value)),
     );
   };
+  // Visible Home categories are mutually exclusive even when their underlying
+  // renderer mode overlaps (documents and WebGL examples are both prototypes).
+  const webglExampleTemplate = isWebglExampleTemplate(record);
+  const webCloneTemplate = (
+    has('web-clone', 'website-clone', 'site-clone', 'website-recreation', 'web-recreation') ||
+    hasPart('web-clone', 'website-clone')
+  );
+  const deckTemplate = has('deck', 'slides', 'slide-deck');
+  const documentTemplate = (
+    (has('resume', 'cv', 'invoice', 'document', 'docs', 'report', 'paper') ||
+      hasPart(
+        'resume', 'documentation', 'invoice', 'report', 'whitepaper', 'academic-paper',
+        'case-report', 'meeting-notes', 'runbook', 'eguide', 'letter', 'dossier', 'memo',
+      )) &&
+    !hasPart('video', 'audio', 'hyperframes', 'deck', 'slides')
+  );
+  const liveArtifactTemplate = has('live-artifact') || hasPart('live-artifact');
+  const audioTemplate = (has('audio') || hasPart('audio')) && !hasPart('video', 'hyperframes');
   switch (chipId) {
     case 'prototype':
-      return has('prototype') || hasPart('web-prototype');
+      return (
+        (has('prototype') || hasPart('web-prototype')) &&
+        !deckTemplate && !documentTemplate && !webCloneTemplate &&
+        !audioTemplate && !liveArtifactTemplate && !webglExampleTemplate
+      );
     case 'web-clone':
-      // Website reproduction flows (e.g. example-web-clone / site-clone kits).
-      return has('web-clone', 'website-clone', 'site-clone') || hasPart('web-clone', 'website-clone');
+      return webCloneTemplate;
     case 'wireframe':
       // Lo-fi / sketch / whiteboard explorations (e.g. wireframe-sketch).
       return (
@@ -4091,37 +4070,15 @@ export function pluginMatchesExampleChip(record: InstalledPluginRecord, chipId: 
         !hasPart('video', 'audio', 'image', 'hyperframes')
       );
     case 'document':
-      // Documents: resumes, reports, invoices, papers, briefs, PDFs.
-      return (
-        (has('resume', 'cv', 'invoice', 'document', 'docs', 'report', 'paper') ||
-          hasPart(
-            'resume',
-            'documentation',
-            'invoice',
-            'report',
-            'whitepaper',
-            'academic-paper',
-            'case-report',
-            'meeting-notes',
-            'runbook',
-            'eguide',
-            'letter',
-            'dossier',
-            'memo',
-          )) &&
-        !hasPart('video', 'audio', 'hyperframes', 'deck', 'slides')
-      );
+      return documentTemplate;
     case 'deck':
-      return has('deck', 'slides', 'slide-deck') || hasPart('slide', 'deck');
+      return deckTemplate;
     case 'hyperframes':
       return hasPart('hyperframes', 'hyperframe');
     case 'live-artifact':
-      return has('live-artifact') || hasPart('live-artifact');
+      return liveArtifactTemplate;
     case 'webgl':
-      return (
-        has('webgl', 'webgl2', 'shader', 'gpu') ||
-        hasPart('webgl', 'shader', 'gpu')
-      );
+      return webglExampleTemplate;
     case 'image':
       return (has('image') || hasPart('image-template')) && !hasPart('video', 'audio', 'live-artifact');
     case 'video':
@@ -4130,7 +4087,7 @@ export function pluginMatchesExampleChip(record: InstalledPluginRecord, chipId: 
       // Exclude video / HyperFrames templates that merely carry an
       // `audio-reactive` tag (substring-matched by hasPart('audio')): their
       // home is the Video / HyperFrames chips, not the audio gallery.
-      return (has('audio') || hasPart('audio')) && !hasPart('video', 'hyperframes');
+      return audioTemplate;
     default:
       return false;
   }

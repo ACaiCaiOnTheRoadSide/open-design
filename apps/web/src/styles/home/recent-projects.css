@@ -1202,8 +1202,8 @@
 }
 .home-view > .recent-projects .recent-projects__row {
   grid-auto-flow: row;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 13px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
   padding: 2px 2px 10px;
   overflow: visible;
 }
@@ -1211,16 +1211,35 @@
   display: none;
 }
 .home-view > .recent-projects .recent-projects__card {
+  position: relative;
+  isolation: isolate;
   min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.58);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-panel) 48%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.025) 44%, rgba(218, 235, 240, 0.055)),
+    rgba(255, 255, 255, 0.05);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.62),
-    0 10px 24px rgba(77, 55, 92, 0.07);
-  -webkit-backdrop-filter: blur(16px) saturate(116%);
-  backdrop-filter: blur(16px) saturate(116%);
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -6px 10px rgba(111, 125, 145, 0.08),
+    0 6px 0 rgba(104, 113, 132, 0.08),
+    0 14px 34px rgba(77, 55, 92, 0.09);
+  -webkit-backdrop-filter: blur(9px) saturate(126%) contrast(103%);
+  backdrop-filter: blur(9px) saturate(126%) contrast(103%);
   transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+}
+.home-view > .recent-projects .recent-projects__card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.12) 34%, rgba(106, 196, 211, 0.22) 78%, rgba(231, 180, 82, 0.25));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
 }
 .home-view > .recent-projects .recent-projects__card:hover {
   transform: translateY(-3px);
@@ -1231,11 +1250,48 @@
 }
 .home-view > .recent-projects .recent-projects__card-main,
 .home-view > .recent-projects .recent-projects__row .recent-projects__card-main {
-  padding: 7px;
+  padding: 10px;
 }
 .home-view > .recent-projects .recent-projects__card-thumb {
-  border-radius: 11px;
+  display: flex;
+  width: 100%;
+  min-height: 132px;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), 0 5px 14px rgba(54, 41, 65, 0.09);
+}
+.home-view > .recent-projects .recent-projects__card-thumb-fallback {
+  background:
+    radial-gradient(circle at 20% 16%, rgba(255, 255, 255, 0.62), transparent 25%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, #e8f3ff), color-mix(in srgb, #ffddea 72%, transparent)) !important;
+}
+.home-view > .recent-projects .recent-projects__card-thumb-fallback::before {
+  content: '';
+  position: absolute;
+  inset: 16px 22px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 10px;
+  background:
+    linear-gradient(rgba(105, 79, 132, 0.24) 0 0) 12px 12px / 42% 7px no-repeat,
+    linear-gradient(rgba(105, 79, 132, 0.12) 0 0) 12px 27px / 72% 5px no-repeat,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.52) 48%, transparent 48% 52%, rgba(255, 255, 255, 0.4) 52%) 12px 45px / calc(100% - 24px) 32px no-repeat,
+    rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64), 0 7px 18px rgba(69, 48, 82, 0.09);
+}
+.home-view > .recent-projects .recent-projects__card-thumb-fallback .recent-projects__card-glyph {
+  position: absolute;
+  right: 28px;
+  bottom: 22px;
+  z-index: 1;
+  font-size: 24px;
+  color: color-mix(in srgb, var(--accent) 48%, var(--text-soft));
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.home-view > .recent-projects .recent-projects__card-meta {
+  margin-top: 10px;
+  padding: 0 3px 3px;
 }
 .home-view > .recent-projects .recent-projects__home-empty {
   grid-column: 1 / -1;
@@ -1261,6 +1317,17 @@
   .home-view > .recent-projects .recent-projects__row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+[data-theme='dark'] .home-view > .recent-projects .recent-projects__card {
+  border-color: rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
+    color-mix(in srgb, var(--bg-panel) 54%, transparent);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.1), 0 12px 28px rgba(0, 0, 0, 0.22);
+}
+[data-theme='dark'] .home-view > .recent-projects .recent-projects__card-thumb {
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 @media (prefers-reduced-transparency: reduce) {

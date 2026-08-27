@@ -184,4 +184,36 @@ describe('business facts durable outbox', () => {
     outbox.stop();
     db.close();
   });
+
+  it('durably retries an agent run result with its explicit principal', async () => {
+    const db = setupDb();
+    let fail = true;
+    const observed: unknown[] = [];
+    const store = {
+      enabled: true,
+      async recordAgentRunResult(fact: unknown, principal: unknown) {
+        observed.push({ fact, principal });
+        if (fail) throw new Error('pg unavailable');
+      },
+    } as unknown as BusinessFactsStore;
+    const outbox = createBusinessFactsOutbox(db, store, { intervalMs: 60_000 });
+    const principal = { tenantId: 'tenant-a', userId: 'user-a' };
+    const fact = {
+      eventKey: 'agent-run:run-1:1', runId: 'run-1', attempt: 1,
+      accessMode: 'online' as const, feature: 'agent.run' as const,
+      result: 'failed' as const, completedAt: 10,
+    };
+    await expect(outbox.recordAgentRunResult(fact, principal))
+      .rejects.toThrow('queued for durable retry');
+    fail = false;
+    await outbox.drain();
+    expect(observed).toEqual([
+      { fact, principal },
+      { fact, principal },
+    ]);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM business_fact_outbox').get())
+      .toEqual({ count: 0 });
+    outbox.stop();
+    db.close();
+  });
 });

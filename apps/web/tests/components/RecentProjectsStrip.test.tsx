@@ -319,6 +319,56 @@ describe('RecentProjectsStrip', () => {
     );
   });
 
+  it('does not cache a transient files failure as an authoritative missing cover', async () => {
+    let attempts = 0;
+    vi.mocked(fetchProjectFiles).mockImplementation(async (_projectId, options) => {
+      attempts += 1;
+      if (attempts === 1) {
+        // Match fetchProjectFiles' production contract: transport failures are
+        // only observable by callers that request an authoritative result.
+        if (options?.requireAuthoritative) throw new Error('temporary files failure');
+        return [];
+      }
+      return [{
+        name: 'cover.png',
+        path: 'cover.png',
+        kind: 'image',
+        mtime: 704,
+        size: 0,
+        mime: 'image/png',
+      }];
+    });
+    const retryProject = project({ id: 'project-transient-cover', name: 'Transient cover' });
+
+    const first = render(
+      <RecentProjectsStrip
+        projects={[retryProject]}
+        onOpen={() => {}}
+        heading="All projects"
+      />,
+    );
+
+    await waitFor(() => expect(fetchProjectFiles).toHaveBeenCalledTimes(1));
+    expect(fetchProjectFiles).toHaveBeenLastCalledWith(
+      'project-transient-cover',
+      expect.objectContaining({ requireAuthoritative: true }),
+    );
+    first.unmount();
+
+    const second = render(
+      <RecentProjectsStrip
+        projects={[retryProject]}
+        onOpen={() => {}}
+        heading="All projects"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchProjectFiles).toHaveBeenCalledTimes(2);
+      expect(second.container.querySelector('.recent-projects__card-thumb-image img')).not.toBeNull();
+    });
+  });
+
   it('renders the signed-in creator name and profile image for a self-owned project', async () => {
     Object.assign(recentWorkspaceState.context, {
       displayName: 'Elian Zhang',

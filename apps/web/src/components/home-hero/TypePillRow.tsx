@@ -33,6 +33,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick, v
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const probeRef = useRef<HTMLDivElement | null>(null);
   const tailRef = useRef<HTMLDivElement | null>(null);
+  const activeVerticalPillRef = useRef<HTMLButtonElement | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [hasOverflow, setHasOverflow] = useState(false);
   const flowing = chips.slice(0, MAX_PILLS);
@@ -92,6 +93,11 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick, v
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowing.length, measurementSignature]);
 
+  useEffect(() => {
+    if (!vertical || !activeChipId) return;
+    activeVerticalPillRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeChipId, vertical]);
+
   // Dismiss the popover on outside press / Escape.
   useEffect(() => {
     if (!moreOpen) return undefined;
@@ -125,6 +131,7 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick, v
           return (
             <button
               key={chip.id}
+              ref={isActive ? activeVerticalPillRef : undefined}
               type="button"
               role="option"
               aria-selected={isActive}

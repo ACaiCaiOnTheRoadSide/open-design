@@ -517,8 +517,10 @@ function atomicWriteJson(filePath, value) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(tempPath, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 });
     fs.renameSync(tempPath, filePath);
+    return true;
   } catch {
     try { fs.unlinkSync(tempPath); } catch { /* best-effort cleanup */ }
+    return false;
   }
 }
 
@@ -571,6 +573,9 @@ function durableRunState(run) {
     ...(run.promptTelemetry ? { promptTelemetry: run.promptTelemetry } : {}),
     ...(run.promptCache ? { promptCache: run.promptCache } : {}),
     ...(run.analyticsRecovery ? { analyticsRecovery: run.analyticsRecovery } : {}),
+    ...(run.agentRunStatsAdmission
+      ? { agentRunStatsAdmission: run.agentRunStatsAdmission }
+      : {}),
     ...(run.externalPluginAnalytics
       ? { externalPluginAnalytics: run.externalPluginAnalytics }
       : {}),
@@ -958,7 +963,8 @@ export function createChatRunService({
   };
 
   const persistState = (run) => {
-    if (run?.statePath) atomicWriteJson(run.statePath, durableRunState(run));
+    if (!run?.statePath) return true;
+    return atomicWriteJson(run.statePath, durableRunState(run));
   };
 
   const setAnalyticsRecovery = (run, recovery) => {
@@ -1270,7 +1276,17 @@ export function createChatRunService({
     finish(run, 'failed', 1, null);
   };
 
-  const start = (run, starter) => {
+  const start = (run, starter, { agentRunStatsAdmission = null } = {}) => {
+    // Admission is part of arming the execution, not request parsing. Persist it
+    // synchronously before user code can reach a terminal state so startup
+    // reconciliation never has to rely on an in-memory waiter.
+    if (agentRunStatsAdmission) {
+      run.agentRunStatsAdmission = agentRunStatsAdmission;
+      if (!persistState(run)) {
+        delete run.agentRunStatsAdmission;
+        throw new Error('Failed to persist App Stats run admission before execution');
+      }
+    }
     createRunLifecycleTracer(run).mark('start_requested');
     void starter(run).catch((err) => {
       fail(run, 'AGENT_EXECUTION_FAILED', err instanceof Error ? err.message : String(err));
