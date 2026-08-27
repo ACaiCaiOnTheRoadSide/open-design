@@ -47,7 +47,8 @@ import {
   readCodexRolloutFirstCall,
 } from '../codex-rollout-usage.js';
 import type { ConnectorService } from '../connectors/service.js';
-import type { BusinessFactsStore } from '../storage/business-facts.js';
+import { requireRequestContext, type VerifiedPrincipal } from '../request-context.js';
+import type { AgentRunResultFact, BusinessFactsStore } from '../storage/business-facts.js';
 import type { BusinessFactsOutbox } from '../storage/business-facts-outbox.js';
 import {
   conversationTurnIndexForRun,
@@ -168,6 +169,46 @@ type RunDeliveryTarget = 'managed-project' | 'external-project' | 'none';
 type SeededCommentAttachment = ReturnType<typeof normalizeCommentAttachments>[number] & {
   slideIndex?: number;
 };
+
+export interface AgentRunStatsAdmission {
+  principal: VerifiedPrincipal;
+  accessMode: 'online';
+  feature: 'agent.run';
+}
+
+function agentRunStatsAdmission(req: ApiRequest): AgentRunStatsAdmission | null {
+  if (
+    req.get('x-od-stats-access-mode') !== 'online'
+    || req.get('x-od-stats-feature') !== 'agent.run'
+  ) return null;
+  const principal = requireRequestContext();
+  return {
+    principal: { tenantId: principal.tenantId, userId: principal.userId },
+    accessMode: 'online',
+    feature: 'agent.run',
+  };
+}
+
+export async function recordAgentRunTerminalFact(input: {
+  wait: () => Promise<{ status: string; updatedAt?: number }>;
+  runId: string;
+  attempt: number;
+  admission: AgentRunStatsAdmission;
+  record: (fact: AgentRunResultFact, principal: VerifiedPrincipal) => Promise<void>;
+  now?: () => number;
+}): Promise<void> {
+  const terminal = await input.wait();
+  const fact: AgentRunResultFact = {
+    eventKey: `agent-run:${input.runId}:${input.attempt}`,
+    runId: input.runId,
+    attempt: input.attempt,
+    accessMode: input.admission.accessMode,
+    feature: input.admission.feature,
+    result: terminal.status === 'succeeded' ? 'success' : 'failed',
+    completedAt: terminal.updatedAt ?? (input.now ?? Date.now)(),
+  };
+  await input.record(fact, input.admission.principal);
+}
 
 /**
  * Deck annotations carry a zero-based `slideIndex` so reload/retry can flip the
@@ -412,7 +453,11 @@ interface ChatRunService {
   list(filters: RunListFilters): ChatRun[];
   statusBody(run: ChatRun): ChatRunStatusResponse;
   stream(run: ChatRun, req: Request, res: Response): void;
-  start(run: ChatRun, starter: () => Promise<unknown>): ChatRun;
+  start(
+    run: ChatRun,
+    starter: () => Promise<unknown>,
+    options?: { agentRunStatsAdmission?: (AgentRunStatsAdmission & { attempt: number }) | null },
+  ): ChatRun;
   wait(run: ChatRun): Promise<ChatRunStatusResponse>;
   cancel(
     run: ChatRun,
@@ -1217,6 +1262,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     if (ctx.lifecycle.isDaemonShuttingDown()) {
       return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
     }
+    const runStatsAdmission = agentRunStatsAdmission(req);
     const requestBody = toJsonRecord(req.body);
     const requestAnalyticsContext = readAnalyticsContext(req);
     const mediaExecution = parseMediaExecutionPolicyInput(requestBody.mediaExecution);
@@ -1947,7 +1993,6 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           }
         : {}),
     };
-    res.status(202).json(body);
     if (!resumed && resolvedSnapshot?.ok && resolvedSnapshot.snapshot.pipeline) {
       firePipelineForRun({
         run,
@@ -1972,7 +2017,42 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ? { byokProvider: requestBody.byokProvider }
         : {}),
     };
-    design.runs.start(run, () => startChatRun(executionMeta, run));
+    // Capture the attempt immediately after the execution is really armed.
+    // A response-only idempotent reuse returned above and never reaches here.
+    const runStatsAttempt = (run.manualResumeAttemptCount ?? 0) + 1;
+    try {
+      design.runs.start(run, () => startChatRun(executionMeta, run), {
+        agentRunStatsAdmission: runStatsAdmission
+          ? { ...runStatsAdmission, attempt: runStatsAttempt }
+          : null,
+      });
+    } catch (error) {
+      // The request has not been accepted yet. Drop the optimistic run so a
+      // retry with the same clientRequestId can create and execute a new run.
+      design.runs.drop(run);
+      throw error;
+    }
+
+    const runStatsRecord = ctx.businessFactsOutbox
+      ? (fact: AgentRunResultFact, principal: VerifiedPrincipal) =>
+          ctx.businessFactsOutbox!.recordAgentRunResult(fact, principal)
+      : ctx.businessFacts
+        ? (fact: AgentRunResultFact, principal: VerifiedPrincipal) =>
+            ctx.businessFacts!.recordAgentRunResult(fact, principal)
+        : null;
+    if (runStatsAdmission && runStatsRecord) {
+      void recordAgentRunTerminalFact({
+        wait: () => design.runs.wait(run),
+        runId: run.id,
+        attempt: runStatsAttempt,
+        admission: runStatsAdmission,
+        record: runStatsRecord,
+      }).catch((error) => {
+        // The accepted run is independent from stats delivery/outbox failures.
+        console.warn('[runs] agent run result fact persistence failed', error);
+      });
+    }
+    res.status(202).json(body);
 
     const reqBody = requestBody;
     const analyticsHints =

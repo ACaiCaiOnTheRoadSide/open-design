@@ -112,4 +112,26 @@ describe('BusinessFactsStore', () => {
     expect(calls[0]?.text).toContain('published_count = published_count + 1');
     expect(calls[0]?.values?.at(-1)).toBe('tenant-a');
   });
+
+  it('inserts an agent run result with a stable idempotency key', async () => {
+    const calls: Array<{ text: string; values?: readonly unknown[] }> = [];
+    const store = createBusinessFactsStore({
+      enabled: true,
+      query: async (text, values) => {
+        calls.push({ text, ...(values ? { values } : {}) });
+        return result([], 1);
+      },
+    });
+    const fact = {
+      eventKey: 'agent-run:run-1:2', runId: 'run-1', attempt: 2,
+      accessMode: 'online' as const, feature: 'agent.run' as const,
+      result: 'success' as const, completedAt: 123,
+    };
+    await store.recordAgentRunResult(fact, { tenantId: 'tenant-a', userId: 'user-a' });
+    expect(calls[0]?.text).toContain('ON CONFLICT (event_key) DO NOTHING');
+    expect(calls[0]?.values).toEqual([
+      'agent-run:run-1:2', 'run-1', 2, 'user-a', 'tenant-a',
+      'online', 'agent.run', 'success', 123,
+    ]);
+  });
 });

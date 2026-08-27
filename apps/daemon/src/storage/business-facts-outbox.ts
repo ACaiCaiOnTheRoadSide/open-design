@@ -1,6 +1,12 @@
 import type Database from 'better-sqlite3';
 import { requireRequestContext, runWithRequestContext, type VerifiedPrincipal } from '../request-context.js';
-import type { BusinessFactsStore, MessageFact, ProjectFact, UsageFact } from './business-facts.js';
+import type {
+  AgentRunResultFact,
+  BusinessFactsStore,
+  MessageFact,
+  ProjectFact,
+  UsageFact,
+} from './business-facts.js';
 
 type SqliteDb = Database.Database;
 type OutboxPayload =
@@ -8,7 +14,8 @@ type OutboxPayload =
   | { kind: 'project-create'; principal: VerifiedPrincipal; project: ProjectFact }
   | { kind: 'project-update'; project: ProjectFact }
   | { kind: 'project-delete'; principal: VerifiedPrincipal; projectId: string; deletedAt: number }
-  | { kind: 'project-discard'; principal: VerifiedPrincipal; projectId: string };
+  | { kind: 'project-discard'; principal: VerifiedPrincipal; projectId: string }
+  | { kind: 'agent-run-result'; principal: VerifiedPrincipal; result: AgentRunResultFact };
 
 export interface BusinessFactsOutbox {
   recordMessage(message: MessageFact, usage?: UsageFact): Promise<void>;
@@ -17,6 +24,7 @@ export interface BusinessFactsOutbox {
   enqueueProjectDelete(projectId: string, deletedAt: number, principal?: VerifiedPrincipal): void;
   recordProjectDelete(projectId: string, deletedAt: number, principal?: VerifiedPrincipal): Promise<void>;
   enqueueProjectDiscard(projectId: string, principal?: VerifiedPrincipal): void;
+  recordAgentRunResult(result: AgentRunResultFact, principal: VerifiedPrincipal): Promise<void>;
   drain(): Promise<void>;
   stop(): void;
 }
@@ -71,6 +79,8 @@ export function createBusinessFactsOutbox(
             await runWithRequestContext(payload.principal, () => store.deleteProject(payload.projectId, payload.deletedAt));
           } else if (payload.kind === 'project-discard') {
             await runWithRequestContext(payload.principal, () => store.discardProject(payload.projectId));
+          } else if (payload.kind === 'agent-run-result') {
+            await store.recordAgentRunResult(payload.result, payload.principal);
           } else {
             throw new Error('Unknown business fact outbox payload');
           }
@@ -173,6 +183,15 @@ export function createBusinessFactsOutbox(
         kind: 'project-discard', principal: verifiedPrincipal(explicitPrincipal), projectId,
       });
       queueMicrotask(() => { void drain(); });
+    },
+    async recordAgentRunResult(result, explicitPrincipal) {
+      if (!store.enabled) return;
+      const principal = verifiedPrincipal(explicitPrincipal);
+      const id = result.eventKey;
+      insertPayload(id, { kind: 'agent-run-result', principal, result });
+      await drain();
+      const pending = db.prepare(`SELECT 1 FROM business_fact_outbox WHERE id = ?`).get(id);
+      if (pending) throw new Error('Agent run result was queued for durable retry');
     },
     drain,
     stop() {

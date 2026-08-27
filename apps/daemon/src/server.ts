@@ -7633,6 +7633,8 @@ export async function startServer({
     db,
     reportLangfuse: reportRunCompletedFromDaemon,
     runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
+    recordAgentRunResult: (fact, principal) =>
+      businessFactsOutbox.recordAgentRunResult(fact, principal),
   }).then((reconciled) => {
     if (reconciled.interrupted > 0 || reconciled.messagesReconciled > 0) {
       console.warn('[runs] reconciled interrupted run terminals', reconciled);

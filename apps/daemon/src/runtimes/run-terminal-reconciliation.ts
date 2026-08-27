@@ -11,8 +11,10 @@ import {
 } from '@open-design/contracts/analytics';
 
 import { appendMessageStatusEvent } from '../db.js';
+import type { VerifiedPrincipal } from '../request-context.js';
 import { classifyRunFailure } from '../run-failure-classification.js';
 import { deriveRunErrorCode, runResultFromStatus } from '../run-result.js';
+import type { AgentRunResultFact } from '../storage/business-facts.js';
 import { runAskedUserQuestion } from './run-artifacts.js';
 import {
   interruptDurableRunAfterDaemonRestart,
@@ -58,6 +60,12 @@ interface DurableRunState extends RestartRecoverableDurableRunState {
   promptCache?: Record<string, unknown>;
   analyticsRecovery?: AnalyticsRecovery;
   langfuseCompletedAt?: number;
+  agentRunStatsAdmission?: {
+    principal: VerifiedPrincipal;
+    accessMode: 'online';
+    feature: 'agent.run';
+    attempt: number;
+  };
 }
 
 interface AnalyticsLike {
@@ -77,6 +85,10 @@ interface ReconciliationOptions {
   db: Database.Database;
   reportLangfuse(args: Record<string, unknown>): unknown | Promise<unknown>;
   runsLogDir: string;
+  recordAgentRunResult?: (
+    fact: AgentRunResultFact,
+    principal: VerifiedPrincipal,
+  ) => void | Promise<void>;
 }
 
 export interface RunTerminalReconciliationResult {
@@ -85,6 +97,7 @@ export interface RunTerminalReconciliationResult {
   messagesReconciled: number;
   analyticsReplayed: number;
   langfuseReplayed: number;
+  agentRunResultsReplayed: number;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -214,6 +227,7 @@ export async function reconcileDurableRunTerminals(
     messagesReconciled: 0,
     analyticsReplayed: 0,
     langfuseReplayed: 0,
+    agentRunResultsReplayed: 0,
   };
   let entries: fs.Dirent[] = [];
   try {
@@ -240,6 +254,36 @@ export async function reconcileDurableRunTerminals(
 
   const statesByRunId = new Map(states.map((entry) => [entry.state.id, entry.state]));
   result.messagesReconciled = reconcileMessages(options.db, statesByRunId, now);
+
+  // Interrupted states have already been atomically rewritten as failed here.
+  // Thus both crash windows derive the same stable key and terminal timestamp
+  // entirely from the journal, without an in-memory waiter or browser SSE.
+  if (options.recordAgentRunResult) {
+    for (const { state } of states) {
+      const admission = state.agentRunStatsAdmission;
+      if (
+        !TERMINAL_STATUSES.has(state.status)
+        || admission?.accessMode !== 'online'
+        || admission.feature !== 'agent.run'
+        || !Number.isInteger(admission.attempt)
+        || admission.attempt < 1
+        || typeof admission.principal?.tenantId !== 'string'
+        || !admission.principal.tenantId
+        || typeof admission.principal?.userId !== 'string'
+        || !admission.principal.userId
+      ) continue;
+      await options.recordAgentRunResult({
+        eventKey: `agent-run:${state.id}:${admission.attempt}`,
+        runId: state.id,
+        attempt: admission.attempt,
+        accessMode: admission.accessMode,
+        feature: admission.feature,
+        result: state.status === 'succeeded' ? 'success' : 'failed',
+        completedAt: state.updatedAt,
+      }, admission.principal);
+      result.agentRunResultsReplayed += 1;
+    }
+  }
 
   for (const entry of states) {
     const { state } = entry;

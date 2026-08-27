@@ -136,6 +136,57 @@ describe('durable run terminal reconciliation', () => {
     expect(reportLangfuse).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['queued', 'failed', 'failed'],
+    ['running', 'failed', 'failed'],
+    ['succeeded', 'succeeded', 'success'],
+  ] as const)('replays a durable %s stats admission as %s', async (initialStatus, persistedStatus, factResult) => {
+    const runId = `run-stats-${initialStatus}`;
+    const runDir = path.join(tmpDir, runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: runId,
+      projectId: 'p1',
+      conversationId: 'c1',
+      assistantMessageId: null,
+      agentId: 'amr',
+      status: initialStatus,
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      langfuseCompletedAt: 2_000,
+      agentRunStatsAdmission: {
+        principal: { tenantId: 'tenant-a', userId: 'user-a' },
+        accessMode: 'online',
+        feature: 'agent.run',
+        attempt: 3,
+      },
+    }));
+    const recordAgentRunResult = vi.fn(async () => undefined);
+
+    const result = await reconcileDurableRunTerminals({
+      analytics: { capture: vi.fn() },
+      appVersion: '0.15.1',
+      db,
+      reportLangfuse: vi.fn(),
+      runsLogDir: tmpDir,
+      recordAgentRunResult,
+    });
+
+    const state = JSON.parse(fs.readFileSync(path.join(runDir, 'state.json'), 'utf8'));
+    expect(state.status).toBe(persistedStatus);
+    expect(recordAgentRunResult).toHaveBeenCalledWith({
+      eventKey: `agent-run:${runId}:3`,
+      runId,
+      attempt: 3,
+      accessMode: 'online',
+      feature: 'agent.run',
+      result: factResult,
+      completedAt: state.updatedAt,
+    }, { tenantId: 'tenant-a', userId: 'user-a' });
+    expect(result.agentRunResultsReplayed).toBe(1);
+  });
+
   it('repairs legacy queued messages even when no state journal exists', async () => {
     db.prepare(
       `INSERT INTO messages (id, run_id, run_status, events_json)
