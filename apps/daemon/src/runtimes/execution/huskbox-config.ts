@@ -1,7 +1,7 @@
 export interface HuskboxExecutionConfig {
   baseUrl: string;
   apiKey?: string;
-  tenantId: string;
+  image?: string;
   sandboxMount: string;
   daemonMount: string;
   daemonPublicUrl?: string;
@@ -18,9 +18,7 @@ function positiveInteger(raw: string | undefined, fallback: number): number {
 
 export function huskboxExecutionConfigFromEnv(env: NodeJS.ProcessEnv = process.env): HuskboxExecutionConfig {
   const baseUrl = env.OD_HUSKBOX_BASE_URL?.trim();
-  const tenantId = env.OD_HUSKBOX_TENANT_ID?.trim();
   if (!baseUrl) throw new Error('OD_HUSKBOX_BASE_URL is required for huskbox execution');
-  if (!tenantId) throw new Error('OD_HUSKBOX_TENANT_ID is required for huskbox execution');
   const parsed = new URL(baseUrl);
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('OD_HUSKBOX_BASE_URL must use http or https');
@@ -29,7 +27,7 @@ export function huskboxExecutionConfigFromEnv(env: NodeJS.ProcessEnv = process.e
   return {
     baseUrl: parsed.toString().replace(/\/$/u, ''),
     ...(env.OD_HUSKBOX_API_KEY?.trim() ? { apiKey: env.OD_HUSKBOX_API_KEY.trim() } : {}),
-    tenantId,
+    ...(env.OD_HUSKBOX_IMAGE?.trim() ? { image: env.OD_HUSKBOX_IMAGE.trim() } : {}),
     sandboxMount: env.OD_HUSKBOX_SANDBOX_MOUNT?.trim() || '/workspace',
     daemonMount: env.OD_HUSKBOX_DAEMON_MOUNT?.trim() || '/data',
     ...(env.OD_HUSKBOX_DAEMON_PUBLIC_URL?.trim() ? { daemonPublicUrl: env.OD_HUSKBOX_DAEMON_PUBLIC_URL.trim().replace(/\/$/u, '') } : {}),

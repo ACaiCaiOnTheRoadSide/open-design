@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { HuskboxExecutionConfig } from '../../../src/runtimes/execution/huskbox-config.js';
+import { huskboxExecutionConfigFromEnv, type HuskboxExecutionConfig } from '../../../src/runtimes/execution/huskbox-config.js';
 import {
   HUSKBOX_BOOTSTRAP_SCRIPT,
   HuskboxExecutionError,
@@ -10,7 +10,7 @@ import {
 } from '../../../src/runtimes/execution/huskbox-transport.js';
 
 const config: HuskboxExecutionConfig = {
-  baseUrl: 'https://huskbox.test', apiKey: 'secret-key', tenantId: 'tenant-a',
+  baseUrl: 'https://huskbox.test', apiKey: 'secret-key', image: 'registry.test/ohmyagent:latest',
   sandboxMount: '/workspace', daemonMount: '/data',
   daemonPublicUrl: 'https://daemon.test', backendPublicUrl: 'https://backend.test',
   retryMaxAttempts: 3, retryBaseMs: 1, requestTimeoutMs: 20,
@@ -35,18 +35,31 @@ function execute(fetcher: typeof fetch, stdin: 'pipe' | 'ignore' = 'ignore', opt
 }
 
 describe('HuskboxExecutionTransport', () => {
-  it('sends the real camelCase wire request with tenant and bearer auth and streams output', async () => {
+  it('does not require or forward tenant config and leaves image empty for the platform default', () => {
+    const parsed = huskboxExecutionConfigFromEnv({
+      OD_HUSKBOX_BASE_URL: 'https://huskbox.test/',
+      OD_HUSKBOX_API_KEY: ' secret ',
+      OD_HUSKBOX_TENANT_ID: 'legacy-ignored',
+      OD_HUSKBOX_IMAGE: '  ',
+    });
+    expect(parsed).toMatchObject({ baseUrl: 'https://huskbox.test', apiKey: 'secret' });
+    expect(parsed).not.toHaveProperty('tenantId');
+    expect(parsed).not.toHaveProperty('image');
+  });
+
+  it('sends the OpenAPI snake_case request without a tenant header and streams output', async () => {
     let requestBody: any;
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       requestBody = JSON.parse(String(init?.body));
       expect(init?.method).toBe('POST');
-      expect(new Headers(init?.headers).get('X-Huskbox-Tenant-ID')).toBe('tenant-a');
+      expect(String(_url)).toBe('https://huskbox.test/openapi/v1/executions/stream');
+      expect(new Headers(init?.headers).get('X-Huskbox-Tenant-ID')).toBeNull();
       expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer secret-key');
       return sse(
         ['started', { id: 'exec-1', status: 'running' }],
         ['stdout', { id: 'exec-1', data: '你好' }],
         ['stderr', { id: 'exec-1', data: 'warn' }],
-        ['completed', { id: 'exec-1', status: 'succeeded', exitCode: 0, timedOut: false }],
+        ['completed', { id: 'exec-1', status: 'succeeded', exit_code: 0, timed_out: false }],
       );
     }) as typeof fetch;
     const handle = execute(fetcher);
@@ -58,15 +71,16 @@ describe('HuskboxExecutionTransport', () => {
     expect(requestBody).toMatchObject({ cmd: ['bash', '-c', expect.any(String), 'bash', 'agent', '--json'], env: { LANG: 'zh_CN.UTF-8' } });
     expect(requestBody.env.TOKEN).toBeUndefined();
     expect(requestBody.env.ARBITRARY_SECRET).toBeUndefined();
-    expect(requestBody).toHaveProperty('idempotencyKey');
-    expect(requestBody).not.toHaveProperty('tenant_id');
+    expect(requestBody).toHaveProperty('idempotency_key');
+    expect(requestBody).toHaveProperty('image', 'registry.test/ohmyagent:latest');
+    expect(requestBody).not.toHaveProperty('idempotencyKey');
   });
 
   it('dispatches the actual ohmyagent headless command and stages protected configs in bootstrap', async () => {
     let body: any;
     const fetcher = vi.fn(async (_url, init) => {
       body = JSON.parse(String(init?.body));
-      return sse(['started', { id: 'oma' }], ['completed', { id: 'oma', status: 'succeeded', exitCode: 0 }]);
+      return sse(['started', { id: 'oma' }], ['completed', { id: 'oma', status: 'succeeded', exit_code: 0 }]);
     }) as typeof fetch;
     const transport = new HuskboxExecutionTransport(config, { fetcher });
     const handle = transport.execute({
@@ -93,7 +107,7 @@ describe('HuskboxExecutionTransport', () => {
     let body: any;
     const fetcher = vi.fn(async (_url, init) => {
       body = JSON.parse(String(init?.body));
-      return sse(['started', { id: 'e' }], ['completed', { id: 'e', status: 'succeeded', exitCode: 0 }]);
+      return sse(['started', { id: 'e' }], ['completed', { id: 'e', status: 'succeeded', exit_code: 0 }]);
     }) as typeof fetch;
     const handle = execute(fetcher, 'pipe');
     handle.writeStdin('pro');
@@ -104,15 +118,15 @@ describe('HuskboxExecutionTransport', () => {
     expect(body.env.OD_STDIN_LEN).toBe('6');
   });
 
-  it('retries pre-ack 429/409/5xx/network failures with one stable idempotency key', async () => {
+  it('retries pre-ack 429/network failures with one stable idempotency key', async () => {
     const keys: string[] = [];
     let attempt = 0;
     const fetcher = vi.fn(async (_url, init) => {
-      keys.push(JSON.parse(String(init?.body)).idempotencyKey);
+      keys.push(JSON.parse(String(init?.body)).idempotency_key);
       attempt++;
-      if (attempt === 1) return new Response(JSON.stringify({ error: { code: 'BUSY', message: 'busy' } }), { status: 429 });
+      if (attempt === 1) return new Response(JSON.stringify({ code: 'RESOURCE_EXHAUSTED', message: 'busy', trace_id: 'trace-busy', data: { retry_after: 1 } }), { status: 429 });
       if (attempt === 2) throw new TypeError('socket reset');
-      return sse(['started', { id: 'e3' }], ['completed', { id: 'e3', status: 'succeeded', exitCode: 0 }]);
+      return sse(['started', { id: 'e3' }], ['completed', { id: 'e3', status: 'succeeded', exit_code: 0 }]);
     }) as typeof fetch;
     const handle = execute(fetcher);
     const stderr = read(handle.stderr);
@@ -122,16 +136,93 @@ describe('HuskboxExecutionTransport', () => {
     expect(await stderr).toContain('[od-retry]');
   });
 
-  it.each([409, 500])('retries retryable HTTP %s responses', async (status) => {
+  it('retries retryable HTTP 500 responses', async () => {
     let attempts = 0;
     const fetcher = vi.fn(async () => {
       attempts++;
-      if (attempts === 1) return Response.json({ error: { code: 'RETRYABLE', message: 'try again' } }, { status });
-      return sse(['started', { id: 'ok' }], ['completed', { id: 'ok', status: 'succeeded', exitCode: 0 }]);
+      if (attempts === 1) return Response.json({ code: 'UNAVAILABLE', message: 'try again' }, { status: 500 });
+      return sse(['started', { id: 'ok' }], ['completed', { id: 'ok', status: 'succeeded', exit_code: 0 }]);
     }) as typeof fetch;
     const handle = execute(fetcher);
     await expect(handle.result).resolves.toEqual({ exitCode: 0, signal: null });
     expect(attempts).toBe(2);
+  });
+
+  it('accepts a terminal idempotency replay that completes without a started event', async () => {
+    const fetcher = vi.fn(async () => sse(
+      ['completed', { id: 'terminal-replay', status: 'succeeded', exit_code: 0, timed_out: false }],
+    )) as typeof fetch;
+    const handle = execute(fetcher);
+    await expect(handle.started).resolves.toBeUndefined();
+    await expect(handle.result).resolves.toEqual({ exitCode: 0, signal: null });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers EXECUTION_IN_PROGRESS with an error data id through enveloped GET without re-POSTing', async () => {
+    let posts = 0;
+    let gets = 0;
+    const fetcher = vi.fn(async (url, init) => {
+      if (init?.method === 'POST') {
+        posts++;
+        return Response.json({
+          code: 'EXECUTION_IN_PROGRESS', message: 'already running', trace_id: 'trace-409', data: { id: 'existing' },
+        }, { status: 409 });
+      }
+      gets++;
+      expect(String(url)).toBe('https://huskbox.test/openapi/v1/executions/existing');
+      return Response.json({ code: 0, message: 'ok', data: { id: 'existing', status: 'succeeded', exit_code: 0 } });
+    }) as typeof fetch;
+    const handle = execute(fetcher);
+    await expect(handle.result).resolves.toEqual({ exitCode: 0, signal: null });
+    expect(posts).toBe(1);
+    expect(gets).toBe(1);
+  });
+
+  it('retries a bounded EXECUTION_IN_PROGRESS without an id using the same key', async () => {
+    const keys: string[] = [];
+    const fetcher = vi.fn(async (_url, init) => {
+      keys.push(JSON.parse(String(init?.body)).idempotency_key);
+      return Response.json({ code: 'EXECUTION_IN_PROGRESS', message: 'already running', data: {} }, { status: 409 });
+    }) as typeof fetch;
+    const handle = execute(fetcher);
+    await expect(handle.result).resolves.toMatchObject({
+      exitCode: 127,
+      error: expect.objectContaining({ code: 'EXECUTION_IN_PROGRESS' }),
+    });
+    expect(keys).toHaveLength(config.retryMaxAttempts);
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it('treats IDEMPOTENCY_KEY_REUSED and unrelated 409 errors as permanent and preserves flat error fields', async () => {
+    for (const code of ['IDEMPOTENCY_KEY_REUSED', 'CONFLICT']) {
+      const fetcher = vi.fn(async () => Response.json({
+        code, message: 'permanent conflict', trace_id: 'trace-permanent', data: { reason: 'different request' },
+      }, { status: 409 })) as typeof fetch;
+      const handle = execute(fetcher);
+      await expect(handle.result).resolves.toMatchObject({
+        exitCode: 127,
+        error: expect.objectContaining({
+          code,
+          details: expect.objectContaining({
+            status: 409, retryable: false, trace_id: 'trace-permanent', data: { reason: 'different request' },
+          }),
+        }),
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('keeps reading after completed and reports a following post-processing error', async () => {
+    const fetcher = vi.fn(async () => sse(
+      ['started', { id: 'post' }],
+      ['completed', { id: 'post', status: 'succeeded', exit_code: 0 }],
+      ['error', { id: 'post', error: { code: 'POST_PROCESSING_FAILED', message: 'wallet confirmation failed' }, trace_id: 'trace-post' }],
+    )) as typeof fetch;
+    const handle = execute(fetcher);
+    await expect(handle.result).resolves.toMatchObject({
+      exitCode: 127,
+      error: expect.objectContaining({ code: 'POST_PROCESSING_FAILED' }),
+    });
   });
 
   it('completes from a succeeded probe after a started-only dropped stream without re-POSTing', async () => {
@@ -140,7 +231,7 @@ describe('HuskboxExecutionTransport', () => {
     const fetcher = vi.fn(async (_url, init) => {
       if (init?.method !== 'POST') {
         probes++;
-        return Response.json({ id: 'first', status: 'succeeded', exitCode: 0, timedOut: false });
+        return Response.json({ code: 0, message: 'ok', data: { id: 'first', status: 'succeeded', exit_code: 0, timed_out: false } });
       }
       posts++;
       return sse(['started', { id: 'first', status: 'running' }]);
@@ -160,8 +251,8 @@ describe('HuskboxExecutionTransport', () => {
         return sse(['started', { id: 'partial' }], ['stdout', { id: 'partial', data: 'part' }]);
       }
       probes++;
-      expect(String(url)).toBe('https://huskbox.test/v1/executions/partial');
-      return Response.json({ id: 'partial', status: 'failed', exitCode: 1 });
+      expect(String(url)).toBe('https://huskbox.test/openapi/v1/executions/partial');
+      return Response.json({ code: 0, message: 'ok', data: { id: 'partial', status: 'failed', exit_code: 1 } });
     }) as typeof fetch;
     const handle = execute(fetcher);
     await expect(handle.result).resolves.toMatchObject({ exitCode: 1 });
@@ -170,8 +261,8 @@ describe('HuskboxExecutionTransport', () => {
   });
 
   it.each([
-    [{ id: 'e', status: 'failed', exitCode: 7, error: { code: 'WORKER_FAILED', message: 'boom' } }, 7, 'WORKER_FAILED'],
-    [{ id: 'e', status: 'timed_out', timedOut: true }, 124, 'EXECUTION_TIMEOUT'],
+    [{ id: 'e', status: 'failed', exit_code: 7, error: { code: 'WORKER_FAILED', message: 'boom' } }, 7, 'WORKER_FAILED'],
+    [{ id: 'e', status: 'timed_out', timed_out: true }, 124, 'EXECUTION_TIMEOUT'],
   ] as const)('does not re-POST an acknowledged dropped execution probed as %s', async (probe, exitCode, code) => {
     let posts = 0;
     let gets = 0;
@@ -181,7 +272,7 @@ describe('HuskboxExecutionTransport', () => {
         return sse(['started', { id: 'e', status: 'running' }]);
       }
       gets++;
-      return Response.json(probe);
+      return Response.json({ code: 0, message: 'ok', data: probe });
     }) as typeof fetch;
     const handle = execute(fetcher);
     await expect(handle.result).resolves.toMatchObject({
@@ -201,9 +292,9 @@ describe('HuskboxExecutionTransport', () => {
         return sse(['started', { id: 'poll-success', status: 'running' }]);
       }
       gets++;
-      if (gets === 1) return Response.json({ id: 'poll-success', status: 'pending' });
-      if (gets === 2) return Response.json({ id: 'poll-success', status: 'running' });
-      return Response.json({ id: 'poll-success', status: 'succeeded', exitCode: 0 });
+      if (gets === 1) return Response.json({ code: 0, message: 'ok', data: { id: 'poll-success', status: 'pending' } });
+      if (gets === 2) return Response.json({ code: 0, message: 'ok', data: { id: 'poll-success', status: 'running' } });
+      return Response.json({ code: 0, message: 'ok', data: { id: 'poll-success', status: 'succeeded', exit_code: 0 } });
     }) as typeof fetch;
     const handle = execute(fetcher);
     await expect(handle.result).resolves.toEqual({ exitCode: 0, signal: null });
@@ -220,7 +311,7 @@ describe('HuskboxExecutionTransport', () => {
         return sse(['started', { id: 'poll-timeout', status: 'running' }]);
       }
       gets++;
-      return Response.json({ id: 'poll-timeout', status: gets === 1 ? 'pending' : 'running' });
+      return Response.json({ code: 0, message: 'ok', data: { id: 'poll-timeout', status: gets === 1 ? 'pending' : 'running' } });
     }) as typeof fetch;
     const handle = execute(fetcher);
     await expect(handle.result).resolves.toMatchObject({
@@ -249,8 +340,8 @@ describe('HuskboxExecutionTransport', () => {
 
   it('maps timeout, structured error, and missing exit code', async () => {
     const cases = [
-      [{ id: 't', status: 'timed_out', timedOut: true }, 124, 'EXECUTION_TIMEOUT'],
-      [{ id: 'f', status: 'failed', exitCode: 9, error: { code: 'WORKER_FAILED', message: 'boom' } }, 9, 'WORKER_FAILED'],
+      [{ id: 't', status: 'timed_out', timed_out: true }, 124, 'EXECUTION_TIMEOUT'],
+      [{ id: 'f', status: 'failed', exit_code: 9, error: { code: 'WORKER_FAILED', message: 'boom' } }, 9, 'WORKER_FAILED'],
       [{ id: 'm', status: 'failed' }, 127, 'EXECUTION_FAILED'],
     ] as const;
     for (const [completed, exitCode, code] of cases) {
@@ -331,7 +422,7 @@ describe('HuskboxExecutionTransport', () => {
       prepare: () => { order.push('prepare'); },
       hydrateAfterExecution: async () => { order.push('hydrate'); },
     };
-    const fetcher = vi.fn(async () => { order.push('dispatch'); return sse(['started', { id: 'e' }], ['completed', { id: 'e', status: 'succeeded', exitCode: 0 }]); }) as typeof fetch;
+    const fetcher = vi.fn(async () => { order.push('dispatch'); return sse(['started', { id: 'e' }], ['completed', { id: 'e', status: 'succeeded', exit_code: 0 }]); }) as typeof fetch;
     const handle = execute(fetcher, 'ignore', { workspaceService });
     await handle.result;
     order.push('result');

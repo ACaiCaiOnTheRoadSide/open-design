@@ -24,8 +24,8 @@ const ENV_KEYS = [
   'OD_DATA_DIR',
   'OD_EXECUTION_TRANSPORT',
   'OD_HUSKBOX_BASE_URL',
-  'OD_HUSKBOX_TENANT_ID',
   'OD_HUSKBOX_API_KEY',
+  'OD_HUSKBOX_IMAGE',
   'OD_HUSKBOX_RETRY_MAX_ATTEMPTS',
 ] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -62,8 +62,8 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   process.env.OD_DATA_DIR = dataDir;
   process.env.OD_EXECUTION_TRANSPORT = 'huskbox';
   process.env.OD_HUSKBOX_BASE_URL = fake.url;
-  process.env.OD_HUSKBOX_TENANT_ID = 'tenant-integration';
   process.env.OD_HUSKBOX_API_KEY = 'huskbox-secret';
+  process.env.OD_HUSKBOX_IMAGE = 'registry.test/ohmyagent:v1';
   process.env.OD_HUSKBOX_RETRY_MAX_ATTEMPTS = '1';
 
   vi.resetModules();
@@ -108,12 +108,13 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   expect(requests).toHaveLength(1);
   const request = requests[0]!;
   expect(request.method).toBe('POST');
-  expect(request.url).toBe('/v1/executions/stream');
-  expect(request.headers['x-huskbox-tenant-id']).toBe('tenant-integration');
+  expect(request.url).toBe('/openapi/v1/executions/stream');
+  expect(request.headers['x-huskbox-tenant-id']).toBeUndefined();
   expect(request.headers.authorization).toBe('Bearer huskbox-secret');
   expect(request.headers.accept).toBe('text/event-stream');
   expect(request.body).toEqual(expect.objectContaining({
-    idempotencyKey: expect.any(String),
+    idempotency_key: expect.any(String),
+    image: 'registry.test/ohmyagent:v1',
     cmd: expect.arrayContaining(['bash', 'ohmyagent', '--output-format', 'json']),
     env: expect.objectContaining({
       OD_DATA_DIR: '/workspace',
@@ -122,8 +123,8 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
     }),
     stdin: expect.stringContaining('Return the integration answer.'),
   }));
-  expect(request.body).not.toHaveProperty('idempotency_key');
-  expect(request.body).not.toHaveProperty('input_workspace_url');
+  expect(request.body).not.toHaveProperty('idempotencyKey');
+  expect(request.body).not.toHaveProperty('inputWorkspaceURL');
   expect(request.body.cmd).not.toEqual(expect.stringContaining('Return the integration answer.'));
 
   expect(events).toEqual(expect.arrayContaining([
@@ -197,7 +198,7 @@ async function startFakeHuskbox(requests: CapturedHuskboxRequest[]): Promise<{ u
       headers: req.headers,
       body: JSON.parse(raw) as Record<string, unknown>,
     });
-    if (req.method !== 'POST' || req.url !== '/v1/executions/stream') {
+    if (req.method !== 'POST' || req.url !== '/openapi/v1/executions/stream') {
       res.writeHead(404).end();
       return;
     }
@@ -211,7 +212,7 @@ async function startFakeHuskbox(requests: CapturedHuskboxRequest[]): Promise<{ u
       { type: 'turn_done', session_id: 'oma-session-real-http', turn_id: 'turn-1', data: {} },
     ].map((event) => JSON.stringify(event)).join('\n') + '\n';
     sendSse(res, 'stdout', { id: 'husk-exec-1', data: jsonl });
-    sendSse(res, 'completed', { id: 'husk-exec-1', status: 'completed', exitCode: 0 });
+    sendSse(res, 'completed', { id: 'husk-exec-1', status: 'succeeded', exit_code: 0, timed_out: false });
     res.end();
   });
   await new Promise<void>((resolve, reject) => {

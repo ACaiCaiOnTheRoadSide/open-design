@@ -43,7 +43,7 @@ export class HuskboxExecutionError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly details: { status?: number; executionId?: string; attempt?: number; retryable?: boolean; remoteStatus?: string } = {},
+    readonly details: { status?: number; executionId?: string; attempt?: number; retryable?: boolean; remoteStatus?: string; trace_id?: string; data?: unknown } = {},
   ) {
     super(message);
     this.name = 'HuskboxExecutionError';
@@ -254,7 +254,8 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
       for (let attempt = 1; attempt <= this.config.retryMaxAttempts; attempt++) {
         if (this.abort.signal.aborted) return this.finish({ exitCode: null, signal: 'SIGTERM' });
         const request: HuskboxExecuteRequest = {
-          idempotencyKey,
+          idempotency_key: idempotencyKey,
+          ...(this.config.image ? { image: this.config.image } : {}),
           cmd: ['bash', '-c', HUSKBOX_BOOTSTRAP_SCRIPT, 'bash', this.spec.command, ...(this.spec.args ?? [])],
           env,
           ...(stdin ? { stdin } : {}),
@@ -312,6 +313,7 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
           const api = body.error as HuskboxApiError | undefined;
           eventError = new HuskboxExecutionError(api?.code || 'EXECUTION_ERROR', api?.message || 'Huskbox execution failed', {
             executionId: body.id || this.executionId, attempt, retryable: false,
+            ...(typeof body.trace_id === 'string' ? { trace_id: body.trace_id } : {}),
           });
         }
       });
@@ -322,9 +324,25 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
           await this.pollAcknowledgedStatus(this.executionId), attempt, projectId,
         );
       }
-      const retryable = !(error instanceof HuskboxHttpError) || error.status === 409 || error.status === 429 || error.status >= 500;
+      if (error instanceof HuskboxHttpError && error.code === 'EXECUTION_IN_PROGRESS') {
+        const id = this.executionIdFromErrorData(error.data);
+        if (id) {
+          this.executionId = id;
+          return await this.resultAfterAcknowledgedDrop(
+            await this.pollAcknowledgedStatus(id), attempt, projectId,
+          );
+        }
+      }
+      const retryable = !(error instanceof HuskboxHttpError)
+        || error.status === 429
+        || error.status >= 500
+        || (error.status === 409 && error.code === 'EXECUTION_IN_PROGRESS');
       const structured = error instanceof HuskboxHttpError
-        ? new HuskboxExecutionError(error.code, error.message, { status: error.status, attempt, retryable })
+        ? new HuskboxExecutionError(error.code, error.message, {
+            status: error.status, attempt, retryable,
+            ...(error.trace_id ? { trace_id: error.trace_id } : {}),
+            ...(error.data !== undefined ? { data: error.data } : {}),
+          })
         : new HuskboxExecutionError('NETWORK_ERROR', error instanceof Error ? error.message : String(error), { attempt, retryable: true });
       this.lastAttemptError = structured;
       if (!retryable || this.sawStdout) return { exitCode: DEFAULT_FAILURE_EXIT, signal: null, error: structured };
@@ -337,7 +355,7 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
     }
     const probe = this.executionId ? await this.pollAcknowledgedStatus(this.executionId) : null;
     if (this.executionId) return await this.resultAfterAcknowledgedDrop(probe, attempt, projectId);
-    const suffix = probe ? ` (execution ${probe.timedOut ? 'timed out' : probe.status})` : '';
+    const suffix = probe ? ` (execution ${probe.timed_out ? 'timed out' : probe.status})` : '';
     const dropped = new HuskboxExecutionError('STREAM_DROPPED', `Huskbox stream dropped before completion${suffix}`, {
       ...(this.executionId ? { executionId: this.executionId } : {}), attempt, retryable: !this.sawStdout,
     });
@@ -368,26 +386,32 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
   }
 
   private isTerminal(execution: HuskboxExecutionStatus): boolean {
-    return execution.timedOut === true
+    return execution.timed_out === true
       || ['succeeded', 'failed', 'timed_out', 'rejected', 'canceled'].includes(execution.status);
   }
 
   private mapCompleted(execution: HuskboxExecutionStatus, attempt: number): ExecutionResult {
-    if (execution.timedOut || execution.status === 'timed_out') {
+    if (execution.timed_out || execution.status === 'timed_out') {
       return { exitCode: 124, signal: null, error: new HuskboxExecutionError('EXECUTION_TIMEOUT', 'Huskbox execution timed out', { executionId: execution.id, attempt }) };
     }
     if ((execution.status === 'failed' || execution.status === 'rejected' || execution.status === 'canceled')
-      && typeof execution.exitCode !== 'number' && !execution.error) {
+      && typeof execution.exit_code !== 'number' && !execution.error) {
       const code = execution.status === 'rejected' ? 'EXECUTION_REJECTED' : 'EXECUTION_FAILED';
       return { exitCode: DEFAULT_FAILURE_EXIT, signal: null, error: new HuskboxExecutionError(code, `Huskbox execution ${execution.status}`, { executionId: execution.id, attempt }) };
     }
-    if (typeof execution.exitCode !== 'number') {
-      return { exitCode: DEFAULT_FAILURE_EXIT, signal: null, error: new HuskboxExecutionError('MISSING_EXIT_CODE', `Huskbox ${execution.status || 'completed'} execution has no exitCode`, { executionId: execution.id, attempt }) };
+    if (typeof execution.exit_code !== 'number') {
+      return { exitCode: DEFAULT_FAILURE_EXIT, signal: null, error: new HuskboxExecutionError('MISSING_EXIT_CODE', `Huskbox ${execution.status || 'completed'} execution has no exit_code`, { executionId: execution.id, attempt }) };
     }
     const error = execution.error
       ? new HuskboxExecutionError(execution.error.code, execution.error.message, { executionId: execution.id, attempt })
       : undefined;
-    return { exitCode: execution.exitCode, signal: null, ...(error ? { error } : {}) };
+    return { exitCode: execution.exit_code, signal: null, ...(error ? { error } : {}) };
+  }
+
+  private executionIdFromErrorData(data: unknown): string {
+    if (!data || typeof data !== 'object') return '';
+    const id = (data as Record<string, unknown>).id;
+    return typeof id === 'string' ? id : '';
   }
 
   private async pollAcknowledgedStatus(id: string): Promise<HuskboxExecutionStatus | null> {
