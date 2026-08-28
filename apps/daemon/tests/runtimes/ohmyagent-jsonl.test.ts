@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest';
+import { createOhMyAgentJsonlHandler } from '../../src/runtimes/ohmyagent-jsonl.js';
+
+const frame = (type: string, data: unknown = {}, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ type, session_id: 's1', turn_id: 't1', data, timestamp: 1, ...extra });
+
+describe('OhMyAgent JSONL parser', () => {
+  it('captures the first top-level session and reconciles model_done without duplicates', () => {
+    const events: any[] = [];
+    const parser = createOhMyAgentJsonlHandler((event) => events.push(event));
+    parser.feed([
+      frame('model_start'),
+      frame('model_delta', { text: 'hel' }),
+      frame('thinking_delta', { text: 'why' }),
+      frame('model_done', { text: 'hello', thinking: 'why' }),
+      frame('model_delta', { text: 'sub' }, { session_id: 'sub', parent_session_id: 's1' }),
+    ].join('\n') + '\n');
+    expect(events.filter((event) => event.sessionId)).toEqual([
+      expect.objectContaining({ type: 'status', sessionId: 's1' }),
+    ]);
+    expect(events.filter((event) => event.type === 'text_delta').map((event) => event.delta)).toEqual(['hel', 'lo', 'sub']);
+    expect(events.filter((event) => event.type === 'thinking_delta').map((event) => event.delta)).toEqual(['why']);
+  });
+
+  it('maps tools, usage, todos and terminal/progress events', () => {
+    const events: any[] = [];
+    const parser = createOhMyAgentJsonlHandler((event) => events.push(event));
+    for (const line of [
+      frame('tool_call', { id: 'tc', name: 'Bash', input: { command: 'pwd' } }, { tool_call_id: 'tc' }),
+      frame('tool_result', { tool: 'Bash', content: 'ok', is_error: false }, { tool_call_id: 'tc' }),
+      frame('usage', { input_tokens: 2, output_tokens: 3 }),
+      frame('todo_update', { todos: [{ content: 'x', status: 'completed' }] }),
+      frame('compaction', { kind: 'auto', status: 'starting' }),
+      frame('session_summary', { summary: 'x' }),
+      frame('turn_done'),
+    ]) parser.feed(`${line}\n`);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_use', id: 'tc', name: 'Bash' }),
+      expect.objectContaining({ type: 'tool_result', toolUseId: 'tc', isError: false }),
+      expect.objectContaining({ type: 'usage', usage: { input_tokens: 2, output_tokens: 3 } }),
+      expect.objectContaining({ type: 'tool_use', name: 'TodoWrite' }),
+      expect.objectContaining({ type: 'status', label: 'compaction' }),
+      expect.objectContaining({ type: 'status', label: 'session_summary' }),
+      expect.objectContaining({ type: 'status', label: 'turn_done' }),
+    ]));
+  });
+
+  it('keeps transient_retry non-terminal and preserves lossless-only payloads as raw', () => {
+    const events: any[] = [];
+    const parser = createOhMyAgentJsonlHandler((event) => events.push(event));
+    for (const type of ['agent_result', 'task_notification', 'report_findings']) {
+      parser.feed(`${frame(type, { secretStructure: true })}\n`);
+    }
+    parser.feed(`${frame('send_user_message', { message: 'notice', status: 'proactive' })}\n`);
+    parser.feed(`${frame('error', { error: 'retry', kind: 'transient_retry', attempt: '1', retry_in: '1s' })}\n`);
+    parser.feed(`${frame('error', { error: 'fatal' })}\n`);
+    expect(events.filter((event) => event.type === 'raw')).toHaveLength(3);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'text_delta', delta: 'notice' }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'status', label: 'retrying' }));
+    expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
+  });
+
+  it('preserves malformed JSON and parses a final unterminated line', () => {
+    const events: any[] = [];
+    const parser = createOhMyAgentJsonlHandler((event) => events.push(event));
+    parser.feed('{bad}\n' + frame('model_delta', { text: 'tail' }));
+    parser.flush();
+    expect(events).toEqual(expect.arrayContaining([
+      { type: 'raw', line: '{bad}', malformed: true },
+      { type: 'text_delta', delta: 'tail' },
+    ]));
+  });
+});

@@ -57,6 +57,9 @@ export type RuntimeContext = {
   // the prompt via argv or stdin. The daemon creates the file before
   // buildArgs and removes it after the child exits.
   promptFilePath?: string;
+  // Runtime config files staged by the daemon (or by the Huskbox bootstrap).
+  ohmyagentModelConfigPath?: string;
+  ohmyagentMcpConfigPath?: string;
   // Native-resume adapters read these to decide whether to continue the
   // external runtime's own session. `resumeSessionId` is the stored id for
   // this (conversation, agent) when a prior session exists; the adapter sends
@@ -196,7 +199,8 @@ export type RuntimeAgentDef = {
     | 'claude-mcp-json'
     | 'acp-merge'
     | 'opencode-env-content'
-    | 'mimo-env-content';
+    | 'mimo-env-content'
+    | 'ohmyagent-config-file';
   installUrl?: string;
   docsUrl?: string;
   // When `false`, the Settings model picker hides the "Custom (fill below)"

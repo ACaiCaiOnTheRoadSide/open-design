@@ -562,6 +562,30 @@ describe('chat run service shutdown', () => {
       expect(run.signal).toBe('SIGKILL');
     });
 
+    it('delegates stdin close and cancellation to an execution handle', async () => {
+      const runs = createRuns();
+      const child = new FakeChildProcess({ closeOn: 'SIGTERM' });
+      const executionHandle = {
+        endStdin: vi.fn(),
+        cancel: vi.fn().mockResolvedValue({ exitCode: null, signal: 'SIGTERM' }),
+      };
+      const run = runs.create();
+      run.status = 'running';
+      run.stdinOpen = true;
+      (run as any).child = child;
+      (run as any).executionHandle = executionHandle;
+
+      await runs.cancel(run);
+
+      expect(executionHandle.endStdin).toHaveBeenCalledTimes(1);
+      expect(executionHandle.cancel).toHaveBeenCalledWith({
+        graceMs: 3000,
+        forceWaitMs: 500,
+      });
+      expect(child.signals).toEqual([]);
+      expect(run).toMatchObject({ status: 'canceled', signal: 'SIGTERM' });
+    });
+
     it('closes child stdin before signaling a canceled run', async () => {
       const runs = createRuns();
       const child = new FakeChildProcess({ closeOn: 'SIGTERM' });

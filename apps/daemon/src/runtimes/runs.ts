@@ -770,6 +770,7 @@ export function createChatRunService({
       clients: new Set(),
       waiters: new Set(),
       child: null,
+      executionHandle: null,
       acpSession: null,
       childPid: null,
       processGroupId: null,
@@ -863,6 +864,7 @@ export function createChatRunService({
       clients: new Set(),
       waiters: new Set(),
       child: null,
+      executionHandle: null,
       acpSession: null,
       childPid: null,
       processGroupId: null,
@@ -1056,6 +1058,7 @@ export function createChatRunService({
     run.deliverableArtifactKind = undefined;
     run.endedWithUnfinishedWork = false;
     run.child = null;
+    run.executionHandle = null;
     run.acpSession = null;
     run.childPid = null;
     run.processGroupId = null;
@@ -1467,13 +1470,14 @@ export function createChatRunService({
 
   const closeRunStdin = (run) => {
     if (!run?.stdinOpen) return;
-    const stdin = run.child?.stdin;
-    if (stdin && !stdin.destroyed) {
-      try {
-        stdin.end();
-      } catch {
-        // Best-effort: cancellation still falls back to process signals below.
+    try {
+      if (run.executionHandle) run.executionHandle.endStdin();
+      else {
+        const stdin = run.child?.stdin;
+        if (stdin && !stdin.destroyed) stdin.end();
       }
+    } catch {
+      // Best-effort: cancellation still falls back to transport cancellation.
     }
     run.stdinOpen = false;
   };
@@ -1516,6 +1520,15 @@ export function createChatRunService({
         return finishCanceledFromChildState(run, 'SIGTERM');
       }
       closeRunStdin(run);
+      if (run.executionHandle) {
+        const result = await run.executionHandle.cancel({
+          graceMs,
+          forceWaitMs: forceWaitMs(),
+        });
+        recordChildExitObserved(run);
+        finish(run, 'canceled', result.exitCode, result.signal ?? 'SIGTERM');
+        return statusBody(run);
+      }
       killChild(run, 'SIGTERM');
       if (await waitForCanceledChildExit(run, graceMs)) {
         return finishCanceledFromChildState(run, 'SIGTERM');
@@ -1526,6 +1539,16 @@ export function createChatRunService({
     }
 
     closeRunStdin(run);
+    if (run.executionHandle) {
+      const result = await run.executionHandle.cancel({
+        graceMs: cancelGraceMs(),
+        forceWaitMs: forceWaitMs(),
+      });
+      recordChildExitObserved(run);
+      finish(run, 'canceled', result.exitCode, result.signal ?? 'SIGTERM');
+      return statusBody(run);
+    }
+    // Compatibility fallback for unit fixtures and pre-transport run objects.
     killChild(run, 'SIGTERM');
     if (await waitForCanceledChildExit(run, cancelGraceMs())) {
       return finishCanceledFromChildState(run, 'SIGTERM');
@@ -1552,11 +1575,17 @@ export function createChatRunService({
         }
       }
       closeRunStdin(run);
-      killChild(run, 'SIGTERM');
-      finish(run, 'canceled', null, 'SIGTERM');
-      if (run.child && !(await waitForChildExit(run.child, graceMs))) {
-        killChild(run, 'SIGKILL');
-        await waitForChildExit(run.child, 500);
+      if (run.executionHandle) {
+        const cancellation = run.executionHandle.cancel({ graceMs, forceWaitMs: 500 });
+        finish(run, 'canceled', null, 'SIGTERM');
+        await cancellation;
+      } else {
+        killChild(run, 'SIGTERM');
+        finish(run, 'canceled', null, 'SIGTERM');
+        if (run.child && !(await waitForChildExit(run.child, graceMs))) {
+          killChild(run, 'SIGKILL');
+          await waitForChildExit(run.child, 500);
+        }
       }
     }));
   };

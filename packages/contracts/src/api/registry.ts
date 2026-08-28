@@ -141,7 +141,8 @@ export interface AgentInfo {
     | 'claude-mcp-json'
     | 'acp-merge'
     | 'opencode-env-content'
-    | 'mimo-env-content';
+    | 'mimo-env-content'
+    | 'ohmyagent-config-file';
   /**
    * When `false`, the Settings model picker hides the "Custom (fill below)"
    * option and the free-text input. Use this for agents whose CLI doesn't

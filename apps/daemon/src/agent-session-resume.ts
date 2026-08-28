@@ -312,6 +312,10 @@ export function isAgentResumeFailure(
   }
   if (agentId === 'codex') return isCodexResumeFailure(stderr);
   if (agentId === 'opencode') return isOpencodeResumeFailure(stderr);
+  if (agentId === 'ohmyagent') {
+    // Headless startup wraps session.Store.Rebuild failures with this prefix.
+    return /resume session:\s*(?:session .* not found|open .*no such file|no such file)/i.test(`${stderr}\n${stdout}`);
+  }
   if (agentId === 'amr') {
     return (
       isAmrResumeFailure(stdout) ||

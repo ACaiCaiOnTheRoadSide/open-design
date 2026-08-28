@@ -25,6 +25,7 @@ import { codebuddyAgentDef } from './defs/codebuddy.js';
 import { reasonixAgentDef } from './defs/reasonix.js';
 import { mimoAgentDef } from './defs/mimo.js';
 import { atomcodeAgentDef } from './defs/atomcode.js';
+import { ohmyagentAgentDef } from './defs/ohmyagent.js';
 import { readLocalAgentProfileDefs as readLocalAgentProfileDefsFromFile } from './local-profiles.js';
 import type { RuntimeAgentDef } from './types.js';
 
@@ -56,16 +57,21 @@ const ALL_AGENT_DEFS: RuntimeAgentDef[] = [
   codebuddyAgentDef,
   mimoAgentDef,
   atomcodeAgentDef,
+  ohmyagentAgentDef,
 ];
 
 // Unset/blank preserves local compatibility; a configured list is a strict
 // allowlist. Unknown ids produce an empty registry rather than widening access.
 const allowedRaw = (process.env.OD_ALLOWED_AGENTS ?? '').trim();
-const allowedIds = allowedRaw
-  ? new Set(allowedRaw.split(',').map((value) => value.trim()).filter(Boolean))
+const allowedOrder = allowedRaw
+  ? allowedRaw.split(',').map((value) => value.trim()).filter(Boolean)
   : null;
-const BASE_AGENT_DEFS = allowedIds
-  ? ALL_AGENT_DEFS.filter((definition) => allowedIds.has(definition.id))
+const allowedIds = allowedOrder ? new Set(allowedOrder) : null;
+// A configured allowlist also owns preference order. Hosted deployments use
+// `ohmyagent,opencode`, making OhMyAgent the default while retaining an
+// explicit local-transport compatibility fallback.
+const BASE_AGENT_DEFS = allowedOrder
+  ? allowedOrder.flatMap((id) => ALL_AGENT_DEFS.filter((definition) => definition.id === id))
   : ALL_AGENT_DEFS;
 
 export function readLocalAgentProfileDefs(

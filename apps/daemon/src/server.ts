@@ -10,7 +10,7 @@ import type {
 import express from 'express';
 import multer from 'multer';
 import JSZip from 'jszip';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -222,8 +222,11 @@ import { preparePromptFileForAgent } from './runtimes/prompt-file.js';
 import { TerminalControlSequenceStripper } from './runtimes/terminal-control.js';
 import {
   buildOpenCodeByokProviderConfig,
+  BYOK_OPENCODE_API_KEY_ENV,
   BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
 } from './runtimes/byok-opencode.js';
+import { buildOhMyAgentModelConfig, OHMYAGENT_API_KEY_ENV } from './runtimes/ohmyagent-config.js';
+import { buildOhMyAgentMcpConfig } from './runtimes/ohmyagent-mcp.js';
 import {
   extractPlainStreamArtifacts,
   persistPlainStreamArtifactList,
@@ -444,6 +447,7 @@ import {
 import { narrowProjectCritiqueOverride } from './critique/spawn-inputs.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
 import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
+import { createOhMyAgentJsonlHandler } from './runtimes/ohmyagent-jsonl.js';
 import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
@@ -460,6 +464,13 @@ import { importFigmaFromBytes } from './figma/figma-import.js';
 import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
+import {
+  DaemonHuskboxWorkspaceService,
+  HuskboxExecutionTransport,
+  LocalProcessTransport,
+  executionTransportKind,
+  huskboxExecutionConfigFromEnv,
+} from './runtimes/execution/index.js';
 import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
   createRunLifecycleTracer,
@@ -7610,7 +7621,17 @@ export async function startServer({
   });
   const { analyticsService } = telemetry;
   workspaceAnalyticsService = analyticsService;
+  const selectedExecutionTransportKind = executionTransportKind();
+  const executionTransport = selectedExecutionTransportKind === 'huskbox'
+    ? new HuskboxExecutionTransport(huskboxExecutionConfigFromEnv(), {
+        workspaceService: new DaemonHuskboxWorkspaceService({
+          daemonToken: process.env.OD_API_TOKEN ?? '',
+          hydrateProject: hydrateManagedProject,
+        }),
+      })
+    : new LocalProcessTransport();
   const design = {
+    executionTransport,
     runs: createChatRunService({
       createSseResponse,
       createSseErrorPayload,
@@ -11101,7 +11122,12 @@ export async function startServer({
       reasoning: safeReasoning,
       serviceTier: safeServiceTier,
     };
-    const agentLaunch = resolveAgentLaunch(def, configuredAgentEnv);
+    const hostAgentLaunch = resolveAgentLaunch(def, configuredAgentEnv);
+    // Huskbox resolves the executable inside its sandbox image. Do not make a
+    // remote run depend on the same binary also being installed on the daemon.
+    const agentLaunch = selectedExecutionTransportKind === 'huskbox'
+      ? { ...hostAgentLaunch, selectedPath: def.bin, launchPath: def.bin }
+      : hostAgentLaunch;
     const resolvedBin = agentLaunch.selectedPath;
     if (def.id === 'amr' && resolvedBin && agentLaunch.launchPath) {
       // Concretize omitted/default AMR model requests to the live catalog
@@ -11490,7 +11516,7 @@ export async function startServer({
     const destroyChildStdio = (child) => {
       // Best-effort cleanup of stdio streams on a child process we're about
       // to drop. The daemon-sidecar (apps/daemon) keeps listeners attached
-      // to child.stdout / child.stderr / child.stdin across the run
+      // to execution.stdout / execution.stderr / child.stdin across the run
       // lifecycle (line ~12890..~13500+ in this file). Those listeners hold
       // the Stream objects alive, and the Stream objects own the read side
       // of the OS pipes — so dropping the child reference via
@@ -11520,29 +11546,35 @@ export async function startServer({
       // them, so the reap targets THIS attempt's group and never the next one.
       const priorChild = run.child;
       const priorProcessGroupId = run.processGroupId;
+      const priorExecution = run.executionHandle;
+      // Cancellation is transport-owned. LocalProcessTransport captures this
+      // attempt's process group and binds SIGKILL escalation to that exact
+      // generation, so a later retry cannot be killed by an old timer.
+      if (priorExecution) {
+        void priorExecution.cancel({
+          graceMs: Number(process.env.OD_CHAT_RUN_CANCEL_GRACE_MS) || 3_000,
+          forceWaitMs: Number(process.env.OD_CHAT_RUN_CANCEL_FORCE_WAIT_MS) || 500,
+        });
+      } else {
+        // Compatibility fallback for tests and hydrated legacy run objects.
+        const reaped = design.runs.reapProcessGroup(priorProcessGroupId);
+        if (
+          !reaped &&
+          priorChild &&
+          typeof priorChild.kill === 'function' &&
+          priorChild.exitCode === null &&
+          !priorChild.killed
+        ) {
+          try { priorChild.kill('SIGTERM'); } catch {}
+        }
+      }
       // Release the previous child's stdio streams before letting the
       // reference drop — see destroyChildStdio for rationale.
       destroyChildStdio(priorChild);
-      // Disband the WHOLE process group of the failed attempt, not just the
-      // direct child. A same-run retry that only SIGTERMs run.child leaves the
-      // CLI's spawned descendants (MCP servers, tool subprocesses) orphaned
-      // (re-parented to PID 1), accumulating one leaked group per retry. Reap by
-      // the CAPTURED pgid — the SIGKILL escalation is bound to it, so it can
-      // never hit the next attempt's group (the cross-generation kill fixed in
-      // #5202). On win32 / no pgid, fall back to signalling the direct child.
-      const reaped = design.runs.reapProcessGroup(priorProcessGroupId);
-      if (
-        !reaped &&
-        priorChild &&
-        typeof priorChild.kill === 'function' &&
-        priorChild.exitCode === null &&
-        !priorChild.killed
-      ) {
-        try { priorChild.kill('SIGTERM'); } catch {}
-      }
       run.status = 'queued';
       run.updatedAt = Date.now();
       run.child = null;
+      run.executionHandle = null;
       run.processGroupId = null;
       run.acpSession = null;
       run.exitCode = null;
@@ -12026,6 +12058,12 @@ export async function startServer({
         );
       }
     }
+    const ohmyagentModelConfig = def.id === 'ohmyagent'
+      ? buildOhMyAgentModelConfig(byokProvider, safeModel)
+      : null;
+    const ohmyagentMcpConfig = def.externalMcpInjection === 'ohmyagent-config-file'
+      ? buildOhMyAgentMcpConfig(enabledExternalMcp, oauthTokensForSpawn)
+      : null;
 
     // Pre-flight the composed prompt against any argv-byte budget the
     // adapter declared (only DeepSeek TUI today — its CLI doesn't accept
@@ -12236,8 +12274,29 @@ export async function startServer({
         ? path.join(os.tmpdir(), `od-agy-${run.id}.log`)
         : undefined;
     const promptFile = await preparePromptFileForAgent(def, composed, run.id);
+    const ohmyagentConfigDir = selectedExecutionTransportKind === 'huskbox'
+      ? `${huskboxExecutionConfigFromEnv().sandboxMount.replace(/\/$/u, '')}/.od/tmp`
+      : os.tmpdir();
+    const ohmyagentModelConfigPath = ohmyagentModelConfig
+      ? path.join(ohmyagentConfigDir, `od-ohmyagent-model-${run.id}.json`)
+      : undefined;
+    const ohmyagentMcpConfigPath = ohmyagentMcpConfig
+      ? path.join(ohmyagentConfigDir, `od-ohmyagent-mcp-${run.id}.json`)
+      : undefined;
+    const ohmyagentLocalConfigPaths: string[] = [];
+    if (selectedExecutionTransportKind === 'local') {
+      for (const [target, value] of [
+        [ohmyagentModelConfigPath, ohmyagentModelConfig?.config],
+        [ohmyagentMcpConfigPath, ohmyagentMcpConfig],
+      ] as const) {
+        if (!target || !value) continue;
+        await fs.promises.writeFile(target, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 });
+        ohmyagentLocalConfigPaths.push(target);
+      }
+    }
     const cleanupPromptFile = () => {
       if (promptFile) promptFile.cleanup().catch(() => {});
+      for (const target of ohmyagentLocalConfigPaths) fs.promises.unlink(target).catch(() => {});
     };
 
     // Codex CLI parses config.toml before processing any -c overrides. An
@@ -12385,6 +12444,8 @@ export async function startServer({
           hasPriorAssistantTurn,
           agentLogFilePath,
           promptFilePath: promptFile?.path,
+          ohmyagentModelConfigPath,
+          ohmyagentMcpConfigPath,
           resumeSessionId: agentResumeCtx.resumeSessionId,
           newSessionId: agentResumeCtx.newSessionId,
           disablePlugins:
@@ -12654,7 +12715,7 @@ export async function startServer({
         if (acpSession?.abort) {
           acpSession.abort();
         }
-        if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+        if (execution) void execution.cancel({ graceMs: inactivityKillGraceMs, forceWaitMs: inactivityKillGraceMs });
         scheduleForcedChildShutdown();
         return;
       }
@@ -12711,7 +12772,7 @@ export async function startServer({
       if (acpSession?.abort) {
         acpSession.abort();
       }
-      if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+      if (execution) void execution.cancel({ graceMs: inactivityKillGraceMs, forceWaitMs: inactivityKillGraceMs });
       scheduleForcedChildShutdown();
     };
     const armFirstOutputWatchdog = () => {
@@ -12872,7 +12933,8 @@ export async function startServer({
     });
     noteAgentActivity();
 
-    let child;
+    let child = null;
+    let execution = null;
     let acpSession = null;
     let writePromptToChildStdin = false;
     let spawnedAgentEnv = null;
@@ -12905,6 +12967,19 @@ export async function startServer({
         ...(mmdRouteLaunchEnv || {}),
         ...odMediaEnv,
         ...(byokOpenCodeProvider ? byokOpenCodeProvider.env : {}),
+        ...(ohmyagentModelConfig?.env ?? {}),
+        ...(selectedExecutionTransportKind === 'huskbox' && ohmyagentModelConfig
+          ? {
+              OD_OHMYAGENT_MODEL_CONFIG_B64: Buffer.from(JSON.stringify(ohmyagentModelConfig.config)).toString('base64'),
+              OD_OHMYAGENT_MODEL_CONFIG_PATH: ohmyagentModelConfigPath!,
+            }
+          : {}),
+        ...(selectedExecutionTransportKind === 'huskbox' && ohmyagentMcpConfig
+          ? {
+              OD_OHMYAGENT_MCP_CONFIG_B64: Buffer.from(JSON.stringify(ohmyagentMcpConfig)).toString('base64'),
+              OD_OHMYAGENT_MCP_CONFIG_PATH: ohmyagentMcpConfigPath!,
+            }
+          : {}),
         ...await openDesignAmrTraceEnvForRun({
           agentId: def.id,
           runId: run.id,
@@ -12973,6 +13048,37 @@ export async function startServer({
           ? { [isMiMoContent ? 'MIMOCODE_CONFIG_CONTENT' : 'OPENCODE_CONFIG_CONTENT']: opencodeConfigContent }
           : {}),
       }, agentLaunch);
+      // Audited, fixed-name remote inputs only. Do not spread configuredAgentEnv
+      // or provider-controlled env maps: both can contain arbitrary names. The
+      // transport independently allowlists these keys. OD_TOOL_TOKEN comes from
+      // this run's trusted tool grant; OD_SYNC_TOKEN is minted later by the
+      // trusted Huskbox workspace service. HOME/XDG/PATH are transport-owned.
+      const remoteEnv = selectedExecutionTransportKind === 'huskbox'
+        ? {
+            ...(toolTokenGrant?.token ? { OD_TOOL_TOKEN: toolTokenGrant.token } : {}),
+            ...(ohmyagentModelConfig?.env[OHMYAGENT_API_KEY_ENV]
+              ? { [OHMYAGENT_API_KEY_ENV]: ohmyagentModelConfig.env[OHMYAGENT_API_KEY_ENV] }
+              : {}),
+            ...(ohmyagentModelConfig
+              ? {
+                  OD_OHMYAGENT_MODEL_CONFIG_B64: Buffer.from(JSON.stringify(ohmyagentModelConfig.config)).toString('base64'),
+                  OD_OHMYAGENT_MODEL_CONFIG_PATH: ohmyagentModelConfigPath!,
+                }
+              : {}),
+            ...(ohmyagentMcpConfig
+              ? {
+                  OD_OHMYAGENT_MCP_CONFIG_B64: Buffer.from(JSON.stringify(ohmyagentMcpConfig)).toString('base64'),
+                  OD_OHMYAGENT_MCP_CONFIG_PATH: ohmyagentMcpConfigPath!,
+                }
+              : {}),
+            ...(byokOpenCodeProvider?.env[BYOK_OPENCODE_API_KEY_ENV]
+              ? { [BYOK_OPENCODE_API_KEY_ENV]: byokOpenCodeProvider.env[BYOK_OPENCODE_API_KEY_ENV] }
+              : {}),
+            ...(opencodeConfigContent && !isMiMoContent
+              ? { OPENCODE_CONFIG_CONTENT: opencodeConfigContent }
+              : {}),
+          }
+        : undefined;
       spawnedAgentEnv = env;
       const invocation = createCommandInvocation({
         command: agentLaunch.launchPath,
@@ -12981,24 +13087,26 @@ export async function startServer({
       });
       lifecycle.mark('launch_preflight_end');
       lifecycle.mark('process_spawn_start');
-      child = spawn(invocation.command, invocation.args, {
+      execution = design.executionTransport.execute({
+        command: invocation.command,
+        args: invocation.args,
         env,
-        stdio: [stdinMode, 'pipe', 'pipe'],
+        remoteEnv,
+        stdin: stdinMode,
         cwd: effectiveCwd,
-        shell: false,
-        detached: process.platform !== 'win32',
         // Required when invocation wraps a Windows .cmd/.bat shim through
         // cmd.exe; without this, Node re-escapes the inner command line and
         // breaks paths containing spaces (issue #315).
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       });
+      // Local-only integrations may use the real ChildProcess. Remote execution
+      // remains an ExecutionHandle and never fabricates a process or PID.
+      child = 'childProcess' in execution ? execution.childProcess : null;
       lifecycle.mark('process_spawned');
+      run.executionHandle = execution;
       run.child = child;
-      run.childPid = typeof child.pid === 'number' ? child.pid : null;
-      run.processGroupId =
-        process.platform !== 'win32' && typeof child.pid === 'number'
-          ? child.pid
-          : null;
+      run.childPid = execution.pid;
+      run.processGroupId = execution.processGroupId;
       // Schedule release of the antigravity model lock once agy's
       // --log-file confirms the chosen model was propagated to the
       // backend (the upstream signal that settings.json was read).
@@ -13011,7 +13119,8 @@ export async function startServer({
       // lock no matter what (crashed agy, fast exit, etc.) so the
       // queue can never starve permanently.
       if (
-        antigravityModelLockRelease
+        child
+        && antigravityModelLockRelease
         && antigravityConcreteModel
         && agentLogFilePath
       ) {
@@ -13041,7 +13150,7 @@ export async function startServer({
             if (found) releaseOnce();
           })
           .catch(() => undefined);
-        child.once('exit', () => {
+        void execution.result.then(() => {
           // Stop the watcher so its pending readFile / setTimeout
           // chain does not outlive the run and leak into subsequent
           // antigravity spawns (or test cases).
@@ -13051,7 +13160,7 @@ export async function startServer({
       }
       if (
         def.promptViaStdin &&
-        child.stdin &&
+        execution &&
         def.streamFormat !== 'pi-rpc' &&
         def.streamFormat !== 'dsh-profile-jsonl'
       ) {
@@ -13059,7 +13168,7 @@ export async function startServer({
         // launch) would otherwise surface as an unhandled stream error and
         // crash the daemon. Swallow it — the regular exit/close handlers
         // below already route the underlying failure to SSE via stderr.
-        child.stdin.on('error', (err) => {
+        execution.stdin?.on('error', (err) => {
           // EPIPE = Unix broken-pipe when child closes its stdin read end
           // early. 'write EOF' (err.code 'EOF') = Windows equivalent of
           // the same condition via UV_EOF. Both mean the child exited before
@@ -13093,14 +13202,14 @@ export async function startServer({
       return;
     }
 
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
+    execution.stdout.setEncoding('utf8');
+    execution.stderr.setEncoding('utf8');
 
     // Reset the inactivity watchdog on every raw stdout byte so that
     // structured adapters that buffer partial lines (Codex item.completed,
     // pi-rpc session/prompt, ACP agent messages) and models that spend a
     // long time in non-streamed reasoning still keep the run alive.
-    child.stdout.on('data', (chunk) => {
+    execution.stdout.on('data', (chunk) => {
       childStdoutSeen = true;
       noteAgentActivity();
       agentStdoutTail = `${agentStdoutTail}${chunk}`.slice(-2000);
@@ -13114,7 +13223,7 @@ export async function startServer({
     // hook_started/hook_response frames — none of which is the reply; mining it
     // produced empty extractions that, near-identical across a build's re-fires,
     // caused the same turn to be re-analyzed dozens of times.
-    child.on('close', () => {
+    void execution.result.then(() => {
       const userMsg = typeof message === 'string' ? message : '';
       // Forward the chat agent id so memory-llm.pickProvider can
       // constrain its auto-pick to the chat protocol's family — keeps
@@ -13214,7 +13323,7 @@ export async function startServer({
     // must also skip the orchestrator and fall through to legacy
     // generation; otherwise the parser waits for <CRITIQUE_RUN> tags
     // the model was never told to emit.
-    if (critiqueShouldRun) {
+    if (critiqueShouldRun && child) {
       const adapterStreamFormat: string = def.streamFormat ?? 'plain';
       if (adapterStreamFormat !== 'plain') {
         if (!critiqueWarnedAdapters.has(adapterStreamFormat)) {
@@ -13229,7 +13338,7 @@ export async function startServer({
         const critiqueProjectKey = typeof projectId === 'string' && projectId ? projectId : critiqueRunId;
         const critiqueArtifactDir = path.join(ARTIFACTS_DIR, critiqueProjectKey, critiqueRunId);
         const stdoutIterable = (async function* () {
-          for await (const chunk of child.stdout) yield String(chunk);
+          for await (const chunk of execution.stdout) yield String(chunk);
         })();
         // Forward each CritiqueSseEvent on its own contract-defined channel
         // (critique.run_started, critique.ship, critique.failed, ...) rather
@@ -13293,11 +13402,11 @@ export async function startServer({
         // an early child error fired before the orchestrator returns has no
         // listener. Both registrations are idempotent and the run lifecycle
         // is owned solely by the orchestrator's awaited result below.
-        child.stderr.on('data', (chunk) => {
+        execution.stderr.on('data', (chunk) => {
           noteAgentActivity();
           emitVisibleAgentStderr(chunk);
         });
-        child.on('error', (err) => {
+        void execution.started.catch((err) => {
           flushVisibleAgentStderr();
           send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err.message));
         });
@@ -13307,7 +13416,7 @@ export async function startServer({
         // flow. Without this the orchestrator can't tell a non-zero exit
         // apart from a clean ship and may misclassify failures.
         const childExitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-          child.once('close', (code, signal) => {
+          void execution.result.then(({ exitCode: code, signal }) => {
             flushVisibleAgentStderr();
             resolve({ code, signal });
           });
@@ -13530,7 +13639,7 @@ export async function startServer({
           // ignore — best-effort
         }
       }
-      if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+      if (execution) void execution.cancel({ graceMs: inactivityKillGraceMs, forceWaitMs: inactivityKillGraceMs });
       scheduleForcedChildShutdown();
     }
 
@@ -13574,7 +13683,7 @@ export async function startServer({
       // cancel, and the inactivity watchdog. A bare child.kill leaves Bash/build
       // grandchildren alive to keep mutating the workspace until the forced
       // shutdown fires — exactly the loop class this guard is meant to stop.
-      if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+      if (execution) void execution.cancel({ graceMs: inactivityKillGraceMs, forceWaitMs: inactivityKillGraceMs });
       scheduleForcedChildShutdown();
     }
 
@@ -13625,6 +13734,12 @@ export async function startServer({
         // a run failure races the cancel route and can make it return failed.
         if (run.cancelRequested) return;
         if (agentStreamError) return;
+        if (
+          runtimeResumesSessionById(def)
+          && agentResumeCtx.isResuming
+          && !run.resumeAutoReseeded
+          && isAgentResumeFailure(def.id, agentStderrTail, agentStdoutTail)
+        ) return;
         flushVisibleAgentStderr();
         const failureText = [
           String(ev.message || 'Agent stream error'),
@@ -13850,13 +13965,18 @@ export async function startServer({
           applyClaudeStreamJsonRunBookkeeping(run, ev);
         } catch {}
       }, { suppressHtmlArtifactsAfterFileWrite: def.id === 'claude' });
-      child.stdout.on('data', (chunk) => claude.feed(chunk));
-      child.on('close', () => claude.flush());
+      execution.stdout.on('data', (chunk) => claude.feed(chunk));
+      void execution.result.then(() => claude.flush());
+    } else if (def.streamFormat === 'ohmyagent-jsonl') {
+      trackingSubstantiveOutput = true;
+      const handler = createOhMyAgentJsonlHandler(sendAgentEvent);
+      execution.stdout.on('data', (chunk) => handler.feed(String(chunk)));
+      void execution.result.then(() => handler.flush());
     } else if (def.streamFormat === 'qoder-stream-json') {
       trackingSubstantiveOutput = true;
       const qoder = createQoderStreamHandler(sendAgentEvent);
-      child.stdout.on('data', (chunk) => qoder.feed(chunk));
-      child.on('close', () => qoder.flush());
+      execution.stdout.on('data', (chunk) => qoder.feed(chunk));
+      void execution.result.then(() => qoder.flush());
     } else if (def.streamFormat === 'copilot-stream-json') {
       const copilot = createCopilotStreamHandler((ev) => {
         lastAgentEventPhase = summarizeAgentEventForInactivity(ev);
@@ -13870,8 +13990,8 @@ export async function startServer({
         noteFirstTokenFromAgentEvent(ev);
         emitAgentEvent(ev);
       });
-      child.stdout.on('data', (chunk) => copilot.feed(chunk));
-      child.on('close', () => copilot.flush());
+      execution.stdout.on('data', (chunk) => copilot.feed(chunk));
+      void execution.result.then(() => copilot.flush());
     } else if (def.streamFormat === 'pi-rpc') {
       // Route through sendAgentEvent so that pi-rpc's error events
       // (extension_error, auto_retry_end with success=false, and the
@@ -14095,8 +14215,8 @@ export async function startServer({
         def.eventParser || def.id,
         sendAgentEvent,
       );
-      child.stdout.on('data', (chunk) => handler.feed(chunk));
-      child.on('close', () => handler.flush());
+      execution.stdout.on('data', (chunk) => handler.feed(chunk));
+      void execution.result.then(() => handler.flush());
     } else if (def.id === 'antigravity') {
       // Buffer stdout until close so the auth-prompt guard can suppress
       // the OAuth URL before forwarding it to the client as assistant
@@ -14106,7 +14226,7 @@ export async function startServer({
       // NOT stamped here — only the first chunk's arrival time is recorded,
       // and `firstTokenAt` is stamped from it at flush time so the
       // suppressed OAuth-prompt path never reports a TTFT (PR #3412).
-      child.stdout.on('data', (chunk) => {
+      execution.stdout.on('data', (chunk) => {
         noteAgentActivity();
         const receivedAt = Date.now();
         if (firstBufferedStdoutAt === null) firstBufferedStdoutAt = receivedAt;
@@ -14114,7 +14234,7 @@ export async function startServer({
       });
     } else {
       // Plain / BYOK mode: guard raw stdout chunks (#3247).
-      child.stdout.on('data', (chunk) => {
+      execution.stdout.on('data', (chunk) => {
         noteAgentActivity();
         const text = typeof chunk === 'string' ? chunk : String(chunk);
         // First non-empty stdout chunk = CLI ready for the plain family
@@ -14141,7 +14261,7 @@ export async function startServer({
     // Wire the acpSession onto the run so cancel() can call abort()
     // instead of raw SIGTERM (applies to pi-rpc and acp-json-rpc).
     run.acpSession = acpSession;
-    child.stderr.on('data', (chunk) => {
+    execution.stderr.on('data', (chunk) => {
       noteAgentActivity();
       emitVisibleAgentStderr(chunk);
     });
@@ -14151,7 +14271,7 @@ export async function startServer({
     // moved, this attempt may still receive a late error/close event, but it
     // must not emit errors, unregister the new sink, or make a terminal retry
     // decision for the new attempt.
-    const attemptStillOwnsRun = () => run.child === child;
+    const attemptStillOwnsRun = () => run.executionHandle === execution;
     const finishCanceledIfRequested = (
       code: number | null,
       signal: NodeJS.Signals | null,
@@ -14177,7 +14297,7 @@ export async function startServer({
       return true;
     };
 
-    child.on('error', (err) => {
+    void execution.started.catch((err) => {
       clearInactivityWatchdog();
       clearFirstOutputWatchdog();
       cleanupPromptFile();
@@ -14189,7 +14309,7 @@ export async function startServer({
       send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err.message));
       finishWithRetryDecision('failed', 1, null);
     });
-    child.on('close', async (code, signal) => {
+    void execution.result.then(async ({ exitCode: code, signal }) => {
       try {
       clearInactivityWatchdog();
       clearFirstOutputWatchdog();
@@ -14758,7 +14878,7 @@ export async function startServer({
         cleanupPromptFile();
       }
     });
-    if (writePromptToChildStdin && child.stdin) {
+    if (writePromptToChildStdin && execution) {
       const promptInputFormat = def.promptInputFormat ?? 'text';
       lifecycle.mark('model_call_start');
       lifecycle.mark('stdin_write_start');
@@ -14784,8 +14904,16 @@ export async function startServer({
           // E-lite: `write` returns false when the chunk was buffered because the
           // OS pipe is full (the child isn't draining stdin) — the corroborating
           // signal for a `stdin_write`-phase inactivity stall.
-          const accepted = child.stdin.write(`${userMessage}\n`, 'utf8', markStdinWriteEnd);
-          run.stdinBackpressure = accepted === false;
+          const input = `${userMessage}\n`;
+          if (execution.stdin) {
+            const accepted = execution.writeStdin(input, 'utf8');
+            run.stdinBackpressure = accepted === false;
+            markStdinWriteEnd();
+          } else {
+            execution.endStdin(input, 'utf8');
+            run.stdinBackpressure = false;
+            markStdinWriteEnd();
+          }
         } catch (err) {
           // Swallow EPIPE here for the same reason as the listener above —
           // a fast-exiting child has already routed its failure through
@@ -14796,7 +14924,13 @@ export async function startServer({
       } else {
         // Split write + close so the boolean backpressure signal survives —
         // see writePromptAndEndStdin for why `end(chunk)` cannot report it.
-        run.stdinBackpressure = writePromptAndEndStdin(child.stdin, composed, markStdinWriteEnd);
+        if (execution.stdin) {
+          run.stdinBackpressure = writePromptAndEndStdin(execution.stdin, composed, markStdinWriteEnd);
+        } else {
+          execution.endStdin(composed, 'utf8');
+          run.stdinBackpressure = false;
+          markStdinWriteEnd();
+        }
       }
     }
   };

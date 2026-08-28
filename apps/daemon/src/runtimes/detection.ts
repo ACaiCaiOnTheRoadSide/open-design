@@ -248,6 +248,20 @@ async function probe(
   configuredEnv: Record<string, string> = {},
 ): Promise<DetectedAgent> {
   detectedRuntimeVersions.delete(def.id);
+  // Hosted OhMyAgent is resolved inside the Huskbox image. Probing the daemon's
+  // PATH would incorrectly hide the runtime and reintroduce a host binary
+  // dependency that remote execution is specifically meant to remove.
+  if (def.id === 'ohmyagent' && process.env.OD_EXECUTION_TRANSPORT === 'huskbox') {
+    return {
+      ...stripFns(def),
+      models: def.fallbackModels ?? [DEFAULT_MODEL_OPTION],
+      modelsSource: 'fallback',
+      available: true,
+      path: def.bin,
+      version: null,
+      ...installMetaForAgent(def.id),
+    };
+  }
   // Detection must probe the exact path the runtime will spawn, not just the
   // PATH-visible shim. This is load-bearing for Codex under nvm/fnm/mise:
   // the discovered `codex` entry is often a `#!/usr/bin/env node` wrapper

@@ -541,6 +541,18 @@ describe('isAgentResumeFailure dispatch', () => {
     ).toBe(false);
   });
 
+  it('routes ohmyagent missing native storage to transparent reseed', () => {
+    expect(isAgentResumeFailure(
+      'ohmyagent',
+      'Error: resume session: session abc not found',
+    )).toBe(true);
+    expect(isAgentResumeFailure(
+      'ohmyagent',
+      '',
+      'assistant merely says session not found',
+    )).toBe(false);
+  });
+
   it('routes opencode to the session-not-found detector (on stderr only)', () => {
     // The CLI prints the miss to stderr (2nd positional is stdout).
     expect(isAgentResumeFailure('opencode', 'Error: Session not found', '')).toBe(true);
