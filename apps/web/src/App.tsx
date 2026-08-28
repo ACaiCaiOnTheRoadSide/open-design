@@ -5471,16 +5471,18 @@ function AppInner() {
           dockLine
         />
       )}
-      <div className="quick-entry-cluster">
-        <LanguageMenu compact placement="down" align="end" />
-        <ThemeQuickMenu
-          config={config}
-          onThemeChange={handleQuickThemeChange}
-          onAccentColorChange={handleQuickAccentColorChange}
-          showThemeModes={false}
-        />
-        <FeedbackQuickButton />
-      </div>
+      {route.kind === 'home' && route.view === 'home' ? (
+        <div className="quick-entry-cluster">
+          <LanguageMenu compact placement="down" align="end" />
+          <ThemeQuickMenu
+            config={config}
+            onThemeChange={handleQuickThemeChange}
+            onAccentColorChange={handleQuickAccentColorChange}
+            showThemeModes={false}
+          />
+          <FeedbackQuickButton />
+        </div>
+      ) : null}
       <TooltipLayer />
       <UpdateDialog />
       {/* Mounted at shell level, outside the route views, so a survey armed by
