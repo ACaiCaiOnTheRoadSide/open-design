@@ -403,6 +403,27 @@ describe('FileViewer image export', () => {
     expect(exportOptions).not.toHaveProperty('height');
   });
 
+  it('falls back promptly to the srcDoc snapshot when the URL preview has no bridge', async () => {
+    requestPreviewSnapshotMock.mockImplementation(async (iframe: HTMLIFrameElement) => (
+      iframe.getAttribute('data-od-render-mode') === 'srcdoc'
+        ? { dataUrl: 'data:image/png;base64,srcdoc', w: 800, h: 600 }
+        : null
+    ));
+    imageDataUrlToBlobMock.mockResolvedValueOnce(new Blob(['png'], { type: 'image/png' }));
+
+    renderHtmlPreview();
+    await openImageExportDialog();
+    await clickSave();
+
+    await waitFor(() => {
+      expect(imageDataUrlToBlobMock).toHaveBeenCalledWith('data:image/png;base64,srcdoc', 'png');
+    }, { timeout: 4000 });
+    expect(requestPreviewSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(requestPreviewSnapshotMock.mock.calls.map(([iframe]) => (
+      (iframe as HTMLIFrameElement).getAttribute('data-od-render-mode')
+    ))).toEqual(['url-load', 'srcdoc']);
+  });
+
   it('does not create a save target when snapshot capture fails', async () => {
     requestPreviewSnapshotMock.mockResolvedValue(null);
     prepareImageExportTargetMock.mockResolvedValueOnce({

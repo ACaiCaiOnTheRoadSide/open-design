@@ -1709,8 +1709,8 @@ function temporarilyExposeIframeForSnapshot(iframe: HTMLIFrameElement): () => vo
 async function requestPreviewSnapshotWithRetry(
   iframe: HTMLIFrameElement,
   options?: { full?: boolean },
+  timeouts = [1500, 3000, 6000],
 ): Promise<Awaited<ReturnType<typeof requestPreviewSnapshot>>> {
-  const timeouts = [1500, 3000, 6000];
   for (const timeout of timeouts) {
     const snapshot = await requestPreviewSnapshot(iframe, timeout, options);
     if (snapshot) return snapshot;
@@ -14464,7 +14464,11 @@ function HtmlViewer({
     if (urlIframe) {
       await waitForIframeLoadOrTimeout(urlIframe, 250);
       await waitForAnimationFrame();
-      const urlSnapshot = await requestPreviewSnapshotWithRetry(urlIframe);
+      // URL previews may be rendered by responses where the daemon cannot
+      // inject the snapshot bridge (for example streamed/range HTML). Probe it
+      // once, then fall back to the prewarmed srcDoc transport instead of
+      // spending the full retry budget messaging a bridge that is not there.
+      const urlSnapshot = await requestPreviewSnapshotWithRetry(urlIframe, undefined, [1500]);
       if (urlSnapshot) return urlSnapshot;
     }
 
@@ -14518,7 +14522,10 @@ function HtmlViewer({
     try {
       const snap = await captureExportImageSnapshot();
       if (!snap) {
-        setExportToast({ message: t('fileViewer.screenshotPreviewLoading'), tone: 'error' });
+        // A null snapshot also covers a missing bridge, timeout, or renderer
+        // failure; calling all of those "still loading" sends users in the
+        // wrong direction after the retry/fallback chain has already finished.
+        setExportToast({ message: t('fileViewer.screenshotCaptureFailed'), tone: 'error' });
         return;
       }
       const blob = await fetch(snap.dataUrl).then((response) => response.blob());
