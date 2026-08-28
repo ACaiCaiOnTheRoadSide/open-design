@@ -96,28 +96,35 @@ void main() {
   float violetCloud = exp(-length(delta + vec2(0.012, 0.052) + trailOffset) * 14.0) * cloudStrength;
   sparkle *= 1.0 + cursorSheen * (0.82 + directionalGlint * 0.9);
 
-  vec3 lavender = vec3(0.69, 0.54, 0.97);
-  vec3 blush = vec3(1.0, 0.62, 0.78);
-  vec3 ice = vec3(0.46, 0.83, 1.0);
-  vec3 champagne = vec3(1.0, 0.88, 0.64);
-
-  float spectrum = 0.5 + 0.5 * sin(angle);
-  vec3 pearlColor = mix(lavender, ice, spectrum);
-  pearlColor = mix(pearlColor, blush, 0.5 + 0.5 * sin(angle + 2.094));
-  pearlColor = mix(pearlColor, champagne, (0.5 + 0.5 * sin(angle + 4.188)) * 0.3);
-  vec3 color = mix(pearlColor, vec3(1.0), min(sparkle, 1.0) * 0.46);
+  vec3 sky = vec3(0.82, 0.91, 1.0);
+  vec3 ice = vec3(0.96, 0.985, 1.0);
+  vec3 blush = vec3(0.96, 0.62, 0.82);
+  vec3 lavender = vec3(0.68, 0.55, 0.96);
+  vec3 champagne = vec3(1.0, 0.86, 0.58);
 
   float broadSheen = 0.5 + 0.5 * sin(angle * 0.86 - u_time * 0.24);
   float ribbonSheen = smoothstep(0.42, 0.9, 0.5 + 0.5 * sin(angle * 1.55 + u_time * 0.18));
   float filmSheen = smoothstep(0.38, 0.84, microFilm);
+  vec3 color = mix(sky, ice, broadSheen * 0.64 + filmSheen * 0.22);
+
+  // Preserve the original drifting film. High thresholds make the warm hues
+  // appear only in occasional wisps instead of tinting the whole canvas.
+  float roseWisp = smoothstep(0.72, 0.95, 0.5 + 0.5 * sin(angle + 2.094));
+  float violetWisp = smoothstep(0.78, 0.965, 0.5 + 0.5 * sin(angle * 0.74 - u_time * 0.09 + 4.1));
+  float goldWisp = smoothstep(0.84, 0.985, 0.5 + 0.5 * sin(angle * 0.68 + u_time * 0.07 + 5.2));
+  color = mix(color, blush, roseWisp * 0.25);
+  color = mix(color, lavender, violetWisp * 0.22);
+  color = mix(color, champagne, goldWisp * 0.13);
+  color = mix(color, vec3(1.0), min(sparkle, 1.0) * 0.46);
   color = mix(color, vec3(0.38, 0.72, 1.0), min(blueCloud * 0.88 + dragRipple * 0.18, 0.88));
-  color = mix(color, vec3(1.0, 0.44, 0.72), min(pinkCloud * 0.82, 0.82));
-  color = mix(color, vec3(0.6, 0.36, 1.0), min(violetCloud * 0.84, 0.84));
-  float pointerCloud = blueCloud + pinkCloud + violetCloud;
+  color = mix(color, blush, min(pinkCloud * 0.2, 0.2));
+  color = mix(color, lavender, min(violetCloud * 0.2, 0.2));
+  float pointerCloud = blueCloud + pinkCloud * 0.24 + violetCloud * 0.24;
   float alpha = 0.036 + broadSheen * 0.058 + ribbonSheen * 0.038
     + filmSheen * 0.02 + sparkle * 0.28
-    + pointerCloud * 0.21 + dragRipple * 0.075;
-  gl_FragColor = vec4(color, min(alpha, 0.56));
+    + (roseWisp + violetWisp + goldWisp) * 0.022
+    + pointerCloud * 0.18 + dragRipple * 0.075;
+  gl_FragColor = vec4(color, min(alpha, 0.52));
 }
 `;
 

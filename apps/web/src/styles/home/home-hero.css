@@ -3448,6 +3448,37 @@
   padding: 32px 24px 28px;
   overflow: visible;
 }
+body:has(> .home-view__pearl-fluid) {
+  /* Home is a pale sky-blue field. Pink, violet, and gold stay as small edge
+     accents in the fluid canvas rather than broad washes behind the content. */
+  --app-wash:
+    radial-gradient(74% 68% at 42% 30%, rgba(196, 226, 248, 0.32) 0%, transparent 72%),
+    radial-gradient(24% 22% at 102% -2%, rgba(224, 178, 238, 0.24) 0%, transparent 72%),
+    radial-gradient(22% 24% at -3% 86%, rgba(191, 177, 241, 0.14) 0%, transparent 74%),
+    radial-gradient(26% 24% at 102% 102%, rgba(246, 207, 132, 0.2) 0%, transparent 74%),
+    radial-gradient(56% 50% at 4% 104%, rgba(218, 235, 251, 0.24) 0%, transparent 74%),
+    linear-gradient(#f7fbff, #fbfdff);
+}
+body:has(> .home-view__pearl-fluid)::after {
+  content: '';
+  position: fixed;
+  inset: -18%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(22% 26% at 82% 24%, rgba(238, 164, 215, 0.3), transparent 76%),
+    radial-gradient(20% 25% at 18% 76%, rgba(174, 151, 237, 0.26), transparent 76%);
+  filter: blur(34px);
+  animation: home-color-mist-drift 34s ease-in-out infinite alternate;
+}
+@keyframes home-color-mist-drift {
+  0% { transform: translate3d(-4%, 3%, 0) scale(0.96); opacity: 0.58; }
+  48% { transform: translate3d(4%, -2%, 0) scale(1.04); opacity: 0.9; }
+  100% { transform: translate3d(-1%, 4%, 0) scale(1); opacity: 0.66; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body:has(> .home-view__pearl-fluid)::after { animation: none; }
+}
 .home-view__pearl-fluid {
   position: fixed;
   inset: 0;
