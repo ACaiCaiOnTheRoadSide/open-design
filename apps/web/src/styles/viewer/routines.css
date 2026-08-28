@@ -989,7 +989,7 @@
 .workspace-shell:has(.workspace-tabs-chrome.is-docked) > .workspace-shell__body {
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: 16px;
-  background: var(--material-thin);
+  background: var(--glass-clear);
   -webkit-backdrop-filter: var(--glass-backdrop);
   backdrop-filter: var(--glass-backdrop);
   box-shadow:
@@ -1588,9 +1588,9 @@
   border: none;
   border-radius: 0;
   box-shadow: none;
-  /* The shell owns the blur; this tint keeps long-form chat readable without
-     stacking a second backdrop filter. */
-  background: color-mix(in srgb, var(--material-thin) 78%, transparent);
+  /* The shell owns the blur; keep only a clear tint here so the page wash
+     remains visible without stacking a second backdrop filter. */
+  background: var(--glass-clear);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   overflow: hidden;
