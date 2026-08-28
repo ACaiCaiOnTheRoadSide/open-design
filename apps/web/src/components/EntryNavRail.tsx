@@ -808,7 +808,7 @@ export function EntryTopRightCluster({
   return (
     <>
       {createPortal(
-        <div className="entry-top-right-cluster">
+        <div className={`entry-top-right-cluster entry-top-right-cluster--${page}`}>
           {leadingSlot}
           {/* GitHub star chip: its own option in the cluster, right after the
               campaign badge (per product) — it used to live in the account

@@ -1686,12 +1686,10 @@ export function WorkspaceTabsBar({
       aria-label="Workspace tabs"
     >
       <div className="app-chrome-traffic-space workspace-tabs-traffic" aria-hidden />
-      {/* Docked mode: the chrome row keeps only the brand-logo button (the
-          floating account cluster rides fixed at the window's top-right on
-          its own); the strip renders in the chat column's dock, level with
-          the workspace 设计文件 row. The strip's own pinned entry tab hides
-          inside the dock (CSS) — this button is its chrome-row stand-in.
-          In chat the logo means 回到首页. */}
+      {dockPortal(
+      <>
+      {/* Project routes do not need a dedicated global chrome row. Keep the
+          route back to Home beside the project-local controls instead. */}
       {tabsDockEl && state.tabs[0] ? (
         <button
           type="button"
@@ -1706,8 +1704,6 @@ export function WorkspaceTabsBar({
           <ChromeHomeGlyph />
         </button>
       ) : null}
-      {dockPortal(
-      <>
       {dockDropdownNode}
       <div
         className={`workspace-tabs-strip${tabsOverflowing ? ' is-overflowing' : ''}`}

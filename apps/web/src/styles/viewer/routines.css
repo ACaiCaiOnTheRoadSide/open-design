@@ -977,29 +977,54 @@
 /* Project page audit pass: one final rule set for the active project shell.
    Keep the outer panes flat; only controls and repeated items get radius. */
 .workspace-shell {
-  /* 52px tab-bar row: 10px above + 32px tab + 10px below, so the tabs get 10px
-     top/bottom breathing room and the row below (sidebar) keeps its own 10px
-     top margin — one consistent 10px rhythm around the strip. */
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-rows: 44px minmax(0, 1fr);
+}
+/* Project routes carry their own navigation, so do not reserve a second global
+   toolbar above them. Home remains available in the project-local dock. */
+.workspace-shell:has(.workspace-tabs-chrome.is-docked) {
+  grid-template-rows: 0 minmax(0, 1fr);
+  padding: 12px;
+  box-sizing: border-box;
+}
+.workspace-shell:has(.workspace-tabs-chrome.is-docked) > .workspace-shell__body {
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 16px;
+  background: var(--material-thin);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  backdrop-filter: var(--glass-backdrop);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 58%, transparent) inset,
+    0 12px 36px color-mix(in srgb, var(--text) 10%, transparent);
+  overflow: hidden;
+}
+.workspace-shell .workspace-tabs-chrome.is-docked {
+  display: none;
+}
+.workspace-shell:has(.workspace-tabs-chrome.is-docked) .app {
+  background: transparent;
+}
+@media (max-width: 760px) {
+  .workspace-shell:has(.workspace-tabs-chrome.is-docked) {
+    padding: 6px;
+  }
 }
 /* ── Project-route tab-strip dock (workspaceTabsDock.ts) ──────────────────
-   On the project route the strip portals into .split-chat-tabs-dock at the
-   top of the chat column, one level below the chrome row and level with the
-   workspace column's 设计文件 row (which stays put). The chrome row remains,
-   keeping only Home (.workspace-tabs-home-chrome) — the floating account
-   cluster rides the window's top-right on its own. No dock registered
-   (home / marketplace, workspace-focused mode) → the strip renders in the
-   classic full-width chrome row again. */
+   On the project route navigation portals into .split-chat-tabs-dock at the
+   top of the chat column, level with the workspace column's 设计文件 row. The
+   global chrome row is removed; Home lives here beside the project controls.
+   Without a dock (home / marketplace), the full chrome row renders normally. */
 .split-chat-tabs-dock {
   display: flex;
-  /* Top-aligned, not centered: the 36px dropdown hugs the row's top edge —
-     no headroom above it — leaving only the 4px below to the chat card. */
-  align-items: flex-start;
-  gap: 8px;
-  height: 40px;
-  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  min-height: 44px;
+  padding: 6px 8px;
   flex: 0 0 auto;
   min-width: 0;
+  background: var(--glass-clear);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 56%, transparent);
+  box-sizing: border-box;
 }
 /* The chrome row VISUALLY keeps only the pinned Home tab (per product: 顶部
    只保留 home 和头像/积分) — project tabs surface through the docked
@@ -1018,6 +1043,7 @@
 /* Collapse-chat control, lifted from the chat card header into the dock row
    (left of the white tab dropdown). */
 .split-chat-collapse {
+  order: -1;
   appearance: none;
   cursor: pointer;
   display: grid;
@@ -1025,37 +1051,44 @@
   flex: 0 0 auto;
   width: 32px;
   height: 32px;
-  /* Dock is top-aligned; re-center this 32px button on the 36px dropdown. */
-  margin-top: 2px;
+  margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 10px;
-  /* White seat matching the dropdown beside it. */
-  background: #fff;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
   color: var(--text);
   -webkit-app-region: no-drag;
 }
 .split-chat-collapse:hover {
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+  background: var(--bg-subtle);
+  box-shadow: none;
 }
 .split-chat-tabs-dock .workspace-tabs-strip {
   align-items: center;
 }
-/* Inside either dock the strip's pinned entry tab hides — Home stays up in
-   the chrome row as .workspace-tabs-home-chrome. */
+/* The strip's internal pinned entry row stays hidden; the dock uses a dedicated
+   Home button so tab measurement and drag state remain untouched. */
 .split-chat-tabs-dock .workspace-tab.is-pinned,
 .ws-tabs-project-dock .workspace-tab.is-pinned {
   display: none;
 }
-/* Focus-mode dock: it still OWNS the strip (registering here is what keeps
-   the strip out of the full-width chrome row), but shows nothing — the
-   workspace tab row keeps its own controls only (per product: 收起侧边栏后不要
-   把项目 tab / 项目下拉带到这一行). The strip stays mounted for its
-   measurement and drag hooks. */
+/* Focus mode keeps the same single route back to Home, but still hides project
+   tabs and the dropdown. The strip remains mounted for measurement and drag. */
 .ws-tabs-project-dock {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.ws-tabs-project-dock .workspace-tabs-dropdown,
+.ws-tabs-project-dock .workspace-tabs-strip {
   display: none;
+}
+.ws-tabs-project-dock .workspace-tabs-home-chrome {
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  border-radius: 9px;
 }
 /* Docked mode swaps the pill strip for the white dropdown below. The strip
    stays mounted (its measurement/drag hooks keep their DOM) but invisible. */
@@ -1076,16 +1109,16 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 36px;
-  padding: 0 10px 0 12px;
+  height: 32px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 12px;
-  background: #fff;
+  border-radius: 9px;
+  background: var(--bg-subtle);
   color: var(--text);
   font-family: inherit;
   font-size: 13px;
   text-align: left;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 72%, transparent) inset;
 }
 
 .workspace-tabs-dropdown__icon {
@@ -1174,12 +1207,10 @@
   white-space: nowrap;
 }
 .workspace-tabs-home-chrome {
-  /* Same leading inset as .workspace-tabs-strip's padding-left, so the Home
-     icon lands on the IDENTICAL x in both chrome states — docked (this
-     button) and undocked (the strip's pinned entry tab). Without it the icon
-     jumped 10px left on every entry→project→entry trip. */
+  /* Same leading inset as .workspace-tabs-strip's padding-left, so Home does
+     not jump when the project strip moves between chrome and its dock. */
   margin-left: 10px;
-  width: 78px;
+  width: 36px;
   height: 32px;
   padding: 0;
   border: 0;
@@ -1194,8 +1225,17 @@
   -webkit-app-region: no-drag;
 }
 .workspace-tabs-home-chrome:hover {
-  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+  background: var(--bg-subtle);
+  box-shadow: none;
+}
+.split-chat-tabs-dock .workspace-tabs-home-chrome {
+  order: -2;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  border-radius: 9px;
+  background: transparent;
 }
 .app .split-chat-slot {
   /* Column: the docked strip sits above the chat card. */
@@ -1205,16 +1245,21 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+.entry-top-right-cluster--project {
+  top: 21px;
+  right: 24px;
+}
+
 .workspace-shell .workspace-tabs-chrome.app-chrome-header {
-  --workspace-tabs-chrome-height: 52px;
-  /* Flush with the page below it — the bar shares the app surface. */
+  --workspace-tabs-chrome-height: 44px;
+  /* A compact global bar leaves the project-local navigation visually primary. */
   --workspace-tab-bar-bg: var(--bg);
   --workspace-active-tab-border: color-mix(in srgb, var(--border-strong) 38%, transparent);
-  height: 52px;
-  min-height: 52px;
+  height: 44px;
+  min-height: 44px;
   padding: 0 8px 0 0;
   background: var(--workspace-tab-bar-bg);
-  border-bottom: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   box-shadow: none;
 }
 .workspace-shell .workspace-tabs-traffic {
@@ -1530,30 +1575,24 @@
   background: var(--veil-page, transparent);
 }
 .app .split-chat-slot {
-  /* Inset the pane so it reads as a floating card (same treatment as the home
-     sidebar's .entry-nav-rail__panel). Top inset is 0 so the card sits 8px
-     higher — the tab strip's own 10px bottom breathing is the only gap to it,
-     giving a 10px tab-to-content spacing (was 18px). Bottom/left stay 8px; the
-     slot's overflow:hidden (shell.css) clips the card's shadow cleanly at the
-     slot edge. Right side is 0 so the gap to the workspace card is just the
-     8px resize-handle column (not 8+8+8=24px). */
-  padding: 0 0 8px 8px;
-  background: var(--veil-page, transparent);
+  /* Structural regions stay square inside the shell's single rounded frame. */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
 }
 .app .split-chat-slot > .pane {
-  /* overflow:hidden still rounds the content (the composer is a separate
-     fixed/portaled layer, so it isn't clipped and auto-follows the inset via
-     composerPortalRect). */
   border: none;
-  border-radius: var(--radius-lg);
+  border-radius: 0;
   box-shadow: none;
-  /* Pure-white frosted glass: a white tint over the regular blur so the chat
-     panel reads paper-white instead of showing the raw ground. Dark theme
-     falls back to the standard Regular material, and the degraded blocks
-     below flatten it to a solid surface. */
-  background: color-mix(in srgb, #fff 85%, transparent);
-  -webkit-backdrop-filter: var(--material-regular-backdrop);
-  backdrop-filter: var(--material-regular-backdrop);
+  /* The shell owns the blur; this tint keeps long-form chat readable without
+     stacking a second backdrop filter. */
+  background: color-mix(in srgb, var(--material-thin) 78%, transparent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   overflow: hidden;
 }
 [data-theme='dark'] .app .split-chat-slot > .pane {
@@ -2769,25 +2808,18 @@
 }
 
 .app .workspace {
-  /* Matches the top tab strip's effect exactly, same as the chat card
-     (.split-chat-slot > .pane). Inset 8px keeps the ground gutter between
-     the cards; overflow:hidden rounds the content and the toolbar dropdowns
-     open downward into the preview so they aren't clipped. Left side is 0 so
-     the gap to the chat card is just the 8px resize-handle column (focus
-     mode restores it below). Top margin is 0 so the card sits 8px higher,
-     matching the chat card; the tab strip's own 10px bottom breathing is the
-     only tab-to-content gap (10px, was 18px). */
-  margin: 0 8px 8px 0;
+  /* The shell owns the only structural radius; this column stays square. */
+  margin: 0;
   padding: 0;
-  border: none;
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-radius: 0;
   box-shadow: none;
   /* Same effect as the top tab strip: no fill, no frost of its own — the
      ground (app wash in the browser, wallpaper vibrancy on desktop) shows
      through identically in the strip, the gutter, and these cards, so the
      whole shell reads as one continuous material. Veil tokens return to
      solid surfaces under reduced transparency (app-wash.css). */
-  background: transparent;
+  background: var(--glass-clear);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   overflow: hidden;
@@ -2796,13 +2828,12 @@
    the 8px left gap back (in split mode the left is 0 to keep the inter-card gap
    at 8px). */
 .app .split.split-focus .workspace {
-  margin-left: 8px;
+  margin-left: 0;
 }
 .app .ws-tabs-shell {
-  padding: 6px 14px;
-  border-bottom: none;
-  /* Match the solid panel below instead of the shared chat-header glass. */
-  background: var(--bg);
+  padding: 6px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  background: var(--glass-clear);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
@@ -2882,20 +2913,20 @@
 .app .ws-body {
   border: 0;
   border-radius: 0;
-  background: var(--bg-panel);
+  background: var(--glass-clear);
   box-shadow: none;
 }
 
 .app .df-panel,
 .app .df-main {
-  background: color-mix(in srgb, var(--bg-panel) 86%, var(--bg-subtle));
+  background: color-mix(in srgb, var(--material-thin) 45%, transparent);
 }
 .app .df-main {
   border-right-color: var(--border);
 }
 .app .df-body {
   padding: 4px 20px 20px;
-  background: color-mix(in srgb, var(--bg-panel) 86%, var(--bg-subtle));
+  background: transparent;
 }
 .app .df-controls-row {
   margin: 0 0 14px;
