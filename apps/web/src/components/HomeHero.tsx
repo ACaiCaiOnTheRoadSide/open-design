@@ -399,7 +399,18 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   const [projectReferenceOpen, setProjectReferenceOpen] = useState(false);
   const [figmaHelpOpen, setFigmaHelpOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [templateLibraryExpanded, setTemplateLibraryExpanded] = useState(false);
   const homeHeroRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!templateLibraryExpanded) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTemplateLibraryExpanded(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [templateLibraryExpanded]);
+
   // Two-flash attention pulse on the send button; armed via the
   // imperative `pulseSend()` handle, cleared when the animation ends.
   const [sendAttention, setSendAttention] = useState(false);
@@ -1320,82 +1331,109 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   let optionRenderIndex = 0;
   const visibleError = error?.startsWith('Bundled scenario "') ? null : error;
   const templateGalleryKey = `${railActiveChipId ?? 'all'}:${selectedSubcategory ?? 'all'}`;
+  const templateLibrary = (
+    <div
+      className={`home-hero__template-sidebar${templateLibraryExpanded ? ' is-expanded' : ''}`}
+      role={templateLibraryExpanded ? 'dialog' : undefined}
+      aria-modal={templateLibraryExpanded || undefined}
+      aria-label={templateLibraryExpanded ? t('homeHero.templatePicker.label') : undefined}
+      data-testid="home-hero-template-library"
+    >
+    <nav className="home-hero__template-catalog-dock" aria-label={t('homeHero.templatePicker.label')}>
+      <div className="home-hero__template-rail-head">
+        <span>{t('homeHero.templatePicker.label')}</span>
+        <button
+          type="button"
+          className="home-hero__template-expand"
+          aria-label={templateLibraryExpanded ? t('common.close') : t('homeHero.templatePicker.label')}
+          aria-expanded={templateLibraryExpanded}
+          data-testid="home-hero-template-expand"
+          onClick={() => setTemplateLibraryExpanded((expanded) => !expanded)}
+        >
+          <Icon name={templateLibraryExpanded ? 'minimize' : 'maximize'} size={16} aria-hidden />
+        </button>
+      </div>
+      <div className="home-hero__template-catalogs">
+        <TypePillRow
+          chips={templateChips}
+          activeChipId={railActiveChipId}
+          disabled={pendingChipId !== null || pendingPluginId !== null}
+          labelFor={(id) => homeHeroChipLabel(id, t)}
+          onPick={handlePickTaskChip}
+          vertical
+        />
+        <div className="home-hero__secondary-category-row">
+          {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
+            <SubTypeRow
+              subChips={activeSubChips}
+              selectedSlug={selectedSubcategory}
+              pluginsLoading={false}
+              onPickSubChip={(sub) => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'subcategory_chip',
+                  chip_id: railActiveChipId ?? undefined,
+                  subcategory: sub.slug,
+                });
+                const next = selectedSubcategory === sub.slug ? null : sub;
+                setLocalSelectedSubcategory(next?.slug ?? null);
+                if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(next);
+              }}
+              scrollable
+              onSelectAll={() => {
+                setLocalSelectedSubcategory(null);
+                if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(null);
+              }}
+            />
+          ) : (
+            <div className="home-hero__category-strip home-hero__category-strip--secondary" aria-hidden>
+              <span className="home-hero__category-tab is-active">{t('common.all')}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </nav>
+    <aside className="home-hero__template-rail" aria-label={t('homeHero.promptExamples')}>
+      <div className="home-hero__template-rail-body">
+        <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
+        {pluginsLoading ? (
+          <PluginPromptPresetsLoading />
+        ) : filteredExamplePlugins.length > 0 && railActiveChipId ? (
+          <PluginPromptPresets
+            key={templateGalleryKey}
+            chipId={railActiveChipId}
+            plugins={filteredExamplePlugins}
+            activePluginId={activePluginRecord?.id ?? null}
+            pendingPluginId={pendingPluginId}
+            locale={locale}
+            onPick={pickExamplePluginPreset}
+            onPreview={onOpenPluginDetails}
+            pulseFirstPreset={guidePulseFirstPreset}
+            workspaceContext={workspaceContext}
+          />
+        ) : (
+          <div key={templateGalleryKey} className="home-hero__template-empty">
+            {t('newproj.noTemplatesTitle')}
+          </div>
+        )}
+        </div>
+      </div>
+    </aside>
+    </div>
+  );
 
   return (
     <section ref={homeHeroRef} className="home-hero" data-testid="home-hero">
-      <div className="home-hero__template-sidebar">
-      <nav className="home-hero__template-catalog-dock" aria-label={t('homeHero.templatePicker.label')}>
-        <div className="home-hero__template-rail-head">
-          <span>{t('homeHero.templatePicker.label')}</span>
-        </div>
-        <div className="home-hero__template-catalogs">
-          <TypePillRow
-            chips={templateChips}
-            activeChipId={railActiveChipId}
-            disabled={pendingChipId !== null || pendingPluginId !== null}
-            labelFor={(id) => homeHeroChipLabel(id, t)}
-            onPick={handlePickTaskChip}
-            vertical
-          />
-          <div className="home-hero__secondary-category-row">
-            {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
-              <SubTypeRow
-                subChips={activeSubChips}
-                selectedSlug={selectedSubcategory}
-                pluginsLoading={false}
-                onPickSubChip={(sub) => {
-                  trackHomeChatComposerClick(analytics.track, {
-                    page_name: 'home',
-                    area: 'chat_composer',
-                    element: 'subcategory_chip',
-                    chip_id: railActiveChipId ?? undefined,
-                    subcategory: sub.slug,
-                  });
-                  const next = selectedSubcategory === sub.slug ? null : sub;
-                  setLocalSelectedSubcategory(next?.slug ?? null);
-                  if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(next);
-                }}
-                scrollable
-                onSelectAll={() => {
-                  setLocalSelectedSubcategory(null);
-                  if (railActiveChipId === 'prototype') onPickPrototypeSubtype?.(null);
-                }}
-              />
-            ) : (
-              <div className="home-hero__category-strip home-hero__category-strip--secondary" aria-hidden>
-                <span className="home-hero__category-tab is-active">{t('common.all')}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </nav>
-      <aside className="home-hero__template-rail" aria-label={t('homeHero.promptExamples')}>
-        <div className="home-hero__template-rail-body">
-          <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
-          {pluginsLoading ? (
-            <PluginPromptPresetsLoading />
-          ) : filteredExamplePlugins.length > 0 && railActiveChipId ? (
-            <PluginPromptPresets
-              key={templateGalleryKey}
-              chipId={railActiveChipId}
-              plugins={filteredExamplePlugins}
-              activePluginId={activePluginRecord?.id ?? null}
-              pendingPluginId={pendingPluginId}
-              locale={locale}
-              onPick={pickExamplePluginPreset}
-              onPreview={onOpenPluginDetails}
-              pulseFirstPreset={guidePulseFirstPreset}
-              workspaceContext={workspaceContext}
-            />
-          ) : (
-            <div key={templateGalleryKey} className="home-hero__template-empty">
-              {t('newproj.noTemplatesTitle')}
-            </div>
-          )}
-          </div>
-        </div>
-      </aside>
-      </div>
+      {templateLibraryExpanded && typeof document !== 'undefined'
+        ? createPortal(
+            <>
+              <div className="home-hero__template-backdrop" aria-hidden />
+              {templateLibrary}
+            </>,
+            document.body,
+          )
+        : templateLibrary}
 
       <div className="home-hero__title-block">
         <h1 className="home-hero__title">
