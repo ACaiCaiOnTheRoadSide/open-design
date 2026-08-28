@@ -142,8 +142,65 @@ function createShader(
   return null;
 }
 
+const PEARL_CYCLES = [46, 39, 53, 43, 57, 36, 61, 49] as const;
+const PEARL_DELAYS = [-4, -27, -15, -36, -8, -20, -2, -31] as const;
+const PEARL_SMOKE_COLORS = ['#ff72ba', '#8e7dff', '#53cffa', '#64daa0', '#ffd166', '#ff8f70'] as const;
+
+function createPearlFallKeyframes(
+  pearl: HTMLElement,
+  viewportHeight: number,
+  cycleSeconds: number,
+): Keyframe[] {
+  const size = pearl.offsetHeight;
+  const startY = -size - 18;
+  const floorY = Math.max(startY, viewportHeight - size - 4);
+  const drift = Number.parseFloat(getComputedStyle(pearl).getPropertyValue('--pearl-drift')) || 0;
+  const gravity = 560;
+  const restitution = 0.46;
+  const groundFriction = 0.72;
+  const activeSeconds = 6.4;
+  const timeStep = 1 / 30;
+  let x = 0;
+  let y = startY;
+  let velocityX = drift / activeSeconds;
+  let velocityY = 36;
+  let settledAt: number | null = null;
+  const frames: Keyframe[] = [];
+
+  for (let elapsed = 0; elapsed <= activeSeconds; elapsed += timeStep) {
+    if (elapsed > 0 && settledAt === null) {
+      velocityY += gravity * timeStep;
+      x += velocityX * timeStep;
+      y += velocityY * timeStep;
+
+      if (y >= floorY) {
+        y = floorY;
+        velocityY = -velocityY * restitution;
+        velocityX *= groundFriction;
+        if (Math.abs(velocityY) < 72) settledAt = elapsed;
+      }
+    }
+
+    const fadeIn = Math.min(1, elapsed / 0.18);
+    const fadeOut = settledAt === null ? 1 : Math.max(0, 1 - (elapsed - settledAt) / 0.72);
+    frames.push({
+      offset: elapsed / cycleSeconds,
+      opacity: 0.96 * fadeIn * fadeOut,
+      transform: `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`,
+    });
+  }
+
+  frames.push({
+    offset: 1,
+    opacity: 0,
+    transform: `translate3d(${x.toFixed(2)}px, ${floorY.toFixed(2)}px, 0)`,
+  });
+  return frames;
+}
+
 export function HomePearlFluidBackground() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pearlsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -271,9 +328,109 @@ export function HomePearlFluidBackground() {
     };
   }, []);
 
+  useEffect(() => {
+    const layer = pearlsRef.current;
+    if (!layer) return;
+
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const timers = new Set<number>();
+    let animations: Animation[] = [];
+    let resizeFrame = 0;
+
+    const schedule = (callback: () => void, delay: number) => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        callback();
+      }, delay);
+      timers.add(timer);
+    };
+    const burstPearl = (pearl: HTMLElement) => {
+      const rect = pearl.getBoundingClientRect();
+      if (rect.width === 0 || Number.parseFloat(getComputedStyle(pearl).opacity) < 0.08) return;
+
+      pearl.style.visibility = 'hidden';
+      const smoke = document.createElement('span');
+      smoke.className = 'home-view__pearl-smoke';
+      smoke.style.left = `${rect.left + rect.width / 2}px`;
+      smoke.style.top = `${rect.top + rect.height / 2}px`;
+
+      for (let index = 0; index < 16; index += 1) {
+        const particle = document.createElement('i');
+        const angle = (index / 16) * Math.PI * 2 + (Math.random() - 0.5) * 0.42;
+        const distance = 28 + Math.random() * 48;
+        particle.style.setProperty('--smoke-x', `${Math.cos(angle) * distance}px`);
+        particle.style.setProperty('--smoke-y', `${Math.sin(angle) * distance - 15}px`);
+        particle.style.setProperty('--smoke-size', `${18 + Math.random() * 22}px`);
+        particle.style.setProperty('--smoke-delay', `${Math.random() * 90}ms`);
+        particle.style.setProperty(
+          '--smoke-color',
+          PEARL_SMOKE_COLORS[index % PEARL_SMOKE_COLORS.length] ?? PEARL_SMOKE_COLORS[0],
+        );
+        smoke.appendChild(particle);
+      }
+
+      layer.appendChild(smoke);
+      schedule(() => smoke.remove(), 1550);
+      schedule(() => {
+        pearl.style.visibility = '';
+      }, 1300);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target.closest('.home-view__falling-pearl') : null;
+      if (!(target instanceof HTMLElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      burstPearl(target);
+    };
+
+    const rebuildAnimations = () => {
+      animations.forEach((animation) => animation.cancel());
+      animations = [];
+      if (motionPreference.matches) return;
+
+      const pearls = Array.from(layer.querySelectorAll<HTMLElement>('.home-view__falling-pearl'));
+      animations = pearls.flatMap((pearl, index) => {
+        if (typeof pearl.animate !== 'function') return [];
+        const cycleSeconds = PEARL_CYCLES[index] ?? PEARL_CYCLES[0];
+        return pearl.animate(createPearlFallKeyframes(pearl, layer.clientHeight, cycleSeconds), {
+          duration: cycleSeconds * 1000,
+          delay: (PEARL_DELAYS[index] ?? 0) * 1000,
+          iterations: Infinity,
+          easing: 'linear',
+        });
+      });
+    };
+    const scheduleRebuild = () => {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(rebuildAnimations);
+    };
+
+    rebuildAnimations();
+    const observer = new ResizeObserver(scheduleRebuild);
+    observer.observe(layer);
+    layer.addEventListener('pointerdown', onPointerDown);
+    motionPreference.addEventListener('change', rebuildAnimations);
+
+    return () => {
+      cancelAnimationFrame(resizeFrame);
+      observer.disconnect();
+      layer.removeEventListener('pointerdown', onPointerDown);
+      motionPreference.removeEventListener('change', rebuildAnimations);
+      animations.forEach((animation) => animation.cancel());
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
+
   if (typeof document === 'undefined') return null;
   return createPortal(
-    <canvas ref={canvasRef} className="home-view__pearl-fluid" aria-hidden />,
+    <>
+      <canvas ref={canvasRef} className="home-view__pearl-fluid" aria-hidden />
+      <div ref={pearlsRef} className="home-view__falling-pearls" aria-hidden>
+        {Array.from({ length: 8 }, (_, index) => (
+          <span key={index} className="home-view__falling-pearl" />
+        ))}
+      </div>
+    </>,
     document.body,
   );
 }
