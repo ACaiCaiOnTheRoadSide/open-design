@@ -676,7 +676,7 @@ describe('FileWorkspace quick switcher visual isolation', () => {
     // Once the quick switcher closes, the composer input returns to its resting
     // translucent surface (no longer the dimmed --bg-fill-tertiary isolation wash).
     expect(getComputedStyle(composerInputWrap).background).toBe(
-      'color-mix(in srgb, var(--bg-panel) 74%, transparent)',
+      'color-mix(in srgb, var(--bg-panel) 68%, transparent)',
     );
   });
 });
