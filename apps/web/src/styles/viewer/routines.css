@@ -2293,20 +2293,18 @@
   gap: 8px;
   border-color: var(--border-soft);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-subtle) 45%, var(--bg-panel));
+  /* Keep the in-project composer consistent with the translucent surfaces on
+     Home while preserving enough contrast for controls over the transcript. */
+  background: var(--glass-regular);
   box-shadow: none;
 }
 
-[data-theme="dark"] .app .chat-log,
-[data-theme="dark"] .chat-composer-fixed-layer .composer,
-[data-theme="dark"] .chat-composer-fixed-layer .composer-shell {
+[data-theme="dark"] .app .chat-log {
   background: var(--bg-panel);
 }
 
 @media (prefers-color-scheme: dark) {
-  html:not([data-theme]) .app .chat-log,
-  html:not([data-theme]) .chat-composer-fixed-layer .composer,
-  html:not([data-theme]) .chat-composer-fixed-layer .composer-shell {
+  html:not([data-theme]) .app .chat-log {
     background: var(--bg-panel);
   }
 }
@@ -2333,7 +2331,7 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .chat-composer-fixed-layer .composer-input-wrap {
-  background: #fff;
+  background: color-mix(in srgb, var(--bg-panel) 74%, transparent);
   /* No inner frame — the input sits directly on the shell surface. The shell
      keeps its own outer border (see .composer-shell above). */
   border-color: transparent;
@@ -2341,6 +2339,7 @@
   overflow: hidden;
 }
 .chat-composer-fixed-layer .composer-input-wrap:focus-within {
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
   border-color: transparent;
 }
 .chat-composer-fixed-layer .composer-input-editor,
