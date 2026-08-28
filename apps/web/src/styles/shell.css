@@ -2380,6 +2380,11 @@ a.avatar-item:visited {
 .split-chat-slot > .pane {
   flex: 1 1 auto;
   min-width: 0;
+  /* Let the page wash read clearly through the conversation surface instead of
+     turning the whole left column into a nearly solid white block. */
+  background: var(--glass-clear);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  backdrop-filter: var(--glass-backdrop);
 }
 .split-edit-divider {
   grid-column: 2;
