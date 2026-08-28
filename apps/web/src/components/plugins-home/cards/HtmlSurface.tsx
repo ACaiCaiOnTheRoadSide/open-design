@@ -165,7 +165,7 @@ export function HtmlSurface({ preview, pluginId, pluginTitle, inView, eager = fa
             title={`${pluginTitle} preview`}
             src={preview.src}
             sandbox="allow-scripts"
-            loading="lazy"
+            loading={eager ? 'eager' : 'lazy'}
             tabIndex={-1}
             aria-hidden
             className="plugins-home__html-iframe"

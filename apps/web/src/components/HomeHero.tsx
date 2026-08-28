@@ -2542,7 +2542,7 @@ function PluginPromptPresetCard({
             pluginId={record.id}
             pluginTitle={title}
             preview={preview}
-            eager={odMode === 'deck'}
+            eager
           />
           <span className="home-hero__plugin-preset-preview-action">
             {t('common.preview')}

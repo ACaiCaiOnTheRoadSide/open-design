@@ -5122,7 +5122,9 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 
   .home-hero__template-sidebar {
     position: absolute;
-    top: calc(var(--home-hero-composer-top) + 7px);
+    /* Match the composer's measured fractional baseline at the desktop layout;
+       rounding this to 7px leaves the two glass panel tops visibly stepped. */
+    top: calc(var(--home-hero-composer-top) + 7.4375px);
     left: -440px;
     z-index: 3;
     display: flex;
