@@ -360,6 +360,7 @@ export function createPersistentRunQueue(
 }
 
 export function createPostgresRunQueue(pool: PgPoolLike, max: number, tenantMax = 0): RunQueue {
+  if (normalizeLimit(max) === 0) return createMemoryRunQueue(0);
   return createPersistentRunQueue(createPostgresRunQueueBackend(pool), { max, tenantMax });
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createMemoryRunQueue,
   createPersistentRunQueue,
+  createPostgresRunQueue,
   resolveMaxConcurrentRunsPerTenant,
   type PersistentRunQueueBackend,
   type RunQueueAcquireOptions,
@@ -238,6 +239,27 @@ describe('persistent run queue', () => {
 });
 
 describe('memory run queue', () => {
+  it('bypasses PostgreSQL entirely when concurrency is unlimited', async () => {
+    const pool = {
+      connect: vi.fn(() => { throw new Error('PostgreSQL queue must not be used'); }),
+      query: vi.fn(() => { throw new Error('PostgreSQL queue must not be used'); }),
+      end: vi.fn(async () => undefined),
+    };
+    const queue = createPostgresRunQueue(pool, 0);
+
+    await queue.start();
+    const first = await queue.acquire({ id: 'same-run', principal: principal('local') });
+    const second = await queue.acquire({ id: 'same-run', principal: principal('local') });
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(pool.query).not.toHaveBeenCalled();
+    first!.release();
+    second!.release();
+    await queue.shutdown();
+  });
+
   it('preserves lightweight SQLite FIFO and queued cancellation', async () => {
     const queue = createMemoryRunQueue(1);
     await queue.start();
