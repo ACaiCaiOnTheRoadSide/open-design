@@ -34,13 +34,13 @@ interface Props {
 
 // Rendered menu width (see .home-hero__template-list) — used to clamp the
 // anchor so the whole panel stays inside the viewport.
-const MENU_W = 340;
-const MENU_MAX_H = 286;
+const MENU_W = 304;
+const MENU_MAX_H = 252;
 const MENU_GAP = 8;
 const VIEWPORT_MARGIN = 16;
 // One 44px row plus the list's 6px top/bottom padding. When less than this is
 // available below the trigger, prefer the roomier side above it.
-const MENU_MIN_USABLE_H = 56;
+const MENU_MIN_USABLE_H = 50;
 
 // Per product: the menu lists at most this many kinds (rows beyond it are
 // simply not shown — the catalog stays whole for the rail/carousel).
@@ -199,8 +199,8 @@ export function TemplatePicker({
         data-testid="home-hero-template-trigger"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={t('homeHero.templatePicker.label')}
         disabled={disabled}
-        title={t('homeHero.templatePicker.label')}
         onClick={toggleOpen}
       >
         {/* With a selection the pill reads as `[template icon] Wireframe`:
