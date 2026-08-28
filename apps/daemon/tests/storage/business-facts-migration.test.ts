@@ -43,6 +43,18 @@ describe('business facts PostgreSQL migration contract', () => {
     expect(sql).toContain('EXTRACT(EPOCH FROM clock_timestamp()) * 1000');
   });
 
+  it('allows status-only projections into legacy full message tables', async () => {
+    const sql = await readFile(
+      path.join(resolvePgMigrationsDirectory(), '014_legacy_message_projection.sql'),
+      'utf8',
+    );
+    for (const column of ['role', 'content', 'position']) {
+      expect(sql).toContain(`'${column}'`);
+    }
+    expect(sql).toContain('ALTER TABLE messages ALTER COLUMN %I DROP NOT NULL');
+    expect(sql).not.toMatch(/UPDATE messages/);
+  });
+
   it('defines the pending App Stats run result queue', async () => {
     const sql = await readFile(
       path.join(resolvePgMigrationsDirectory(), '013_appstats_run_results.sql'),
