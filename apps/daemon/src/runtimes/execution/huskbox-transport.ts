@@ -89,7 +89,18 @@ if [ -n "\${OD_INSTALL_URL:-}" ]; then
 fi
 export OD_SYNC_STATE_DIR="$HOME/.od-sync-state"
 if [ -n "\${OD_BACKEND_URL:-}" ] && [ -n "\${OD_PROJECT_ID:-}" ]; then
-  "$OD_NODE_BIN" "$OD_BIN" sync pull >/dev/null || { echo "[od-bootstrap] sync pull failed" >&2; exit 125; }
+  pull_log="$TMPDIR/od-sync-pull.log"
+  pull_attempt=1
+  while ! "$OD_NODE_BIN" "$OD_BIN" sync pull >"$pull_log" 2>&1; do
+    if [ "$pull_attempt" -ge 5 ]; then
+      echo "[od-bootstrap] sync pull failed after $pull_attempt attempts" >&2
+      cat "$pull_log" >&2
+      exit 125
+    fi
+    pull_attempt=$((pull_attempt + 1))
+    sleep 1
+  done
+  rm -f "$pull_log"
 fi
 mkdir -p "\${OD_AGENT_CWD:-$OD_DATA_DIR}"
 cd "\${OD_AGENT_CWD:-$OD_DATA_DIR}" || exit 125

@@ -374,6 +374,8 @@ describe('HuskboxExecutionTransport', () => {
     const command = HUSKBOX_BOOTSTRAP_SCRIPT.indexOf('"$@"');
     const push = HUSKBOX_BOOTSTRAP_SCRIPT.indexOf('sync push');
     expect(pull).toBeGreaterThan(-1);
+    expect(HUSKBOX_BOOTSTRAP_SCRIPT).toContain('pull_attempt" -ge 5');
+    expect(HUSKBOX_BOOTSTRAP_SCRIPT).toContain('sync pull failed after $pull_attempt attempts');
     expect(pull).toBeLessThan(command);
     expect(command).toBeLessThan(push);
   });

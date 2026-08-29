@@ -149,10 +149,10 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
     exitCode: 0,
     nativeSessionRecovery: {
       agentId: 'ohmyagent',
-      state: 'captured_not_resumed',
+      state: 'not_applicable',
       acquisition: 'none',
       continuation: 'none',
-      handle: { present: true, redacted: true },
+      handle: { present: false, redacted: false },
     },
   });
 
