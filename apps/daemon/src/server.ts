@@ -225,7 +225,11 @@ import {
   BYOK_OPENCODE_API_KEY_ENV,
   BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
 } from './runtimes/byok-opencode.js';
-import { buildOhMyAgentModelConfig, OHMYAGENT_API_KEY_ENV } from './runtimes/ohmyagent-config.js';
+import {
+  buildOhMyAgentModelConfig,
+  ohmyagentProviderFromEnv,
+  OHMYAGENT_API_KEY_ENV,
+} from './runtimes/ohmyagent-config.js';
 import { buildOhMyAgentMcpConfig } from './runtimes/ohmyagent-mcp.js';
 import {
   extractPlainStreamArtifacts,
@@ -12064,7 +12068,7 @@ export async function startServer({
       }
     }
     const ohmyagentModelConfig = def.id === 'ohmyagent'
-      ? buildOhMyAgentModelConfig(byokProvider, safeModel)
+      ? buildOhMyAgentModelConfig(byokProvider ?? ohmyagentProviderFromEnv(), safeModel)
       : null;
     const ohmyagentMcpConfig = def.externalMcpInjection === 'ohmyagent-config-file'
       ? buildOhMyAgentMcpConfig(enabledExternalMcp, oauthTokensForSpawn)

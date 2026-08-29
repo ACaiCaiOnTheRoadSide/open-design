@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildOhMyAgentModelConfig, OHMYAGENT_API_KEY_ENV } from '../../src/runtimes/ohmyagent-config.js';
+import {
+  buildOhMyAgentModelConfig,
+  ohmyagentProviderFromEnv,
+  OHMYAGENT_API_KEY_ENV,
+} from '../../src/runtimes/ohmyagent-config.js';
 import { buildOhMyAgentMcpConfig } from '../../src/runtimes/ohmyagent-mcp.js';
 
 describe('OhMyAgent secure runtime config conversion', () => {
@@ -16,6 +20,22 @@ describe('OhMyAgent secure runtime config conversion', () => {
       env: { [OHMYAGENT_API_KEY_ENV]: secret },
     });
     expect(JSON.stringify(result?.config)).not.toContain(secret);
+  });
+
+  it('uses a server-managed default when a run has no explicit BYOK provider', () => {
+    const provider = ohmyagentProviderFromEnv({
+      OD_OHMYAGENT_MODEL_PROTOCOL: 'anthropic',
+      OD_OHMYAGENT_MODEL: 'managed-model',
+      OD_OHMYAGENT_MODEL_BASE_URL: 'https://managed.example',
+      OD_OHMYAGENT_MODEL_API_KEY: 'managed-key',
+    });
+    expect(buildOhMyAgentModelConfig(provider, 'default')).toEqual({
+      config: {
+        name: 'open-design-runtime', type: 'anthropic', model: 'managed-model',
+        base_url: 'https://managed.example', api_key: `env:${OHMYAGENT_API_KEY_ENV}`,
+      },
+      env: { [OHMYAGENT_API_KEY_ENV]: 'managed-key' },
+    });
   });
 
   it('converts stdio and HTTP MCP servers to OhMyAgent servers array', () => {
