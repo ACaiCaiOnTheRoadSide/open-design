@@ -47,7 +47,11 @@ import {
   readCodexRolloutFirstCall,
 } from '../codex-rollout-usage.js';
 import type { ConnectorService } from '../connectors/service.js';
-import { requireRequestContext, type VerifiedPrincipal } from '../request-context.js';
+import {
+  captureRequestPrincipal,
+  requireRequestContext,
+  type VerifiedPrincipal,
+} from '../request-context.js';
 import type { AgentRunResultFact, BusinessFactsStore } from '../storage/business-facts.js';
 import type { BusinessFactsOutbox } from '../storage/business-facts-outbox.js';
 import {
@@ -551,7 +555,11 @@ export interface RegisterRunRoutesDeps {
     getAgentDef: (agentId: string) => RuntimeAgentDef | null | undefined;
   };
   chat: {
-    startChatRun: (meta: RunCreateMeta, run: ChatRun) => Promise<unknown>;
+    startChatRun: (
+      meta: RunCreateMeta,
+      run: ChatRun,
+      principal: Readonly<VerifiedPrincipal> | undefined,
+    ) => Promise<unknown>;
   };
   lifecycle: {
     isDaemonShuttingDown: () => boolean;
@@ -1259,6 +1267,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   }
 
   app.post('/api/runs', async (req: ApiRequest, res: ApiResponse) => {
+    const runPrincipal = captureRequestPrincipal();
     if (ctx.lifecycle.isDaemonShuttingDown()) {
       return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
     }
@@ -2021,7 +2030,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     // A response-only idempotent reuse returned above and never reaches here.
     const runStatsAttempt = (run.manualResumeAttemptCount ?? 0) + 1;
     try {
-      design.runs.start(run, () => startChatRun(executionMeta, run), {
+      design.runs.start(run, () => startChatRun(executionMeta, run, runPrincipal), {
         agentRunStatsAdmission: runStatsAdmission
           ? { ...runStatsAdmission, attempt: runStatsAttempt }
           : null,
@@ -3232,6 +3241,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   });
 
   app.post('/api/chat', async (req: ApiRequest, res: ApiResponse) => {
+    const runPrincipal = captureRequestPrincipal();
     if (ctx.lifecycle.isDaemonShuttingDown()) {
       return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
     }
@@ -3456,7 +3466,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ? { byokProvider: requestBody.byokProvider }
         : {}),
     };
-    design.runs.start(run, () => startChatRun(executionMeta, run));
+    design.runs.start(run, () => startChatRun(executionMeta, run, runPrincipal));
   });
 }
 

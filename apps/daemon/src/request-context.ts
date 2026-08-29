@@ -24,6 +24,24 @@ export function getRequestContext(): Readonly<VerifiedPrincipal> | undefined {
 }
 
 /**
+ * Captures authenticated request identity for work that may start after the
+ * request's async chain has ended. Call this at the authenticated entry point,
+ * before its first await; never reconstruct the result from request input.
+ */
+export function captureRequestPrincipal(): Readonly<VerifiedPrincipal> | undefined {
+  const principal = getRequestContext();
+  return principal ? Object.freeze({ ...principal }) : undefined;
+}
+
+/** Runs delayed work under a previously captured, trusted principal. */
+export function runWithCapturedRequestContext<T>(
+  principal: Readonly<VerifiedPrincipal> | undefined,
+  work: () => T,
+): T {
+  return principal ? runWithRequestContext(principal, work) : work();
+}
+
+/**
  * Restores a principal that was authenticated by another trusted capability.
  * Tool callbacks use this only after validating the opaque server-minted token;
  * request headers are deliberately not consulted.

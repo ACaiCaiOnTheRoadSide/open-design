@@ -1,20 +1,43 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createAuthorizeProjectRequest } from '../src/collab/project-request-authority.js';
 import { createToolRequestAuth } from '../src/http/tool-request-auth.js';
-import { getRequestContext, requireRequestContext, runWithRequestContext } from '../src/request-context.js';
+import {
+  captureRequestPrincipal,
+  getRequestContext,
+  requireRequestContext,
+  runWithCapturedRequestContext,
+  runWithRequestContext,
+} from '../src/request-context.js';
 import { ToolTokenRegistry } from '../src/tool-tokens.js';
 
 describe('tool token principal recovery', () => {
-  it('passes the authenticated run principal explicitly when minting after queued work', () => {
-    const serverSource = readFileSync(new URL('../src/server.ts', import.meta.url), 'utf8');
-    const startChatRunSource = serverSource.slice(
-      serverSource.indexOf('const startChatRun = async'),
-      serverSource.indexOf('const runtimeToolPrompt =', serverSource.indexOf('const startChatRun = async')),
-    );
+  it('preserves the first principal for a delayed starter and its same-run retry', async () => {
+    const tokens = new ToolTokenRegistry();
+    const owner = { tenantId: 'tenant-a', userId: 'alice', workspaceId: 'workspace-1' };
+    const observed: Array<ReturnType<typeof getRequestContext>> = [];
+    const delayedStarter = runWithRequestContext(owner, () => {
+      const principal = captureRequestPrincipal();
+      if (!principal) throw new Error('expected authenticated test principal');
+      return (attempt: number) => runWithCapturedRequestContext(principal, () => {
+        observed.push(getRequestContext());
+        return tokens.mint({
+          runId: 'same-run',
+          projectId: 'project-1',
+          principal,
+          ttlMs: 60_000 + attempt,
+        });
+      });
+    });
 
-    expect(startChatRunSource).toContain('const runPrincipal = getRequestContext();');
-    expect(startChatRunSource).toMatch(/toolTokenRegistry\.mint\(\{[\s\S]*?principal: runPrincipal,/);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(getRequestContext()).toBeUndefined();
+
+    const first = delayedStarter(1);
+    const retry = delayedStarter(2);
+    expect(observed).toEqual([owner, owner]);
+    expect(tokens.validate(first.token)).toMatchObject({ ok: true, grant: { principal: owner } });
+    expect(tokens.validate(retry.token)).toMatchObject({ ok: true, grant: { principal: owner } });
+    tokens.clear();
   });
 
   it('restores an explicitly captured principal after async queue context is gone and authorizes its project mutation', async () => {

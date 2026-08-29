@@ -1071,7 +1071,12 @@ import { importLegacyPostgresMetadata } from './storage/legacy-metadata-import.j
 import { closePool, getPool, runWithPgPoolCleanupOnFailure } from './storage/pg.js';
 import { createPostgresAppConfigStore } from './storage/postgres-app-config-store.js';
 import { createResourceOwnerRegistry } from './storage/resource-owner-registry.js';
-import { runWithRequestContext, requireRequestContext } from './request-context.js';
+import {
+  captureRequestPrincipal,
+  runWithCapturedRequestContext,
+  runWithRequestContext,
+  requireRequestContext,
+} from './request-context.js';
 import { createBrandDesignSystemRegistry } from './storage/brand-design-system-registry.js';
 import {
   createMemoryRunQueue,
@@ -10245,13 +10250,7 @@ export async function startServer({
       });
   };
 
-  const startChatRun = async (chatBody, run) => {
-    // Capture the authenticated identity before any await. Hosted queue rows are
-    // stamped only from principal ALS, never from request bodies or headers.
-    const runPrincipal = getRequestContext();
-    if (daemonDbConfig.kind === 'postgres' && !runPrincipal) {
-      throw new Error('Missing principal for persistent run queue');
-    }
+  const startChatRunInContext = async (chatBody, run, runPrincipal) => {
     // Defense in depth for non-HTTP/retry callers: never launch an agent after
     // project deletion has synchronously marked its lifecycle tombstone.
     const lifecycleProjectId = run?.projectId ?? chatBody?.projectId;
@@ -11615,7 +11614,7 @@ export async function startServer({
       };
     };
     const spawnRetryAttempt = (retryChatBody = chatBody) => {
-      void startChatRun(retryChatBody, run).catch((err) => {
+      void startChatRun(retryChatBody, run, runPrincipal).catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
         design.runs.emit(
           run,
@@ -14954,6 +14953,16 @@ export async function startServer({
     }
   };
 
+  const startChatRun = (chatBody, run, runPrincipal) => {
+    if (daemonDbConfig.kind === 'postgres' && !runPrincipal) {
+      return Promise.reject(new Error('Missing principal for persistent run queue'));
+    }
+    return runWithCapturedRequestContext(
+      runPrincipal,
+      () => startChatRunInContext(chatBody, run, runPrincipal),
+    );
+  };
+
   orbitService.setRunHandler(async ({
     trigger,
     startedAt,
@@ -14962,6 +14971,7 @@ export async function startServer({
     template,
     workspaceScope,
   }) => {
+    const requestPrincipal = captureRequestPrincipal();
     // Each Orbit run gets its own project so the conversation, messages, and
     // live artifact are isolated. The handler does the synchronous prep here
     // (insert project/conversation/run rows, kick off the chat run) and
@@ -14971,6 +14981,7 @@ export async function startServer({
     // on the agent's final status (live artifact discovery, lastRun summary
     // metadata) lives inside the `completion` promise.
     const appConfig = await readRequestAppConfig(RUNTIME_DATA_DIR);
+    const orbitPrincipal = requestPrincipal ?? appConfig.orbit?.factPrincipal;
     let agentId = typeof appConfig.agentId === 'string' && appConfig.agentId
       ? appConfig.agentId
       : null;
@@ -15078,7 +15089,7 @@ export async function startServer({
         'Do not ask follow-up questions, do not emit <question-form>, and do not wait for user input. This run is unattended; pick reasonable defaults and complete the artifact.',
         'Keep connector credentials and OD_TOOL_TOKEN private; never print or persist secrets.',
       ].join('\n'),
-    }, run));
+    }, run, orbitPrincipal));
 
     const completion = (async () => {
       const finalStatus = await design.runs.wait(run);
@@ -15213,6 +15224,7 @@ export async function startServer({
       ? { tenantId: routineFactOwner.factTenantId, userId: routineFactOwner.factCreatorId }
       : undefined;
     const runRoutine = async () => {
+    const routinePrincipal = captureRequestPrincipal();
     const { routine, trigger, startedAt, runId } = input;
     const appConfig = await readRequestAppConfig(RUNTIME_DATA_DIR);
     let agentId = routine.agentId
@@ -15501,7 +15513,7 @@ export async function startServer({
           `You are running an unattended scheduled routine named "${routine.name}".`,
           'Do not ask follow-up questions, do not emit <question-form>, and do not wait for user input. Pick reasonable defaults and finish the task.',
         ].join('\n'),
-      }, run));
+      }, run, routinePrincipal));
     };
 
     // Tear-down for the case where the durable routine_run row was never
