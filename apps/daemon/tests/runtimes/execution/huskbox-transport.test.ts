@@ -85,7 +85,7 @@ describe('HuskboxExecutionTransport', () => {
     const transport = new HuskboxExecutionTransport(config, { fetcher });
     const handle = transport.execute({
       command: 'ohmyagent',
-      args: ['--output-format', 'json', '--permission-mode', 'bypassPermissions', '--cwd', '/workspace/projects/p1'],
+      args: ['--output-format', 'json', '--permission-mode', 'bypassPermissions', '--cwd', '/data/projects/p1'],
       cwd: '/data/projects/p1',
       remoteEnv: {
         OD_OHMYAGENT_MODEL_CONFIG_B64: Buffer.from('{}').toString('base64'),

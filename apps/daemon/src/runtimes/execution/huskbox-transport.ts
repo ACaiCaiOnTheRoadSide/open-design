@@ -162,6 +162,17 @@ export function createHuskboxSandboxEnv(
   return { env, projectId };
 }
 
+function sandboxCommandArgs(spec: ExecutionSpec, env: Record<string, string>): string[] {
+  const args = [...(spec.args ?? [])];
+  if (spec.command.split(/[\\/]/u).at(-1) !== 'ohmyagent' || !spec.cwd || !env.OD_AGENT_CWD) return args;
+  for (let index = 0; index < args.length - 1; index++) {
+    if ((args[index] === '--cwd' || args[index] === '-C') && args[index + 1] === spec.cwd) {
+      args[index + 1] = env.OD_AGENT_CWD;
+    }
+  }
+  return args;
+}
+
 export class HuskboxExecutionTransport implements ExecutionTransport {
   private readonly client: HuskboxClient;
   constructor(readonly config: HuskboxExecutionConfig, private readonly options: HuskboxTransportOptions = {}) {
@@ -256,7 +267,7 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
         const request: HuskboxExecuteRequest = {
           idempotency_key: idempotencyKey,
           ...(this.config.image ? { image: this.config.image } : {}),
-          cmd: ['bash', '-c', HUSKBOX_BOOTSTRAP_SCRIPT, 'bash', this.spec.command, ...(this.spec.args ?? [])],
+          cmd: ['bash', '-c', HUSKBOX_BOOTSTRAP_SCRIPT, 'bash', this.spec.command, ...sandboxCommandArgs(this.spec, env)],
           env,
           ...(stdin ? { stdin } : {}),
         };
