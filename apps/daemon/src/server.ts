@@ -8871,6 +8871,7 @@ export async function startServer({
     research: researchDeps,
     authorizeProjectRequest,
     authorizeProjectToolRequest,
+    isApiTokenAuthorization,
   });
 
   registerVelaRoutes(app, {

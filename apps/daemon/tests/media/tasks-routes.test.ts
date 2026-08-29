@@ -11,6 +11,30 @@ import { insertMediaTask, listMediaTasksByProject } from '../../src/media/tasks.
 import { startServer } from '../../src/server.js';
 import { toolTokenRegistry } from '../../src/tool-tokens.js';
 
+async function routeFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const host = headers.get('host');
+  if (!host) return fetch(input, init);
+
+  const url = new URL(input);
+  const body = typeof init.body === 'string' ? init.body : '';
+  headers.set('content-length', String(Buffer.byteLength(body)));
+  return new Promise<Response>((resolve, reject) => {
+    const request = http.request(url, {
+      method: init.method,
+      headers: Object.fromEntries(headers),
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on('end', () => resolve(new Response(Buffer.concat(chunks), {
+        status: response.statusCode ?? 500,
+      })));
+    });
+    request.on('error', reject);
+    request.end(body);
+  });
+}
+
 describe('media task route recovery', () => {
   let server: http.Server | null = null;
   let authorityServer: http.Server | null = null;
@@ -74,12 +98,13 @@ describe('media task route recovery', () => {
     };
     server = started.server;
 
-    const response = await fetch(
+    const response = await routeFetch(
       `${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`,
       {
         method: 'POST',
         headers: {
           authorization: `Bearer ${token}`,
+          host: 'sandbox.invalid',
           'content-type': 'application/json',
         },
         body: JSON.stringify({ since: 0, timeoutMs: 0 }),
@@ -98,12 +123,13 @@ describe('media task route recovery', () => {
       allowedEndpoints: ['/api/tools/media/generate'],
       allowedOperations: ['media:generate'],
     }).token;
-    const endpointDenied = await fetch(
+    const endpointDenied = await routeFetch(
       `${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`,
       {
         method: 'POST',
         headers: {
           authorization: `Bearer ${endpointDeniedToken}`,
+          host: 'sandbox.invalid',
           'content-type': 'application/json',
         },
         body: JSON.stringify({ since: 0, timeoutMs: 0 }),
@@ -114,18 +140,42 @@ describe('media task route recovery', () => {
       error: { code: 'TOOL_ENDPOINT_DENIED' },
     });
 
+    const operationDeniedToken = toolTokenRegistry.mint({
+      projectId,
+      runId: `run_${randomUUID()}`,
+      allowedEndpoints: ['/api/media/tasks/:id/wait'],
+      allowedOperations: ['research:search'],
+    }).token;
+    const operationDenied = await routeFetch(
+      `${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${operationDeniedToken}`,
+          host: 'sandbox.invalid',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ since: 0, timeoutMs: 0 }),
+      },
+    );
+    expect(operationDenied.status).toBe(403);
+    await expect(operationDenied.json()).resolves.toMatchObject({
+      error: { code: 'TOOL_OPERATION_DENIED' },
+    });
+
     const otherProjectToken = toolTokenRegistry.mint({
       projectId: 'different-project',
       runId: `run_${randomUUID()}`,
       allowedEndpoints: ['/api/media/tasks/:id/wait'],
       allowedOperations: ['media:generate'],
     }).token;
-    const crossProject = await fetch(
+    const crossProject = await routeFetch(
       `${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`,
       {
         method: 'POST',
         headers: {
           authorization: `Bearer ${otherProjectToken}`,
+          host: 'sandbox.invalid',
           'content-type': 'application/json',
         },
         body: JSON.stringify({ since: 0, timeoutMs: 0 }),
@@ -181,12 +231,13 @@ describe('media task route recovery', () => {
       ['forged-token', 'TOOL_TOKEN_INVALID'],
       [expiredToken, 'TOOL_TOKEN_EXPIRED'],
     ] as const) {
-      const response = await fetch(
+      const response = await routeFetch(
         `${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`,
         {
           method: 'POST',
           headers: {
             authorization: `Bearer ${token}`,
+            host: 'sandbox.invalid',
             'content-type': 'application/json',
           },
           body: JSON.stringify({ since: 0, timeoutMs: 0 }),
@@ -198,6 +249,75 @@ describe('media task route recovery', () => {
         error: { code: expectedCode },
       });
     }
+
+    const missingToken = await routeFetch(
+      `${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`,
+      {
+        method: 'POST',
+        headers: {
+          host: 'sandbox.invalid',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ since: 0, timeoutMs: 0 }),
+      },
+    );
+    expect(missingToken.status).toBe(403);
+    await expect(missingToken.json()).resolves.toEqual({
+      error: 'cross-origin request rejected',
+    });
+  });
+
+  it('keeps full OD_API_TOKEN requests on the local project-auth lane', async () => {
+    const dataDir = process.env.OD_DATA_DIR;
+    const db = openDatabase(process.cwd(), dataDir === undefined ? {} : { dataDir });
+    const projectId = `project_${randomUUID()}`;
+    const taskId = `task_${randomUUID()}`;
+    const now = Date.now();
+    const apiToken = `api_${randomUUID()}`;
+
+    insertProject(db, {
+      id: projectId,
+      name: 'API-token media project',
+      createdAt: now,
+      updatedAt: now,
+    });
+    insertMediaTask(db, {
+      id: taskId,
+      projectId,
+      status: 'done',
+      surface: 'image',
+      model: 'fixture-model',
+      progress: ['done'],
+      file: { name: 'generated.png', size: 3 },
+      startedAt: now,
+      endedAt: now,
+      updatedAt: now,
+    });
+    vi.stubEnv('OD_API_TOKEN', apiToken);
+
+    const started = await startServer({ port: 0, returnServer: true }) as {
+      url: string;
+      server: http.Server;
+    };
+    server = started.server;
+
+    const response = await routeFetch(
+      `${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ since: 0, timeoutMs: 0 }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'done',
+      file: { name: 'generated.png' },
+    });
   });
 
   it('uses the tool grant and persisted project binding without querying Workspace authority', async () => {
@@ -265,12 +385,13 @@ describe('media task route recovery', () => {
     server = started.server;
     await vi.waitFor(() => expect(authorityRequests).toBeGreaterThanOrEqual(1));
     const startupAuthorityRequests = authorityRequests;
-    const waitForMissingTask = () => fetch(
+    const waitForMissingTask = () => routeFetch(
       `${started.url}/api/media/tasks/missing-task/wait`,
       {
         method: 'POST',
         headers: {
           authorization: `Bearer ${token}`,
+          host: 'sandbox.invalid',
           'content-type': 'application/json',
         },
         body: JSON.stringify({ since: 0, timeoutMs: 0 }),
@@ -320,7 +441,7 @@ describe('media task route recovery', () => {
     };
     server = started.server;
 
-    const response = await fetch(`${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`, {
+    const response = await routeFetch(`${started.url}/api/media/tasks/${encodeURIComponent(taskId)}/wait`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ since: 0, timeoutMs: 0 }),
@@ -368,7 +489,7 @@ describe('media task route recovery', () => {
     server = started.server;
 
     try {
-      const response = await fetch(`${started.url}/api/projects/${encodeURIComponent(projectId)}/media/generate`, {
+      const response = await routeFetch(`${started.url}/api/projects/${encodeURIComponent(projectId)}/media/generate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
