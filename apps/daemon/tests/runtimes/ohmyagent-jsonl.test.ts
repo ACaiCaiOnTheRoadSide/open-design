@@ -20,6 +20,7 @@ describe('OhMyAgent JSONL parser', () => {
     ]);
     expect(events.filter((event) => event.type === 'text_delta').map((event) => event.delta)).toEqual(['hel', 'lo', 'sub']);
     expect(events.filter((event) => event.type === 'thinking_delta').map((event) => event.delta)).toEqual(['why']);
+    expect(events.filter((event) => ['model_running', 'model_done'].includes(event.label))).toEqual([]);
   });
 
   it('maps tools, usage, todos and terminal/progress events', () => {
@@ -39,10 +40,8 @@ describe('OhMyAgent JSONL parser', () => {
       expect.objectContaining({ type: 'tool_result', toolUseId: 'tc', isError: false }),
       expect.objectContaining({ type: 'usage', usage: { input_tokens: 2, output_tokens: 3 } }),
       expect.objectContaining({ type: 'tool_use', name: 'TodoWrite' }),
-      expect.objectContaining({ type: 'status', label: 'compaction' }),
-      expect.objectContaining({ type: 'status', label: 'session_summary' }),
-      expect.objectContaining({ type: 'status', label: 'turn_done' }),
     ]));
+    expect(events.filter((event) => ['compaction', 'session_summary', 'turn_done'].includes(event.label))).toEqual([]);
   });
 
   it('keeps transient_retry non-terminal and preserves lossless-only payloads as raw', () => {

@@ -89,7 +89,7 @@ if [ -n "\${OD_INSTALL_URL:-}" ]; then
 fi
 export OD_SYNC_STATE_DIR="$HOME/.od-sync-state"
 if [ -n "\${OD_BACKEND_URL:-}" ] && [ -n "\${OD_PROJECT_ID:-}" ]; then
-  "$OD_NODE_BIN" "$OD_BIN" sync pull || { echo "[od-bootstrap] sync pull failed" >&2; exit 125; }
+  "$OD_NODE_BIN" "$OD_BIN" sync pull >/dev/null || { echo "[od-bootstrap] sync pull failed" >&2; exit 125; }
 fi
 mkdir -p "\${OD_AGENT_CWD:-$OD_DATA_DIR}"
 cd "\${OD_AGENT_CWD:-$OD_DATA_DIR}" || exit 125
@@ -101,7 +101,7 @@ else
 fi
 code=$?
 if [ -n "\${OD_BACKEND_URL:-}" ] && [ -n "\${OD_PROJECT_ID:-}" ]; then
-  "$OD_NODE_BIN" "$OD_BIN" sync push || echo "[od-bootstrap] sync push failed" >&2
+  "$OD_NODE_BIN" "$OD_BIN" sync push >/dev/null || echo "[od-bootstrap] sync push failed" >&2
 fi
 exit $code`;
 

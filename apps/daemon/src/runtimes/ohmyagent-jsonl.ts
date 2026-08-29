@@ -71,7 +71,6 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
       case 'model_start':
         modelText = '';
         thinkingText = '';
-        onEvent({ type: 'status', label: 'model_running', raw: event });
         return;
       case 'model_delta': {
         const delta = text(data.text);
@@ -88,7 +87,6 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
       case 'model_done':
         emitAuthoritative('text', text(data.text), modelText, event);
         emitAuthoritative('thinking', text(data.thinking), thinkingText, event);
-        onEvent({ type: 'status', label: 'model_done', raw: event });
         return;
       case 'tool_call': {
         const id = text(event.tool_call_id) || text(data.id);
@@ -114,7 +112,9 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
         }
         return;
       case 'turn_done':
-        onEvent({ type: 'status', label: 'turn_done', ...(data.structured_output !== undefined ? { structuredOutput: data.structured_output } : {}), raw: event });
+        if (data.structured_output !== undefined) {
+          onEvent({ type: 'status', label: 'turn_done', structuredOutput: data.structured_output, raw: event });
+        }
         return;
       case 'send_user_message': {
         const message = text(data.message);
@@ -127,7 +127,6 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
         return;
       case 'compaction':
       case 'session_summary':
-        onEvent({ type: 'status', label: type, data, raw: event });
         return;
       case 'agent_result':
       case 'task_notification':

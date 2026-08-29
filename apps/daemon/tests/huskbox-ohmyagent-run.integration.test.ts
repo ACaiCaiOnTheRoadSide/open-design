@@ -136,7 +136,6 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
     expect.objectContaining({ event: 'agent', data: expect.objectContaining({
       type: 'usage', usage: { input_tokens: 11, output_tokens: 3 },
     }) }),
-    expect.objectContaining({ event: 'agent', data: expect.objectContaining({ type: 'status', label: 'turn_done' }) }),
     expect.objectContaining({ event: 'end', data: expect.objectContaining({ status: 'succeeded', code: 0 }) }),
   ]));
 
