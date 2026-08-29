@@ -400,7 +400,9 @@ describe('composeSystemPrompt', () => {
       expect(amrPrompt).toContain(
         'Video model: `vela/doubao-seedance-2-0-260128`',
       );
-      expect(amrPrompt).toContain('### OpenDesign Cloud media defaults');
+      expect(amrPrompt).toContain('### Runtime media defaults');
+      expect(amrPrompt).toContain('This runtime recommends these media defaults');
+      expect(amrPrompt).not.toContain('This AMR run uses these managed media defaults');
       expect(amrPrompt).not.toContain('### Run-scoped BYOK media defaults');
       expect(amrPrompt).toContain('Never invoke the `vela` CLI directly');
       expect(amrPrompt).toContain('trusted Workspace attribution');
@@ -408,6 +410,41 @@ describe('composeSystemPrompt', () => {
       const claudePrompt = composeSystemPrompt({ agentId: 'claude' });
       expect(claudePrompt).not.toContain('Image model: `vela/gpt-image-2`');
       expect(claudePrompt).toContain('`--model flux-pro-ultra`');
+    });
+
+    it('recommends configured MiniMax images for OhMyAgent without exposing the key', () => {
+      const secret = 'minimax-secret-must-not-reach-the-prompt';
+      const previous = process.env.OD_MINIMAX_API_KEY;
+      process.env.OD_MINIMAX_API_KEY = secret;
+      try {
+        const prompt = composeSystemPrompt({ agentId: 'ohmyagent' });
+        expect(prompt).toContain('IMAGE_MODEL="minimax-image-01"');
+        expect(prompt).toContain('Image model: `minimax-image-01`');
+        expect(prompt).toContain('### Runtime media defaults');
+        expect(prompt).not.toContain('For the best fal image model');
+        expect(prompt).not.toContain(secret);
+      } finally {
+        if (previous === undefined) delete process.env.OD_MINIMAX_API_KEY;
+        else process.env.OD_MINIMAX_API_KEY = previous;
+      }
+    });
+
+    it('keeps an explicit image default ahead of OhMyAgent MiniMax runtime defaults', () => {
+      const previous = process.env.OD_MINIMAX_API_KEY;
+      process.env.OD_MINIMAX_API_KEY = 'another-secret-value';
+      try {
+        const prompt = composeSystemPrompt({
+          agentId: 'ohmyagent',
+          byokMediaDefaults: { imageModel: 'user-selected-image-model' },
+        });
+        expect(prompt).toContain('IMAGE_MODEL="user-selected-image-model"');
+        expect(prompt).toContain('Image model: `user-selected-image-model`');
+        expect(prompt).not.toContain('minimax-image-01');
+        expect(prompt).not.toContain('another-secret-value');
+      } finally {
+        if (previous === undefined) delete process.env.OD_MINIMAX_API_KEY;
+        else process.env.OD_MINIMAX_API_KEY = previous;
+      }
     });
 
     it('keeps image completion copy concrete while retaining internal diagnostics', () => {
