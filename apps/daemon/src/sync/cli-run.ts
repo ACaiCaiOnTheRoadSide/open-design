@@ -342,8 +342,15 @@ async function cleanupSyncStaging(root: string): Promise<void> {
   }
 }
 
-async function downloadSafely(ctx: CliContext, root: string, relPath: string, entry: { sha256: string; mtime: number }): Promise<void> {
-  const stageDir = await safeParent(root, '.od-sync-staging/blob', true);
+async function downloadSafely(
+  ctx: CliContext,
+  root: string,
+  stageDir: string,
+  relPath: string,
+  entry: { sha256: string; mtime: number },
+): Promise<void> {
+  const checkedStageDir = await safeParent(root, '.od-sync-staging/blob', false);
+  if (checkedStageDir !== stageDir) throw new Error('sync staging directory changed during pull');
   const stage = path.join(stageDir, `${process.pid}-${randomUUID()}`);
   try {
     await getBlobToFile(ctx.target, ctx.projectId, entry.sha256, stage, entry.mtime);
@@ -355,7 +362,6 @@ async function downloadSafely(ctx: CliContext, root: string, relPath: string, en
     await rename(stage, dest);
   } finally {
     await rm(stage, { force: true }).catch(() => {});
-    await rmdir(stageDir).catch(() => {});
   }
 }
 
@@ -416,6 +422,7 @@ async function runPullUnlocked(ctx: CliContext): Promise<void> {
   await writeState(ctx, { status: 'in-progress', previousValid, attemptedFiles });
   const root = await safeRoot(ctx);
   await cleanupSyncStaging(root);
+  const stageDir = await safeParent(root, '.od-sync-staging/blob', true);
   const maxBytes = prefetchMaxBytes();
   const eager = entries.filter(([, entry]) => entry.size < maxBytes);
   const skippedLarge = entries
@@ -435,9 +442,15 @@ async function runPullUnlocked(ctx: CliContext): Promise<void> {
     }
   }
 
-  await mapWithConcurrency(eager, PULL_CONCURRENCY, async ([relPath, entry]) => {
-    await downloadSafely(ctx, root, relPath, entry);
-  });
+  try {
+    await mapWithConcurrency(eager, PULL_CONCURRENCY, async ([relPath, entry]) => {
+      await downloadSafely(ctx, root, stageDir, relPath, entry);
+    });
+  } finally {
+    // Individual workers must not remove the shared staging directory: another
+    // download may have validated it but not opened its temporary file yet.
+    await cleanupSyncStaging(root);
+  }
 
   await writeState(ctx, {
     status: 'valid',
@@ -536,7 +549,12 @@ export async function runFile(args: string[]): Promise<void> {
     const entry = files[relPath]!;
     const root = await safeRoot(ctx);
     await cleanupSyncStaging(root);
-    await downloadSafely(ctx, root, relPath, entry);
+    const stageDir = await safeParent(root, '.od-sync-staging/blob', true);
+    try {
+      await downloadSafely(ctx, root, stageDir, relPath, entry);
+    } finally {
+      await cleanupSyncStaging(root);
+    }
     const fileStat = await stat(path.join(root, ...relPath.split('/')));
     emit(ctx, { path: relPath, size: fileStat.size }, `fetched ${relPath} (${fileStat.size} bytes)`);
   });

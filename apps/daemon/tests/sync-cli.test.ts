@@ -260,6 +260,29 @@ describe('od sync / od file CLI', () => {
     }
   });
 
+  it('keeps shared staging alive until all concurrent pull downloads finish', async () => {
+    const id = 'proj-concurrent-downloads';
+    const contents = ['fast', 'slow-one', 'slow-two', 'slow-three'];
+    const files: ManifestFiles = Object.create(null) as ManifestFiles;
+    for (const [index, content] of contents.entries()) {
+      const digest = sha(content);
+      backend.blobs.set(digest, Buffer.from(content));
+      files[`file-${index}.txt`] = { sha256: digest, size: content.length, mtime: index + 1 };
+      if (index > 0) backend.delayBlobGet(digest, 75);
+    }
+    backend.manifests.set(id, { version: 1, files });
+    process.env.OD_PROJECT_ID = id;
+    try {
+      await runSync(['pull', '--json']);
+      await Promise.all(contents.map((content, index) =>
+        expect(fsp.readFile(join(dataDir, 'projects', id, `file-${index}.txt`), 'utf8')).resolves.toBe(content)));
+      await expect(fsp.access(join(dataDir, 'projects', id, '.od-sync-staging'))).rejects.toThrow();
+    } finally {
+      process.env.OD_PROJECT_ID = projectId;
+      for (const content of contents.slice(1)) backend.delayBlobGet(sha(content), 0);
+    }
+  });
+
   it('serializes concurrent same-project pulls and leaves one valid state', async () => {
     const id = 'proj-concurrent';
     const digest = sha('parallel');

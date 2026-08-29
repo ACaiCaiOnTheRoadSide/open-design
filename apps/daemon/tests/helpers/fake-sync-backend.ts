@@ -15,6 +15,7 @@ export interface FakeSyncBackend {
   readonly diffCommits: number;
   failNextDiff: (count?: number) => void;
   failNextManifest: (count?: number) => void;
+  delayBlobGet: (sha256: string, delayMs: number) => void;
 }
 
 export function createFakeSyncBackend(): FakeSyncBackend {
@@ -23,6 +24,7 @@ export function createFakeSyncBackend(): FakeSyncBackend {
   let diffCommits = 0;
   let pendingDiffFailures = 0;
   let pendingManifestFailures = 0;
+  const blobGetDelays = new Map<string, number>();
 
   const server = createServer((req, res) => {
     const url = new URL(req.url!, 'http://x');
@@ -74,11 +76,20 @@ export function createFakeSyncBackend(): FakeSyncBackend {
         return json(200, { key: `projects/${projectId}/blobs/${digest}` });
       }
       if (url.pathname === '/api/internal/sync/blob' && req.method === 'GET') {
-        const blob = blobs.get(url.searchParams.get('sha256')!);
+        const digest = url.searchParams.get('sha256')!;
+        const blob = blobs.get(digest);
         if (!blob) return json(404, { error: 'not found' });
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/octet-stream');
-        return res.end(blob);
+        const send = () => {
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/octet-stream');
+          res.end(blob);
+        };
+        const delayMs = blobGetDelays.get(digest) ?? 0;
+        if (delayMs > 0) {
+          setTimeout(send, delayMs);
+          return;
+        }
+        return send();
       }
       json(500, { error: `unexpected ${req.method} ${url.pathname}` });
     });
@@ -96,6 +107,10 @@ export function createFakeSyncBackend(): FakeSyncBackend {
     },
     failNextManifest(count = 1) {
       pendingManifestFailures += count;
+    },
+    delayBlobGet(sha256, delayMs) {
+      if (delayMs > 0) blobGetDelays.set(sha256, delayMs);
+      else blobGetDelays.delete(sha256);
     },
   };
 }
