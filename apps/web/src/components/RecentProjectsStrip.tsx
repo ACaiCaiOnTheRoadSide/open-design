@@ -1009,6 +1009,41 @@ export function RecentProjectsStrip({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abortBackgroundCoverRequests, coverFetchKey, coverQueue, isActive, requestProjectCover]);
 
+  useEffect(() => {
+    if (!confirmTarget || window.parent === window) return;
+    const requestId = `recent-project-confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const handleResult = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.source !== window.parent) return;
+      const data = event.data as { type?: string; id?: string; confirmed?: boolean } | null;
+      if (!data || data.type !== 'od:confirm-result' || data.id !== requestId) return;
+      if (data.confirmed) {
+        void commitDelete().then((result) => {
+          window.parent.postMessage({
+            type: 'od:confirm-complete',
+            id: requestId,
+            ...result,
+          }, window.location.origin);
+          if (result.success) window.removeEventListener('message', handleResult);
+        });
+      } else {
+        window.removeEventListener('message', handleResult);
+        setConfirmTarget(null);
+        setDeleteFailed(false);
+      }
+    };
+    window.addEventListener('message', handleResult);
+    window.parent.postMessage({
+      type: 'od:confirm-open',
+      id: requestId,
+      title: t('designs.deleteTitle'),
+      message: t('designs.deleteConfirm', { name: confirmTarget.name }),
+      confirmLabel: t('designs.menuDelete'),
+      cancelLabel: t('designs.renameCancel'),
+    }, window.location.origin);
+    return () => window.removeEventListener('message', handleResult);
+  }, [confirmTarget]);
+
   // First-run home shouldn't reserve space for an empty "Recent
   // projects" rail — the dashed empty box just adds visual noise
   // above the plugin gallery. We also skip rendering during the
@@ -1205,8 +1240,8 @@ export function RecentProjectsStrip({
     });
   }
 
-  async function commitDelete() {
-    if (!confirmTarget || !onDelete || deletePending) return;
+  async function commitDelete(): Promise<{ success: boolean; error?: string }> {
+    if (!confirmTarget || !onDelete || deletePending) return { success: false };
     const target = confirmTarget;
     const startedAt = performance.now();
     setDeleteFailed(false);
@@ -1231,7 +1266,7 @@ export function RecentProjectsStrip({
           ...workspaceDimensions,
         });
         setDeleteFailed(true);
-        return;
+        return { success: false, error: t('ds.actionFailed') };
       }
       setConfirmTarget(null);
       trackWorkspaceProjectActionResult(analytics.track, {
@@ -1245,6 +1280,7 @@ export function RecentProjectsStrip({
         duration_ms: Math.round(performance.now() - startedAt),
         ...workspaceDimensions,
       });
+      return { success: true };
     } catch (err) {
       console.warn('[RecentProjectsStrip] delete project failed:', err);
       setDeleteFailed(true);
@@ -1260,10 +1296,13 @@ export function RecentProjectsStrip({
         error_code: stableAnalyticsRequestErrorCode(err),
         ...workspaceDimensions,
       });
+      return { success: false, error: t('ds.actionFailed') };
     } finally {
       setDeletePending(false);
     }
   }
+
+  const rendersConfirmInWorkspaceShell = typeof window !== 'undefined' && window.parent !== window;
 
   function toggleSelection(projectId: string) {
     setSelectedProjectIds((current) => {
@@ -2093,7 +2132,7 @@ export function RecentProjectsStrip({
           </DialogFooter>
         </Dialog>
       ) : null}
-      {confirmTarget ? (
+      {confirmTarget && !rendersConfirmInWorkspaceShell ? (
         <Dialog
           className="modal-confirm"
           role="alertdialog"

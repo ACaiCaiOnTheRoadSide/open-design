@@ -299,6 +299,7 @@ describe('DesignsTab select mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     const dialog = screen.getByRole('alertdialog');
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {

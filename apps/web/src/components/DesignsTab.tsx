@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Dialog, DialogDescription, DialogFooter, DialogTitle } from "@open-design/components";
 import type { WorkspaceCollabContext } from "@open-design/contracts";
 import { projectKindFromMetadataToTracking } from "@open-design/contracts/analytics";
@@ -572,24 +573,65 @@ export function DesignsTab({
 		});
 	};
 
-	const commitConfirmTarget = async () => {
-		if (!confirmTarget || confirmPending) return;
+	const commitConfirmTarget = async (): Promise<{ success: boolean; error?: string }> => {
+		if (!confirmTarget || confirmPending) return { success: false };
 		const target = confirmTarget;
 		setConfirmError(null);
 		setConfirmPending(true);
 		try {
 			const result = await target.onConfirm();
 			if (result === false) {
-				setConfirmError(t("ds.actionFailed"));
-				return;
+				const message = t("ds.actionFailed");
+				setConfirmError(message);
+				return { success: false, error: message };
 			}
 			setConfirmTarget((current) => current === target ? null : current);
+			return { success: true };
 		} catch (error) {
-			setConfirmError(error instanceof Error ? error.message : t("ds.actionFailed"));
+			const message = error instanceof Error ? error.message : t("ds.actionFailed");
+			setConfirmError(message);
+			return { success: false, error: message };
 		} finally {
 			setConfirmPending(false);
 		}
 	};
+
+	useEffect(() => {
+		if (!confirmTarget || window.parent === window) return;
+		const requestId = `designs-confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		const handleResult = (event: MessageEvent) => {
+			if (event.origin !== window.location.origin) return;
+			if (event.source !== window.parent) return;
+			const data = event.data as { type?: string; id?: string; confirmed?: boolean } | null;
+			if (!data || data.type !== "od:confirm-result" || data.id !== requestId) return;
+			if (data.confirmed) {
+				void commitConfirmTarget().then((result) => {
+					window.parent.postMessage({
+						type: "od:confirm-complete",
+						id: requestId,
+						...result,
+					}, window.location.origin);
+					if (result.success) window.removeEventListener("message", handleResult);
+				});
+			} else {
+				window.removeEventListener("message", handleResult);
+				setConfirmTarget(null);
+				setConfirmError(null);
+			}
+		};
+		window.addEventListener("message", handleResult);
+		window.parent.postMessage({
+			type: "od:confirm-open",
+			id: requestId,
+			title: confirmTarget.title,
+			message: confirmTarget.message,
+			confirmLabel: confirmTarget.confirmLabel,
+			cancelLabel: t("designs.renameCancel"),
+		}, window.location.origin);
+		return () => window.removeEventListener("message", handleResult);
+	}, [confirmTarget]);
+
+	const rendersConfirmInWorkspaceShell = typeof window !== "undefined" && window.parent !== window;
 
 	return (
 		<div
@@ -1230,7 +1272,7 @@ export function DesignsTab({
 					</DialogFooter>
 				</Dialog>
 			) : null}
-			{confirmTarget ? (
+			{confirmTarget && !rendersConfirmInWorkspaceShell ? createPortal(
 				<Dialog
 					className="modal-confirm"
 					role="alertdialog"
@@ -1270,7 +1312,8 @@ export function DesignsTab({
 							{confirmTarget.confirmLabel}
 						</button>
 					</DialogFooter>
-				</Dialog>
+				</Dialog>,
+				document.body,
 			) : null}
 			<AnimatePresence>
 				{designsToast ? (
