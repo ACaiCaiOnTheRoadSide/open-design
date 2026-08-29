@@ -10610,6 +10610,7 @@ export async function startServer({
       ? toolTokenRegistry.mint({
           runId,
           projectId,
+          principal: runPrincipal,
           allowedEndpoints: CHAT_TOOL_ENDPOINTS,
           allowedOperations: CHAT_TOOL_OPERATIONS,
           ttlMs: toolTokenTtlMs,
