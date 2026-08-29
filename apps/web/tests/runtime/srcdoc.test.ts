@@ -93,6 +93,35 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).toContain("type: 'od:snapshot:result'");
     expect(srcdoc).toContain('copyComputedStyle');
     expect(srcdoc).toContain('foreignObject');
+    expect(srcdoc).toContain("'background-image','background-size','background-position','background-repeat'");
+    expect(srcdoc).toContain('fetch(src, fetchOptions).then(function(r){ return r && r.ok ? r.blob() : null; })');
+    expect(srcdoc).toContain("if (typeof AbortController === 'function') controller = new AbortController();");
+    expect(srcdoc).toContain('var fetchOptions = controller ? { signal: controller.signal } : undefined;');
+    expect(srcdoc).toContain('if (reader && reader.readyState === 1) reader.abort();');
+    expect(srcdoc).toContain('reader = new FileReader();');
+    expect(srcdoc).toContain("iCanvas.getContext('2d').drawImage(source, 0, 0)");
+    expect(srcdoc).toContain('function snapshotImageSource(img)');
+    expect(srcdoc).toContain('invalidateSnapshotImageState(source, imgSrc);');
+    expect(srcdoc).toContain('preSrc === imgSrc');
+    expect(srcdoc).toContain('img.__odSnapSrcUrl = src');
+    expect(srcdoc).toContain('existing && existing.src === src) return existing.promise;');
+    expect(srcdoc).toContain('var pending = (window.__odSnapBgPending = window.__odSnapBgPending || {});');
+    expect(srcdoc).toContain('if (pending[src]) return pending[src].promise;');
+    expect(srcdoc).toContain('function prefetchSnapshotBackgrounds()');
+    expect(srcdoc).toContain("return data ? 'url(\"' + data + '\")' : whole;");
+    expect(srcdoc).toContain('setTimeout(finish, 1500)');
+    expect(srcdoc).toContain('setTimeout(function(){ finish(true); }, 2500)');
+    expect(srcdoc.indexOf('invalidateSnapshotImageState(source, imgSrc);')).toBeLessThan(
+      srcdoc.indexOf('preSrc === imgSrc'),
+    );
+    expect(srcdoc).toContain('var serializer = new XMLSerializer();');
+    expect(srcdoc.indexOf('pruneHiddenSnapshotNodes(document.documentElement, clone);')).toBeLessThan(
+      srcdoc.indexOf('stripNonRenderingNodes(clone);'),
+    );
+    expect(srcdoc).toContain(
+      'waitForImages().then(prefetchSnapshotImages).then(prefetchSnapshotBackgrounds).then(function(){ return captureSnapshot(opts || {}); })',
+    );
+    expect(srcdoc).toContain('full: !!(data.full || data.fullPage)');
   });
 
   it('injects preview observability before author scripts', () => {

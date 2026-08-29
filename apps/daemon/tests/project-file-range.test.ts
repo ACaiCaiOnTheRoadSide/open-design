@@ -404,6 +404,34 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const html = await bridged.text();
     expect(html).toContain('data-od-url-snapshot-bridge');
     expect(html).toContain("type: 'od:snapshot:result'");
+    expect(html).toContain("'background-image','background-size','background-position','background-repeat'");
+    expect(html).toContain('fetch(src, fetchOptions).then(function(r){ return r && r.ok ? r.blob() : null; })');
+    expect(html).toContain("if (typeof AbortController === 'function') controller = new AbortController();");
+    expect(html).toContain('var fetchOptions = controller ? { signal: controller.signal } : undefined;');
+    expect(html).toContain('if (reader && reader.readyState === 1) reader.abort();');
+    expect(html).toContain('reader = new FileReader();');
+    expect(html).toContain("iCanvas.getContext('2d').drawImage(source, 0, 0)");
+    expect(html).toContain('function snapshotImageSource(img)');
+    expect(html).toContain('invalidateSnapshotImageState(source, imgSrc);');
+    expect(html).toContain('preSrc === imgSrc');
+    expect(html).toContain('img.__odSnapSrcUrl = src');
+    expect(html).toContain('existing && existing.src === src) return existing.promise;');
+    expect(html).toContain('var pending = (window.__odSnapBgPending = window.__odSnapBgPending || {});');
+    expect(html).toContain('if (pending[src]) return pending[src].promise;');
+    expect(html).toContain('function prefetchSnapshotBackgrounds()');
+    expect(html).toContain('setTimeout(finish, 1500)');
+    expect(html).toContain('setTimeout(function(){ finish(true); }, 2500)');
+    expect(html.indexOf('invalidateSnapshotImageState(source, imgSrc);')).toBeLessThan(
+      html.indexOf('preSrc === imgSrc'),
+    );
+    expect(html).toContain('var serializer = new XMLSerializer();');
+    expect(html.indexOf('pruneHiddenSnapshotNodes(document.documentElement, clone);')).toBeLessThan(
+      html.indexOf('stripNonRenderingNodes(clone);'),
+    );
+    expect(html).toContain(
+      'waitForImages().then(prefetchSnapshotImages).then(prefetchSnapshotBackgrounds).then(function(){ return captureSnapshot(opts || {}); })',
+    );
+    expect(html).toContain('full: !!(data.full || data.fullPage)');
     expect(html).not.toContain('data-od-url-scroll-bridge');
     expect(html).not.toContain('data-od-url-selection-bridge');
   });

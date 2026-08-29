@@ -642,7 +642,8 @@ function injectSnapshotBridge(doc: string): string {
     'grid','grid-template-columns','grid-template-rows','grid-column','grid-row',
     'gap','row-gap','column-gap','align-items','align-content','align-self',
     'justify-items','justify-content','justify-self','inset','top','right','bottom','left',
-    'z-index','box-shadow','text-shadow'
+    'z-index','box-shadow','text-shadow',
+    'background-image','background-size','background-position','background-repeat'
   ];
   function copyComputedStyle(source, target){
     if (!source || !target || source.nodeType !== 1 || target.nodeType !== 1) return;
@@ -651,13 +652,52 @@ function injectSnapshotBridge(doc: string): string {
     for (var i = 0; i < SNAPSHOT_STYLE_PROPS.length; i++){
       var prop = SNAPSHOT_STYLE_PROPS[i];
       var value = computed.getPropertyValue(prop);
-      if (value) style += prop + ':' + value + ';';
+      if (!value) continue;
+      // background-image url() never rasterizes inside the foreignObject <img>; swap
+      // each ref for its prefetched data: URL (see prefetchSnapshotBackgrounds).
+      if (prop === 'background-image' && value.indexOf('url(') !== -1) value = inlineSnapshotBgUrls(value);
+      style += prop + ':' + value + ';';
     }
     target.setAttribute('style', style);
   }
   function syncElementState(source, target){
     var tag = source.tagName ? source.tagName.toLowerCase() : '';
-    if (tag === 'img' && source.currentSrc) target.setAttribute('src', source.currentSrc);
+    if (tag === 'img') {
+      // Inline the image as a data URL so the <img>-rendered snapshot SVG (which
+      // cannot fetch external/blob URLs) actually paints it. Three layers, best first:
+      var imgInlined = false;
+      // 1. Bytes prefetched via fetch()->blob()->dataURL (see prefetchSnapshotImages).
+      //    This is the ONLY path that survives a CROSS-ORIGIN image: drawImage()
+      //    taints the canvas so toDataURL() throws, and a raw cross-origin/blob URL
+      //    never rasterizes inside <foreignObject> — that is exactly why such images
+      //    came out black. A CORS-enabled (or same-origin / blob) src yields readable
+      //    bytes here.
+      var imgSrc = snapshotImageSource(source);
+      invalidateSnapshotImageState(source, imgSrc);
+      var pre = source.__odSnapSrc;
+      var preSrc = source.__odSnapSrcUrl;
+      if (/^data:/i.test(imgSrc)) { target.setAttribute('src', imgSrc); imgInlined = true; }
+      else if (preSrc === imgSrc && pre && /^data:/i.test(pre)) { target.setAttribute('src', pre); imgInlined = true; }
+      // 2. Fast path: rasterize the already-decoded bitmap (same-origin, untainted).
+      if (!imgInlined) {
+        try {
+          if (source.naturalWidth > 0 && source.naturalHeight > 0) {
+            var iCanvas = document.createElement('canvas');
+            iCanvas.width = source.naturalWidth;
+            iCanvas.height = source.naturalHeight;
+            iCanvas.getContext('2d').drawImage(source, 0, 0);
+            target.setAttribute('src', iCanvas.toDataURL('image/png'));
+            imgInlined = true;
+          }
+        } catch (_) { /* cross-origin taint — fall back below */ }
+      }
+      // 3. Last resort: keep http(s) (may stay blank in foreignObject), drop
+      //    unfetchable blob/filesystem refs so they don't error.
+      if (!imgInlined) {
+        if (/^(blob:|filesystem:)/i.test(imgSrc)) target.removeAttribute('src');
+        else if (imgSrc) target.setAttribute('src', imgSrc);
+      }
+    }
     if (tag === 'input' || tag === 'textarea') target.setAttribute('value', source.value || '');
     if (tag === 'canvas') {
       try {
@@ -678,10 +718,12 @@ function injectSnapshotBridge(doc: string): string {
       copyComputedStyle(originals[i], clones[i]);
       syncElementState(originals[i], clones[i]);
     }
-    var scripts = cloneRoot.querySelectorAll('script');
-    for (var s = scripts.length - 1; s >= 0; s--) scripts[s].remove();
-    var links = cloneRoot.querySelectorAll('link[rel~="stylesheet"], link[rel~="preload"], link[rel~="preconnect"]');
-    for (var l = links.length - 1; l >= 0; l--) links[l].remove();
+    // NOTE: <script> and external <link> removal is intentionally NOT done here.
+    // pruneHiddenSnapshotNodes() below pairs original<->clone nodes BY INDEX, so the
+    // clone must keep the same node set as the live document until pruning finishes.
+    // Removing nodes here shifts those indices and prunes the wrong elements — it
+    // previously deleted visible content (even <body>), yielding empty frames.
+    // The removal now runs in stripNonRenderingNodes() AFTER pruning.
     var styles = cloneRoot.querySelectorAll('style');
     for (var st = 0; st < styles.length; st++) {
       styles[st].textContent = (styles[st].textContent || '')
@@ -707,15 +749,191 @@ function injectSnapshotBridge(doc: string): string {
       if (removals[r].parentNode) removals[r].parentNode.removeChild(removals[r]);
     }
   }
+  // Remove nodes that must not appear in the snapshot: <script> never paints, and
+  // external stylesheet/preload/preconnect <link>s cannot load inside an
+  // <img>-rendered SVG (they only risk tainting the canvas). MUST run AFTER the
+  // index-paired passes (copyComputedStyle / pruneHiddenSnapshotNodes) so it can
+  // never desync the original<->clone node alignment those passes rely on.
+  function stripNonRenderingNodes(cloneRoot){
+    var scripts = cloneRoot.querySelectorAll('script');
+    for (var s = scripts.length - 1; s >= 0; s--) scripts[s].remove();
+    var links = cloneRoot.querySelectorAll('link[rel~="stylesheet"], link[rel~="preload"], link[rel~="preconnect"]');
+    for (var l = links.length - 1; l >= 0; l--) links[l].remove();
+  }
   function waitForImages(){
     var imgs = Array.prototype.slice.call(document.images || []);
     return Promise.all(imgs.map(function(img){
       if (img.complete) return Promise.resolve();
       return new Promise(function(resolve){
-        img.addEventListener('load', resolve, { once: true });
-        img.addEventListener('error', resolve, { once: true });
+        var settled = false;
+        function finish(){ if (settled) return; settled = true; resolve(); }
+        img.addEventListener('load', finish, { once: true });
+        img.addEventListener('error', finish, { once: true });
+        // Lazy / blocked / never-settling images keep img.complete false and fire
+        // neither load nor error, which would stall the snapshot forever (the host
+        // then times out and reports a capture failure). Cap each image so
+        // waitForImages always resolves.
+        setTimeout(finish, 1500);
       });
     }));
+  }
+  function snapshotImageSource(img){
+    try { return img.currentSrc || img.getAttribute('src') || ''; } catch (_) { return ''; }
+  }
+  function invalidateSnapshotImageState(img, src){
+    if (img.__odSnapSrcUrl !== src) {
+      try { img.__odSnapSrc = ''; img.__odSnapSrcUrl = ''; } catch (_) {}
+    }
+    var pending = img.__odSnapPending;
+    if (pending && pending.src !== src) {
+      try { pending.cancel(); } catch (_) {}
+      if (img.__odSnapPending === pending) img.__odSnapPending = null;
+    }
+  }
+  function prefetchSnapshotImages(){
+    // The snapshot SVG renders through an <img>, which cannot reach the network,
+    // so every external image must already be a data: URL by serialization time.
+    // Bind both cached and pending work to the exact currentSrc/src URL: responsive
+    // or authored source changes must never reuse bytes from the previous image.
+    var imgs = Array.prototype.slice.call(document.images || []);
+    return Promise.all(imgs.map(function(img){
+      var src = snapshotImageSource(img);
+      invalidateSnapshotImageState(img, src);
+      if (!src) return Promise.resolve();
+      if (/^data:/i.test(src)) {
+        try { img.__odSnapSrc = src; img.__odSnapSrcUrl = src; } catch (_) {}
+        return Promise.resolve();
+      }
+      if (img.__odSnapSrcUrl === src && /^data:/i.test(img.__odSnapSrc || '')) return Promise.resolve();
+      var existing = img.__odSnapPending;
+      if (existing && existing.src === src) return existing.promise;
+      var record = { src: src, promise: null, cancel: null };
+      var promise = new Promise(function(resolve){
+        var done = false;
+        var timer = null;
+        var controller = null;
+        var reader = null;
+        function finish(cancelWork){
+          if (done) return;
+          done = true;
+          if (timer !== null) clearTimeout(timer);
+          if (cancelWork) {
+            try { if (controller) controller.abort(); } catch (_) {}
+            try { if (reader && reader.readyState === 1) reader.abort(); } catch (_) {}
+          }
+          if (img.__odSnapPending === record) img.__odSnapPending = null;
+          resolve();
+        }
+        record.cancel = function(){ finish(true); };
+        img.__odSnapPending = record;
+        timer = setTimeout(function(){ finish(true); }, 2500);
+        try {
+          if (typeof AbortController === 'function') controller = new AbortController();
+          var fetchOptions = controller ? { signal: controller.signal } : undefined;
+          fetch(src, fetchOptions).then(function(r){ return r && r.ok ? r.blob() : null; })
+            .then(function(blob){
+              if (done || !blob) { finish(false); return; }
+              reader = new FileReader();
+              reader.onload = function(){
+                if (!done && snapshotImageSource(img) === src && img.__odSnapPending === record) {
+                  var data = String(reader.result || '');
+                  if (/^data:/i.test(data)) {
+                    try { img.__odSnapSrc = data; img.__odSnapSrcUrl = src; } catch (_) {}
+                  }
+                }
+                finish(false);
+              };
+              reader.onerror = function(){ finish(false); };
+              reader.onabort = function(){ finish(false); };
+              try { reader.readAsDataURL(blob); } catch (_) { finish(false); }
+            })
+            .catch(function(){ finish(false); });
+        } catch (_) { finish(false); }
+      });
+      record.promise = promise;
+      return promise;
+    }));
+  }
+  // CSS background-image counterpart of prefetchSnapshotImages: <img> go through
+  // document.images, but background-image: url(...) refs also never rasterize inside
+  // the foreignObject <img> — and were dropped entirely (background-image wasn't even
+  // in SNAPSHOT_STYLE_PROPS). Prefetch each background url() to a data: URL, cached by
+  // its absolute URL (the form getComputedStyle returns), for inlineSnapshotBgUrls.
+  function collectBgUrls(value, into){
+    if (!value || value === 'none' || value.indexOf('url(') === -1) return;
+    var re = /url\\(([^)]+)\\)/g, m;
+    while ((m = re.exec(value))){
+      var u = m[1].trim().replace(/^['"]|['"]$/g, '');
+      if (u && !/^data:/i.test(u)) into[u] = true;
+    }
+  }
+  function prefetchSnapshotBackgrounds(){
+    var cache = (window.__odSnapBgCache = window.__odSnapBgCache || {});
+    var pending = (window.__odSnapBgPending = window.__odSnapBgPending || {});
+    var all = Array.prototype.slice.call(document.querySelectorAll('*'));
+    var wanted = {};
+    for (var i = 0; i < all.length && i < 4000; i++){
+      try { collectBgUrls(window.getComputedStyle(all[i]).backgroundImage, wanted); } catch (_) {}
+    }
+    var urls = Object.keys(wanted);
+    return Promise.all(urls.map(function(src){
+      if (cache[src]) return Promise.resolve();
+      if (pending[src]) return pending[src].promise;
+      var record = { promise: null };
+      var promise = new Promise(function(resolve){
+        var done = false;
+        var timer = null;
+        var controller = null;
+        var reader = null;
+        function finish(cancelWork){
+          if (done) return;
+          done = true;
+          if (timer !== null) clearTimeout(timer);
+          if (cancelWork) {
+            try { if (controller) controller.abort(); } catch (_) {}
+            try { if (reader && reader.readyState === 1) reader.abort(); } catch (_) {}
+          }
+          if (pending[src] === record) delete pending[src];
+          resolve();
+        }
+        pending[src] = record;
+        timer = setTimeout(function(){ finish(true); }, 2500);
+        try {
+          if (typeof AbortController === 'function') controller = new AbortController();
+          var fetchOptions = controller ? { signal: controller.signal } : undefined;
+          fetch(src, fetchOptions).then(function(r){ return r && r.ok ? r.blob() : null; })
+            .then(function(blob){
+              if (done || !blob) { finish(false); return; }
+              reader = new FileReader();
+              reader.onload = function(){
+                if (!done && pending[src] === record) {
+                  var data = String(reader.result || '');
+                  if (/^data:/i.test(data)) { try { cache[src] = data; } catch (_) {} }
+                }
+                finish(false);
+              };
+              reader.onerror = function(){ finish(false); };
+              reader.onabort = function(){ finish(false); };
+              try { reader.readAsDataURL(blob); } catch (_) { finish(false); }
+            })
+            .catch(function(){ finish(false); });
+        } catch (_) { finish(false); }
+      });
+      record.promise = promise;
+      return promise;
+    }));
+  }
+  // Swap each background url() for its prefetched data: URL. Best-effort: an
+  // uncached/failed fetch leaves the original ref (stays unpainted, same as before —
+  // never taints the canvas since the foreignObject <img> does not load external refs).
+  function inlineSnapshotBgUrls(value){
+    var cache = window.__odSnapBgCache || {};
+    return value.replace(/url\\(([^)]+)\\)/g, function(whole, inner){
+      var u = inner.trim().replace(/^['"]|['"]$/g, '');
+      if (!u || /^data:/i.test(u)) return whole;
+      var data = cache[u];
+      return data ? 'url("' + data + '")' : whole;
+    });
   }
   function scrollOffset(){
     var doc = document.documentElement;
@@ -776,11 +994,26 @@ function injectSnapshotBridge(doc: string): string {
       clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
       inlineSnapshotStyles(document.documentElement, clone);
       pruneHiddenSnapshotNodes(document.documentElement, clone);
+      stripNonRenderingNodes(clone);
       var scroll = full ? { x: 0, y: 0 } : scrollOffset();
       var cloneBody = clone.querySelector('body');
       var rootStyle = clone.getAttribute('style') || '';
       var bodyStyle = cloneBody ? cloneBody.getAttribute('style') || '' : '';
-      var bodyContent = cloneBody ? cloneBody.innerHTML : clone.innerHTML;
+      // <foreignObject> content must be well-formed XML (XHTML). HTML5
+      // serialization (.innerHTML) leaves void elements unclosed and entities
+      // unescaped, which makes the SVG image silently fail to rasterize — the
+      // <img> fires neither load nor error, so the snapshot hangs until the
+      // host times out. XMLSerializer emits XML-compliant markup so the
+      // foreignObject actually paints.
+      var bodyContent = (function(){
+        var root = cloneBody || clone;
+        var serializer = new XMLSerializer();
+        var out = '';
+        for (var node = root.firstChild; node; node = node.nextSibling){
+          try { out += serializer.serializeToString(node); } catch (_) { /* skip unserializable node */ }
+        }
+        return out;
+      })();
       var wrapperStyle = rootStyle + bodyStyle +
         'margin:0;position:relative;left:' + (-scroll.x) + 'px;top:' + (-scroll.y) + 'px;' +
         'width:' + docW + 'px;height:' + docH + 'px;overflow:visible;';
@@ -818,12 +1051,12 @@ function injectSnapshotBridge(doc: string): string {
   }
   // Exposed so the export-capture bridge (same document) can reuse this renderer.
   window.__odCaptureSnapshot = function(opts){
-    return waitForImages().then(function(){ return captureSnapshot(opts || {}); });
+    return waitForImages().then(prefetchSnapshotImages).then(prefetchSnapshotBackgrounds).then(function(){ return captureSnapshot(opts || {}); });
   };
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
     if (!data || data.type !== 'od:snapshot' || !data.id) return;
-    window.__odCaptureSnapshot({ full: !!data.full }).then(function(res){
+    window.__odCaptureSnapshot({ full: !!(data.full || data.fullPage) }).then(function(res){
       window.parent.postMessage({ type: 'od:snapshot:result', id: String(data.id), dataUrl: res.dataUrl, w: res.w, h: res.h }, '*');
     }, function(err){
       window.parent.postMessage({ type: 'od:snapshot:result', id: String(data.id), error: String(err && err.message || err) }, '*');
