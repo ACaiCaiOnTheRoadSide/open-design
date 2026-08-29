@@ -14,13 +14,32 @@ describe('OhMyAgent JSONL parser', () => {
       frame('thinking_delta', { text: 'why' }),
       frame('model_done', { text: 'hello', thinking: 'why' }),
       frame('model_delta', { text: 'sub' }, { session_id: 'sub', parent_session_id: 's1' }),
+      frame('turn_done'),
     ].join('\n') + '\n');
     expect(events.filter((event) => event.sessionId)).toEqual([
       expect.objectContaining({ type: 'status', sessionId: 's1' }),
     ]);
-    expect(events.filter((event) => event.type === 'text_delta').map((event) => event.delta)).toEqual(['hel', 'lo', 'sub']);
+    expect(events.filter((event) => event.type === 'text_delta').map((event) => event.delta)).toEqual(['hellosub']);
     expect(events.filter((event) => event.type === 'thinking_delta').map((event) => event.delta)).toEqual(['why']);
     expect(events.filter((event) => ['model_running', 'model_done'].includes(event.label))).toEqual([]);
+  });
+
+  it('moves pre-tool model narration into thinking and keeps the final pass as text', () => {
+    const events: any[] = [];
+    const parser = createOhMyAgentJsonlHandler((event) => events.push(event));
+    for (const line of [
+      frame('model_start'),
+      frame('model_delta', { text: 'Let me inspect.' }),
+      frame('model_done', { text: 'Let me inspect.' }),
+      frame('tool_call', { id: 'tc', name: 'Bash', input: {} }, { tool_call_id: 'tc' }),
+      frame('tool_result', { tool: 'Bash', content: 'ok' }, { tool_call_id: 'tc' }),
+      frame('model_start'),
+      frame('model_delta', { text: '处理完成' }),
+      frame('model_done', { text: '处理完成' }),
+      frame('turn_done'),
+    ]) parser.feed(`${line}\n`);
+    expect(events.filter((event) => event.type === 'thinking_delta').map((event) => event.delta)).toEqual(['Let me inspect.']);
+    expect(events.filter((event) => event.type === 'text_delta').map((event) => event.delta)).toEqual(['处理完成']);
   });
 
   it('maps tools, usage, todos and terminal/progress events', () => {

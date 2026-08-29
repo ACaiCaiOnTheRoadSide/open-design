@@ -7,6 +7,7 @@
  */
 import { runFile, runSync } from './sync/cli-run.js';
 import { runSandboxResearch } from './research/cli-run.js';
+import { runSandboxMedia } from './media/sandbox-cli-run.js';
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -16,10 +17,12 @@ if (command === 'sync') {
   await runFile(args);
 } else if (command === 'research') {
   await runSandboxResearch(args);
+} else if (command === 'media') {
+  await runSandboxMedia(args);
 } else {
   if (command) {
     console.error(`od-cli: unsupported sandbox command '${command}'`);
   }
-  console.error('This sandbox bundle only supports: od sync pull|push, od file get <path>, od research search');
+  console.error('This sandbox bundle only supports: od sync pull|push, od file get <path>, od research search, od media generate|wait');
   process.exit(2);
 }

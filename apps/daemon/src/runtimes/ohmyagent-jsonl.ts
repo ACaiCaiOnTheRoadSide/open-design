@@ -32,6 +32,13 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
   let modelText = '';
   let thinkingText = '';
 
+  const flushModelText = (kind: 'text' | 'thinking') => {
+    if (modelText) {
+      onEvent({ type: kind === 'text' ? 'text_delta' : 'thinking_delta', delta: modelText });
+      modelText = '';
+    }
+  };
+
   const emitAuthoritative = (
     kind: 'text' | 'thinking',
     complete: string,
@@ -41,7 +48,10 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
     if (!complete || complete === streamed) return;
     if (complete.startsWith(streamed)) {
       const suffix = complete.slice(streamed.length);
-      if (suffix) onEvent({ type: kind === 'text' ? 'text_delta' : 'thinking_delta', delta: suffix });
+      if (suffix) {
+        if (kind === 'text') modelText += suffix;
+        else onEvent({ type: 'thinking_delta', delta: suffix });
+      }
       return;
     }
     // Canonical deltas cannot retract already rendered bytes. Preserve the
@@ -69,15 +79,14 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
 
     switch (type) {
       case 'model_start':
-        modelText = '';
+        // A new model pass after uncommitted prose means the preceding pass
+        // continued into tool work. Keep that narration in the thinking lane.
+        flushModelText('thinking');
         thinkingText = '';
         return;
-      case 'model_delta': {
-        const delta = text(data.text);
-        modelText += delta;
-        if (delta) onEvent({ type: 'text_delta', delta });
+      case 'model_delta':
+        modelText += text(data.text);
         return;
-      }
       case 'thinking_delta': {
         const delta = text(data.text);
         thinkingText += delta;
@@ -89,6 +98,10 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
         emitAuthoritative('thinking', text(data.thinking), thinkingText, event);
         return;
       case 'tool_call': {
+        // MiniMax can expose pre-tool narration as model_delta rather than a
+        // dedicated thinking_delta. Once a tool call follows, that segment is
+        // execution reasoning, not the assistant's final answer.
+        flushModelText('thinking');
         const id = text(event.tool_call_id) || text(data.id);
         const name = text(data.name);
         if (id && name) onEvent({ type: 'tool_use', id, name, input: data.input ?? null, raw: event });
@@ -112,6 +125,7 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
         }
         return;
       case 'turn_done':
+        flushModelText('text');
         if (data.structured_output !== undefined) {
           onEvent({ type: 'status', label: 'turn_done', structuredOutput: data.structured_output, raw: event });
         }
@@ -155,6 +169,7 @@ export function createOhMyAgentJsonlHandler(onEvent: Emit) {
       const tail = buffer.replace(/\r$/u, '');
       buffer = '';
       if (tail.trim()) handle(tail);
+      flushModelText('text');
     },
   };
 }
