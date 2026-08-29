@@ -151,6 +151,8 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
     nativeSessionRecovery: {
       agentId: 'ohmyagent',
       state: 'captured_not_resumed',
+      acquisition: 'none',
+      continuation: 'none',
       handle: { present: true, redacted: true },
     },
   });
@@ -173,10 +175,12 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   try {
     expect(db.prepare(
       'SELECT agent_id AS agentId, session_id AS sessionId FROM agent_sessions WHERE conversation_id = ?',
-    ).get(conversationId)).toEqual({ agentId: 'ohmyagent', sessionId: 'oma-session-real-http' });
+    ).get(conversationId)).toBeUndefined();
   } finally {
     db.close();
   }
+
+  expect(request.body.cmd).not.toContain('--resume');
 
   const persisted = (await readFile(join(dataDir, 'runs', runId, 'events.jsonl'), 'utf8'))
     .trim().split('\n').map((line) => JSON.parse(line) as RunEvent);

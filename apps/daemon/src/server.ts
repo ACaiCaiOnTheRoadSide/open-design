@@ -11050,10 +11050,15 @@ export async function startServer({
     // keep working memory across turns. Decide once per run; reuse for the
     // prompt-composition skipTranscript choice, the buildArgs flags, and the
     // create-turn persistence below.
+    // Huskbox executions run in fresh sandboxes. Native session handles point
+    // at runtime-local files that are not present in the next sandbox, so send
+    // the full conversation transcript instead of passing an unusable handle.
     const agentSupportsSessionResume =
-      runtimeResumesSessionById(def) ||
-      def.streamFormat === 'pi-rpc' ||
-      def.resumesSessionViaAcpLoad === true;
+      selectedExecutionTransportKind !== 'huskbox' && (
+        runtimeResumesSessionById(def) ||
+        def.streamFormat === 'pi-rpc' ||
+        def.resumesSessionViaAcpLoad === true
+      );
     // Capture-style adapters (codex) mint their OWN session id and report it on
     // the stream; the daemon captures it here and persists THAT as the resume
     // handle instead of `agentResumeCtx.newSessionId` (which such CLIs ignore).
@@ -11183,7 +11188,7 @@ export async function startServer({
     // directly. Public chat requests cannot reach this branch.
     const forceInternalResume =
       pendingNativeSessionContinue != null &&
-      runtimeResumesSessionById(def) &&
+      agentSupportsSessionResume &&
       pendingNativeSessionContinue.sessionId.length > 0;
     const agentResumeCtx = forceInternalResume
       ? {
@@ -11767,7 +11772,7 @@ export async function startServer({
           run.nativeSessionContinueAttemptCount ?? 0,
         totalRetryAttemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
-        supportsNativeSessionContinue: runtimeResumesSessionById(def),
+        supportsNativeSessionContinue: agentSupportsSessionResume,
         hasNativeSession: !!run.conversationId && !!liveSessionId,
       });
       if (
@@ -11877,7 +11882,7 @@ export async function startServer({
       );
       const resumableFailure =
         result === 'failed' &&
-        runtimeResumesSessionById(def) &&
+        agentSupportsSessionResume &&
         !!run.conversationId &&
         !!liveSessionId &&
         committedWorkSeen &&
@@ -12516,7 +12521,7 @@ export async function startServer({
     }
 
     let persistDeliveredAgentSessionState = () => {};
-    if (runtimeResumesSessionById(def) && run.conversationId) {
+    if (agentSupportsSessionResume && runtimeResumesSessionById(def) && run.conversationId) {
       let persisted = false;
       persistDeliveredAgentSessionState = () => {
         if (persisted) return;
