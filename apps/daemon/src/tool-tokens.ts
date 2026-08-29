@@ -14,6 +14,7 @@ export function resolveChatToolTokenTtlMs(inactivityTimeoutMs: number): number {
   );
 }
 
+export const MEDIA_GENERATE_TOOL_ENDPOINT = '/api/tools/media/generate';
 // Capability key for the parameterized media wait route. Token grants cannot
 // enumerate a task id that is created after the grant is minted.
 export const MEDIA_TASK_WAIT_TOOL_ENDPOINT = '/api/media/tasks/:id/wait';
@@ -30,7 +31,7 @@ export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/connectors/list',
   '/api/tools/connectors/execute',
   '/api/tools/design-systems/read',
-  '/api/tools/media/generate',
+  MEDIA_GENERATE_TOOL_ENDPOINT,
   HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
   PROJECT_EXPORT_TOOL_ENDPOINT,

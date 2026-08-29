@@ -1007,6 +1007,8 @@ import { configureComposioConfigStore } from './connectors/composio-config.js';
 import {
   CHAT_TOOL_ENDPOINTS,
   CHAT_TOOL_OPERATIONS,
+  MEDIA_GENERATE_TOOL_ENDPOINT,
+  MEDIA_TASK_WAIT_TOOL_ENDPOINT,
   PROJECT_EXPORT_TOOL_ENDPOINT,
   OD_CLI_DOWNLOAD_TOOL_ENDPOINT,
   RESEARCH_SEARCH_TOOL_ENDPOINT,
@@ -2233,6 +2235,8 @@ const PROJECT_PREVIEW_SCOPE_TTL_MS = 60 * 60 * 1000;
 const PROJECT_PREVIEW_ASSET_PATH_RE = /^\/projects\/([^/]+)\/preview\/([^/]+)\/.+$/u;
 const PROJECT_RUN_SCOPED_EXPORT_PATH_RE =
   /^\/projects\/[^/]+\/export(?:\/(?:pptx|pdf-image|image))?$/u;
+const MEDIA_GENERATE_PATH = MEDIA_GENERATE_TOOL_ENDPOINT.slice('/api'.length);
+const MEDIA_TASK_WAIT_PATH_RE = /^\/media\/tasks\/[^/]+\/wait$/u;
 
 function createProjectPreviewScopeRegistry() {
   const scopes = new Map();
@@ -2795,8 +2799,9 @@ export async function startServer({
   // Loopback origins skip the check (the desktop UI / local CLI never carry
   // credentials); every other request must present a matching bearer token
   // (CLI / proxy) or matching HTTP Basic credentials (browser UI). A currently
-  // valid run-scoped token may pass only an exact screenshot-export endpoint;
-  // its route rechecks the operation and project. Health / readiness / version
+  // valid run-scoped token may pass only the explicitly mapped export, research,
+  // CLI-download, or media endpoints; each route rechecks its operation and
+  // project authority. Health / readiness / version
   // remain open. Server-minted project preview asset scopes are also accepted
   // for GETs so sandboxed
   // browser iframes can load HTML/CSS/JS without privileged headers.
@@ -2832,9 +2837,13 @@ export async function startServer({
         ? { endpoint: PROJECT_EXPORT_TOOL_ENDPOINT, operation: 'project:export' }
         : req.method === 'POST' && req.path === '/tools/research/search'
           ? { endpoint: RESEARCH_SEARCH_TOOL_ENDPOINT, operation: 'research:search' }
-          : req.method === 'GET' && req.path === '/od-cli.mjs'
-            ? { endpoint: OD_CLI_DOWNLOAD_TOOL_ENDPOINT, operation: 'od-cli:download' }
-            : null;
+          : req.method === 'POST' && req.path === MEDIA_GENERATE_PATH
+            ? { endpoint: MEDIA_GENERATE_TOOL_ENDPOINT, operation: 'media:generate' }
+            : req.method === 'POST' && MEDIA_TASK_WAIT_PATH_RE.test(req.path)
+              ? { endpoint: MEDIA_TASK_WAIT_TOOL_ENDPOINT, operation: 'media:generate' }
+              : req.method === 'GET' && req.path === '/od-cli.mjs'
+                ? { endpoint: OD_CLI_DOWNLOAD_TOOL_ENDPOINT, operation: 'od-cli:download' }
+                : null;
       if (scopedRequest && toolTokenRegistry.validate(bearerTokenFromRequest(req), scopedRequest).ok) {
         return next();
       }

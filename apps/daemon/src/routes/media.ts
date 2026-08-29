@@ -28,6 +28,7 @@ import {
 import { isSandboxModeEnabled } from '../sandbox-mode.js';
 import {
   HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT,
+  MEDIA_GENERATE_TOOL_ENDPOINT,
   MEDIA_TASK_WAIT_TOOL_ENDPOINT,
   RESEARCH_SEARCH_TOOL_ENDPOINT,
   type ToolTokenGrant,
@@ -865,7 +866,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
     }
   });
 
-  app.post('/api/tools/media/generate', async (req, res) => {
+  app.post(MEDIA_GENERATE_TOOL_ENDPOINT, async (req, res) => {
     const grant = authorizeToolRequest(req, res, 'media:generate');
     if (!grant) return;
     try {
