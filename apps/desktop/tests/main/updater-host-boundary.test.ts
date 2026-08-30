@@ -116,10 +116,17 @@ describe("desktop updater host boundary", () => {
     expect(installHandler).not.toContain("shutdown");
   });
 
+  it("does not create or load the removed desktop-pet renderer", () => {
+    const runtime = source("src/main/runtime.ts");
+    expect(runtime).not.toContain("createDesktopPetWindow");
+    expect(runtime).not.toContain("desktopPetUrl");
+    expect(runtime).not.toContain('desktop-pet:set-visible');
+  });
+
   it("exposes process quit only as an explicit post-installer-open action", () => {
     const runtime = source("src/main/runtime.ts");
     const quitStart = runtime.indexOf('ipcMain.handle("od:update:quit"');
-    const quitEnd = runtime.indexOf('ipcMain.removeAllListeners("desktop-pet:set-visible"');
+    const quitEnd = runtime.indexOf('ipcMain.removeAllListeners("od:appearance:set-theme"');
     expect(quitStart).toBeGreaterThanOrEqual(0);
     expect(quitEnd).toBeGreaterThan(quitStart);
     const quitHandler = runtime.slice(quitStart, quitEnd);

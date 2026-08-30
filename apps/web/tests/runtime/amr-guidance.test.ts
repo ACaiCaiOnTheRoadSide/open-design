@@ -172,16 +172,13 @@ describe('resolveRunFailureUi', () => {
       primaryAction: 'retry',
       titleKey: 'chat.runError.title.rateLimited',
       messageKey: 'chat.runError.rateLimitedMessage',
-      showSwitchCard: true,
     });
     const upstream = resolveRunFailureUi('UPSTREAM_UNAVAILABLE', null, 'claude');
     expect(upstream).toMatchObject({
       primaryAction: 'retry',
       titleKey: 'chat.runError.title.upstreamUnavailable',
       messageKey: 'chat.runError.upstreamUnavailableMessage',
-      showSwitchCard: true,
     });
-    expect(resolveRunFailureUi('UNAUTHORIZED', null, null).showSwitchCard).toBe(true);
   });
 
   // #895 follow-up: the daemon's fine-grained failure_detail can refine — and
@@ -196,14 +193,12 @@ describe('resolveRunFailureUi', () => {
       titleKey: 'chat.runError.title.quotaExhausted',
       messageKey: 'chat.runError.quotaExhaustedMessage',
       secondaryRetry: false,
-      showSwitchCard: true,
     });
     const workspace = resolveRunFailureUi('RATE_LIMITED', 'workspace_credits_exhausted', 'claude');
     expect(workspace).toMatchObject({
       primaryAction: 'none',
       titleKey: 'chat.runError.title.quotaExhausted',
       messageKey: 'chat.runError.workspaceCreditsMessage',
-      showSwitchCard: true,
     });
   });
 
@@ -214,7 +209,6 @@ describe('resolveRunFailureUi', () => {
     expect(transient).toMatchObject({
       primaryAction: 'retry',
       titleKey: 'chat.runError.title.rateLimited',
-      showSwitchCard: true,
     });
   });
 
@@ -227,7 +221,6 @@ describe('resolveRunFailureUi', () => {
       primaryAction: 'retry',
       titleKey: 'chat.runError.title.cliMissing',
       messageKey: 'chat.runError.cliMissingMessage',
-      showSwitchCard: false,
     });
   });
 
@@ -258,7 +251,6 @@ describe('resolveRunFailureUi', () => {
           titleKey,
           messageKey,
           secondaryRetry: false,
-          showSwitchCard: false,
         });
       }
     }
@@ -275,7 +267,6 @@ describe('resolveRunFailureUi', () => {
         titleKey: 'chat.runError.title.cpuUnsupported',
         messageKey: 'chat.runError.cpuUnsupportedMessage',
         secondaryRetry: false,
-        showSwitchCard: false,
       });
     }
   });
@@ -301,7 +292,6 @@ describe('resolveRunFailureUi', () => {
           titleKey,
           messageKey,
           secondaryRetry: false,
-          showSwitchCard: false,
         });
       }
     }
@@ -309,8 +299,6 @@ describe('resolveRunFailureUi', () => {
 
   it('shows plain retry (no card) for generic non-AMR failures', () => {
     const ui = resolveRunFailureUi('AGENT_EXECUTION_FAILED', null, 'claude');
-    expect(ui).toMatchObject({ primaryAction: 'retry', showSwitchCard: false, messageKey: null });
-    expect(resolveRunFailureUi('AGENT_UNAVAILABLE', null, 'codex').showSwitchCard).toBe(false);
   });
 
   it('localizes a mid-stream connection drop for any agent, no AMR promotion', () => {
@@ -320,7 +308,6 @@ describe('resolveRunFailureUi', () => {
         primaryAction: 'retry',
         messageKey: 'chat.connectionDropped',
         secondaryRetry: false,
-        showSwitchCard: false,
       });
     }
   });
@@ -333,7 +320,6 @@ describe('resolveRunFailureUi', () => {
       // AMR-specific sign-in copy; single CTA, no AMR promotion card.
       messageKey: 'chat.runError.signInMessage.amr',
       secondaryRetry: false,
-      showSwitchCard: false,
     });
   });
 
@@ -349,7 +335,6 @@ describe('resolveRunFailureUi', () => {
           titleKey: 'chat.runError.title.signInRequired',
           messageKey: 'chat.runError.signInMessage.other',
           secondaryRetry: false,
-          showSwitchCard: true,
         });
       }
     }
@@ -368,7 +353,6 @@ describe('resolveRunFailureUi', () => {
       primaryAction: 'recharge',
       messageKey: 'chat.amrError.balanceMessage',
       secondaryRetry: true,
-      showSwitchCard: false,
     });
   });
 
@@ -379,13 +363,11 @@ describe('resolveRunFailureUi', () => {
       titleKey: 'chat.amrBalanceGate.title',
       messageKey: null,
       secondaryRetry: true,
-      showSwitchCard: false,
     });
   });
 
   it('falls back to plain retry for other AMR failures', () => {
     const ui = resolveRunFailureUi('AGENT_EXECUTION_FAILED', null, 'amr');
-    expect(ui).toMatchObject({ primaryAction: 'retry', showSwitchCard: false });
   });
 
   // vela's rolling 5-hour model window resets on its own, so the card must name
@@ -403,7 +385,6 @@ describe('resolveRunFailureUi', () => {
       primaryAction: 'retry',
       titleKey: 'chat.runError.title.modelWindowLimit',
       messageKey: 'chat.runError.modelWindowLimitMessage',
-      showSwitchCard: false,
     });
     expect(ui.messageVars?.retryAt).toBe('2026-08-12T06:34:47Z');
   });
@@ -452,7 +433,6 @@ describe('resolveRunFailureUi', () => {
       primaryAction: 'launch-terminal-auth',
       messageKey: null,
       secondaryRetry: true,
-      showSwitchCard: false,
     });
   });
 
@@ -470,7 +450,6 @@ describe('resolveRunFailureUi', () => {
       primaryAction: 'launch-terminal-switch-model',
       messageKey: null,
       secondaryRetry: true,
-      showSwitchCard: false,
     });
   });
 

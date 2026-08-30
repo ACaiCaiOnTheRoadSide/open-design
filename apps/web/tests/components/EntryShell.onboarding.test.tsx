@@ -1446,7 +1446,7 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
   it('refreshes workspace context, billing, and team projects as soon as onboarding sign-in completes', async () => {
     // Onboarding's embedded AMR sign-in step (pollAmrLoginCompletion) used to
     // fire only notifyAmrLoginStatusChanged() on success — unlike
-    // CloudSignInTip's finishSignedIn() and refreshWorkspaceSurfacesAfterOnboarding()
+    // rail sign-in completion and refreshWorkspaceSurfacesAfterOnboarding()
     // (the two other places a sign-in completes), which fire all three
     // workspace-refresh notifications. That gap left workspaceContext stale
     // until finishOnboarding fired it later, so Home's rail briefly rendered

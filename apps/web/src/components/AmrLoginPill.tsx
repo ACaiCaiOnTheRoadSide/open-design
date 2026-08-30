@@ -396,7 +396,7 @@ export function AmrLoginPill({
         // on the very next capture, not on an unrelated later refresh.
         notifyAmrLoginStatusChanged();
         // This pill is a THIRD place AMR sign-in success is detected
-        // (CloudSignInTip's finishSignedIn() and EntryShell's
+        // (the rail sign-in flow and EntryShell's
         // pollAmrLoginCompletion() are the other two) and must fire the same
         // workspace-surface nudges they do. Before this, the pill relied on
         // App.tsx's global AMR_LOGIN_STATUS_EVENT listener eventually

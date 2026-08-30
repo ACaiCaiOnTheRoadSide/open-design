@@ -1472,29 +1472,4 @@ describe('ChatComposer context pickers', () => {
   // composer; plugins/skills/MCP are now reached via typed @-mentions and the
   // "+" menu, so their dedicated click-tracking coverage moved out with them.
 
-  // The inline pet popover (the "Pets — wake, tuck, or pick one" button and
-  // its `.composer-pet-menu` flyout) was removed from ChatComposer; only the
-  // pet props survive to drive `/pet` slash handling. Assert the entry stays
-  // gone even when every pet handler is wired.
-  it('does not render the pet composer entry when pet handlers are wired', () => {
-    renderComposer({
-      petConfig: {
-        adopted: false,
-        enabled: false,
-        petId: 'custom',
-        custom: {
-          name: 'Buddy',
-          glyph: '🐾',
-          accent: '#7c3aed',
-          greeting: 'hi',
-        },
-      },
-      onAdoptPet: vi.fn(),
-      onTogglePet: vi.fn(),
-      onOpenPetSettings: vi.fn(),
-    });
-
-    expect(screen.queryByRole('button', { name: 'Pets — wake, tuck, or pick one' })).toBeNull();
-    expect(screen.queryByText('Buddy')).toBeNull();
-  });
 });

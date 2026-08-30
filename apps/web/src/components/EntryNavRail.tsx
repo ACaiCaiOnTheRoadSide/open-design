@@ -47,7 +47,6 @@ import {
   formatVelaBalanceUsd,
   velaLogout,
 } from '../providers/daemon';
-import { resetCloudSignInTipDismissal } from './CloudSignInTip';
 import { SignOutConfirmDialog } from './SignOutConfirmDialog';
 import { notifyAmrLoginStatusChanged } from './amrLoginPolling';
 import { Icon } from './Icon';
@@ -1093,11 +1092,6 @@ export function EntryTopRightCluster({
                     void velaLogout().then(async (result) => {
                       if (!result.ok) return;
                       await onSignedOut?.();
-                      // recvqbkcLqIFH7: a stale "dismissed" flag on the
-                      // footer's CloudSignInTip must not survive a real
-                      // sign-out, or the rail's only sign-in entry point
-                      // silently disappears with nothing left in its place.
-                      resetCloudSignInTipDismissal();
                       notifyAmrLoginStatusChanged();
                       notifyWorkspaceContextRefresh();
                       notifyWorkspaceBillingRefresh();

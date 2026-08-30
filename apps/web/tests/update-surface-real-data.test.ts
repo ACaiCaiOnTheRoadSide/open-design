@@ -12,8 +12,7 @@ import { describe, expect, it } from 'vitest';
  * 432 KB cover image committed next to it. Every one of those is a lie the UI
  * tells the user, and none of them is visible to a behavioural test once
  * deleted — so the invariant is pinned at the source level instead: the update
- * surfaces may only render data they were handed (the updater status snapshot,
- * the hosted highlights document, `/api/version`).
+ * surfaces may only render data they were handed by the updater status snapshot.
  */
 
 const webRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -23,9 +22,7 @@ const webRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const UPDATE_SURFACE_FILES = [
   'src/components/EntryShell.tsx',
   'src/components/UpdaterPopup.tsx',
-  'src/components/WhatsNewPopup.tsx',
   'src/lib/updater.ts',
-  'src/lib/whats-new.ts',
 ];
 
 function readSurface(relativePath: string): string {

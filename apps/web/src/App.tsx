@@ -4,9 +4,6 @@ import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { Button } from '@open-design/components';
 import { useAnalytics } from './analytics/provider';
 import {
-  trackExperienceSurveyDismissed,
-  trackExperienceSurveySent,
-  trackExperienceSurveyShown,
   trackFileUploadResult,
   trackProjectCreateResult,
 } from './analytics/events';
@@ -50,18 +47,12 @@ import { ThemeQuickMenu } from './components/ThemeQuickMenu';
 import { LanguageMenu } from './components/LanguageMenu';
 import { ConfirmDialogHost } from './components/confirm-dialog-host';
 import { CenteredLoader } from './components/Loading';
-import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
-import { buildPetTaskCenter } from './components/pet/taskCenter';
-import { migrateCustomPetAtlas } from './components/pet/pets';
 import {
   ProjectView,
   type ProjectRenameFenceToken,
   type ProjectNameAuthorityResolution,
 } from './components/ProjectView';
 import { ProjectCreationPendingView } from './components/ProjectCreationPendingView';
-import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
-import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
-import { ExperienceSurvey } from './components/ExperienceSurvey';
 import { TooltipLayer } from './components/TooltipLayer';
 import { UpdateDialog } from './components/UpdateDialog';
 import { UpdaterPopup } from './components/UpdaterPopup';
@@ -103,10 +94,8 @@ import {
 } from './providers/registry';
 import { openFirstPartyExternalLinkFromClick } from './first-party-external-link';
 import {
-  RUNS_CHANGED_EVENT,
   fetchAmrModels,
   fetchVelaLoginStatus,
-  listProjectRuns,
   type VelaLoginStatus,
 } from './providers/daemon';
 import {
@@ -141,7 +130,6 @@ import {
   projectResourceReadsCanStart,
   useProjectRouteWorkspaceContext,
 } from './collab/useProjectRouteWorkspaceContext';
-import { resolvePlanTier } from './collab/team-plan';
 import { deriveTabIdentityScope, UNSET_ACCOUNT_BUCKET } from './collab/tab-scope';
 import { CommunityView } from './components/CommunityView';
 import { seedHomeComposerPrompt } from './components/HomeView';
@@ -154,7 +142,6 @@ import {
   fetchDaemonConfig,
   DEFAULT_CONFIG,
   DEFAULT_NOTIFICATIONS,
-  DEFAULT_PET,
   fetchMediaProvidersFromDaemon,
   hasAnyConfiguredProvider,
   fetchComposioConfigFromDaemon,
@@ -178,10 +165,6 @@ import { WHITE_LABEL_SAAS } from './features/whiteLabel';
 import { randomUUID } from './utils/uuid';
 import { summarizeProjectNameFromPrompt } from './utils/projectName';
 import { armCompletionFeedbackOnFirstGesture } from './utils/notifications';
-import {
-  amrArtifactUpgradeHomeMockOffer,
-  type AmrArtifactUpgradeHomeOffer,
-} from './runtime/amr-artifact-upgrade';
 import {
   amrBalanceGateScopeForWorkspaceContext,
   amrBalanceGateScopesMatch,
@@ -993,14 +976,6 @@ function AppInner() {
     });
   }, [config.notifications?.desktopEnabled, config.notifications?.soundEnabled]);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [amrArtifactUpgradeHomeMockConfig] = useState<AmrArtifactUpgradeHomeOffer | null>(
-    () => process.env.NODE_ENV === 'development' && typeof window !== 'undefined'
-      ? amrArtifactUpgradeHomeMockOffer(window.location.search)
-      : null,
-  );
-  const amrArtifactUpgradeHomeMock = amrArtifactUpgradeHomeMockConfig !== null;
-  const [amrArtifactUpgradeHomeOffer, setAmrArtifactUpgradeHomeOffer] =
-    useState<AmrArtifactUpgradeHomeOffer | null>(() => amrArtifactUpgradeHomeMockConfig);
   // Surfaced when a Home-picked working dir could not be applied to a freshly
   // created project (expired/invalid desktop token, daemon rejection). Without
   // this the failure was swallowed and the user believed their folder was in
@@ -1219,11 +1194,6 @@ function AppInner() {
   }, {
     workspaceContext,
     onActive: handleTeamResourceStreamActive,
-  });
-  const [petTaskCenter, setPetTaskCenter] = useState<PetTaskCenter>({
-    running: [],
-    queued: [],
-    recent: [],
   });
   const [projectRunActivity, setProjectRunActivity] = useState<{
     projectId: string | null;
@@ -1684,16 +1654,6 @@ function AppInner() {
   // held by the team workspace reads `free` there and used to be shown the
   // free-user banner; the workspace context's plan id is authoritative and
   // wins. See resolvePlanTier for the full precedence rule.
-  const resolvedAmrPlan = resolvePlanTier({
-    billing: workspaceBilling,
-    context: workspaceContext,
-    accountPlan:
-      workspaceContextLoading || workspaceContext?.workspaceType === 'team'
-        ? null
-        : amrLoginStatus?.account?.plan?.trim()
-          || amrLoginStatus?.user?.plan?.trim()
-          || null,
-  });
   // Child surfaces report status snapshots, not login events. Deduplicate the
   // signed-in transition here: restarting the model poll for every Settings
   // snapshot updates `agents`, which makes Settings fetch status again and
@@ -2349,34 +2309,6 @@ function AppInner() {
       return next;
     });
   }, [daemonConfigLoaded, dsLoading, designSystems, config.designSystemId]);
-
-  // One-shot self-healing migration for pets adopted before the
-  // overlay learned atlas-row switching. If the stored pet is a
-  // custom / codex pet whose imageUrl is a single-row strip
-  // (no atlas), we silently re-download the full spritesheet so
-  // hover, drag, and idle-ambient variety all light up on next render.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const upgraded = await migrateCustomPetAtlas(config);
-      if (!upgraded || cancelled) return;
-      setConfig((prev) => {
-        if (!prev.pet) return prev;
-        const next: AppConfig = {
-          ...prev,
-          pet: { ...prev.pet, custom: upgraded },
-        };
-        saveConfig(next);
-        return next;
-      });
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Snapshot the config at mount; migration is one-shot per session
-    // and should not re-run every time config changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const refreshProjects = useCallback(async () => {
     const request = beginProjectListRequest(workspaceProjectView);
@@ -3893,32 +3825,6 @@ function AppInner() {
     t,
   ]);
 
-  useEffect(() => {
-    if (!config.pet?.enabled || !daemonLive) {
-      setPetTaskCenter({ running: [], queued: [], recent: [] });
-      return;
-    }
-
-    let cancelled = false;
-    const refresh = async () => {
-      const runs = await listProjectRuns();
-      if (cancelled) return;
-      setPetTaskCenter(buildPetTaskCenter(projects, runs));
-    };
-    const handleRunsChanged = () => {
-      void refresh();
-    };
-
-    void refresh();
-    window.addEventListener(RUNS_CHANGED_EVENT, handleRunsChanged);
-    const id = window.setInterval(refresh, 2000);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(RUNS_CHANGED_EVENT, handleRunsChanged);
-      window.clearInterval(id);
-    };
-  }, [config.pet?.enabled, daemonLive, projects]);
-
   const handleOpenLiveArtifact = useCallback((projectId: string, artifactId: string) => {
     navigate({ kind: 'project', projectId, fileName: liveArtifactTabId(artifactId) });
   }, []);
@@ -4727,22 +4633,6 @@ function AppInner() {
     openSettings('execution', { highlight: 'amr' });
   }, [openSettings]);
 
-  const openPetSettings = useCallback(() => {
-    const currentRoute = routeRef.current;
-    settingsReturnTargetRef.current =
-      currentRoute.kind === 'project' && identityScopeKey !== null
-        ? {
-            route: { ...currentRoute },
-            accountGeneration: currentWorkspaceAccountGeneration(),
-            identityScopeKey,
-          }
-        : null;
-    setSettingsWelcome(false);
-    setSettingsInitialSection('pet');
-    setSettingsHighlight(null);
-    navigate({ kind: 'home', view: 'settings' });
-  }, [identityScopeKey]);
-
   const openMcpSettings = useCallback(() => {
     setIntegrationInitialTab('mcp');
     navigate({ kind: 'home', view: 'integrations' });
@@ -4784,52 +4674,6 @@ function AppInner() {
     window.addEventListener('keydown', onKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
   }, [openSettings]);
-
-  // Explicit enabled toggle — true = wake, false = tuck. Persists to
-  // localStorage so the overlay state survives across reloads. We keep
-  // `adopted` untouched so the entry-view CTA does not regress to
-  // "adopt me" once the user has already chosen.
-  const handleSetPetEnabled = useCallback((enabled: boolean) => {
-    setConfig((curr) => {
-      const prev = curr.pet ?? DEFAULT_PET;
-      const next: AppConfig = { ...curr, pet: { ...prev, enabled } };
-      saveConfig(next);
-      return next;
-    });
-  }, []);
-
-  const handleTuckPet = useCallback(
-    () => handleSetPetEnabled(false),
-    [handleSetPetEnabled],
-  );
-
-  // Toggle wake/tuck — used by the pet rail and the composer button.
-  const handleTogglePet = useCallback(() => {
-    setConfig((curr) => {
-      const prev = curr.pet ?? DEFAULT_PET;
-      const next: AppConfig = {
-        ...curr,
-        pet: { ...prev, enabled: !prev.enabled },
-      };
-      saveConfig(next);
-      return next;
-    });
-  }, []);
-
-  // Inline adopt — the right-hand pet rail and the composer's pet menu
-  // both call this to switch pets without bouncing the user into
-  // Settings. It always wakes the overlay so the change is visible.
-  const handleAdoptPet = useCallback((petId: string) => {
-    setConfig((curr) => {
-      const prev = curr.pet ?? DEFAULT_PET;
-      const next: AppConfig = {
-        ...curr,
-        pet: { ...prev, adopted: true, enabled: true, petId },
-      };
-      saveConfig(next);
-      return next;
-    });
-  }, []);
 
   // When the user lands on the entry view (route.kind === 'home'), pull
   // a fresh template list. The template store is global — if they just
@@ -5274,9 +5118,6 @@ function AppInner() {
           onOpenMcpSettings={openMcpSettings}
           onBrowsePlugins={openPluginRegistry}
           onOpenConnectors={openConnectorIntegrations}
-          onAdoptPetInline={handleAdoptPet}
-          onTogglePet={handleTogglePet}
-          onOpenPetSettings={openPetSettings}
           onBack={handleBack}
           onClearPendingPrompt={handleClearPendingPrompt}
           onTouchProject={handleTouchProject}
@@ -5364,39 +5205,6 @@ function AppInner() {
         onCompleteOnboarding={handleCompleteOnboarding}
         onSignedOut={handleActiveCloudSignOut}
         onAmrLoginStatusChange={handleAmrLoginStatusChange}
-        artifactUpgradeSlot={
-          amrArtifactUpgradeHomeOffer ? (
-            <AmrArtifactUpgradeHomeCard
-              key={amrArtifactUpgradeHomeOffer.sessionKey}
-              profile={amrLoginStatus?.profile ?? null}
-              metricsConsent={config.telemetry?.metrics === true}
-              installationId={config.installationId}
-              onViewArtifact={() => {
-                if (
-                  !amrArtifactUpgradeHomeOffer.projectId
-                  || !amrArtifactUpgradeHomeOffer.conversationId
-                ) {
-                  navigate({ kind: 'home', view: 'projects' });
-                  return;
-                }
-                navigate({
-                  kind: 'project',
-                  projectId: amrArtifactUpgradeHomeOffer.projectId,
-                  conversationId: amrArtifactUpgradeHomeOffer.conversationId,
-                  fileName: amrArtifactUpgradeHomeOffer.fileName,
-                });
-              }}
-              onDismiss={() => {
-                if (amrArtifactUpgradeHomeMock) return;
-                setAmrArtifactUpgradeHomeOffer((current) =>
-                  current?.sessionKey === amrArtifactUpgradeHomeOffer.sessionKey
-                    ? null
-                    : current,
-                );
-              }}
-            />
-          ) : undefined
-        }
       />
     );
   }
@@ -5463,14 +5271,6 @@ function AppInner() {
           {appMain}
         </div>
       </div>
-      {clientType === 'desktop' ? null : (
-        <PetOverlay
-          pet={config.pet?.enabled ? config.pet : undefined}
-          taskCenter={petTaskCenter}
-          onOpenProject={handleOpenProject}
-          dockLine
-        />
-      )}
       {route.kind === 'home' && route.view === 'home' ? (
         <div className="quick-entry-cluster">
           <LanguageMenu compact placement="down" align="end" />
@@ -5485,37 +5285,6 @@ function AppInner() {
       ) : null}
       <TooltipLayer />
       <UpdateDialog />
-      {/* Mounted at shell level, outside the route views, so a survey armed by
-          an export inside a project stays on screen when the user navigates
-          back to home. */}
-      <ExperienceSurvey
-        metricsConsent={config.telemetry?.metrics === true}
-        onExposure={() => trackExperienceSurveyShown(analytics.track)}
-        onDismiss={() => trackExperienceSurveyDismissed(analytics.track)}
-        onSubmit={(answers) => trackExperienceSurveySent(analytics.track, answers)}
-      />
-      <AmrArtifactUpgradeGate
-        cloudModelSelected={config.mode === 'daemon' && config.agentId === 'amr'}
-        homeVisible={route.kind === 'home' && route.view === 'home'}
-        activeProjectId={route.kind === 'project' ? route.projectId : null}
-        activeConversationId={
-          route.kind === 'project' ? route.conversationId ?? null : null
-        }
-        activeFileName={route.kind === 'project' ? route.fileName : null}
-        plan={resolvedAmrPlan}
-        planResolved={
-          amrLoginStatus !== null
-          && (!isAmrSessionAuthenticated(amrLoginStatus) || resolvedAmrPlan !== null)
-        }
-        profile={amrLoginStatus?.profile ?? null}
-        metricsConsent={config.telemetry?.metrics === true}
-        installationId={config.installationId}
-        onHomeOfferChange={
-          amrArtifactUpgradeHomeMock
-            ? undefined
-            : setAmrArtifactUpgradeHomeOffer
-        }
-      />
       <AnimatePresence>
       {settingsOpen ? (
         renderSettingsSurface('modal')

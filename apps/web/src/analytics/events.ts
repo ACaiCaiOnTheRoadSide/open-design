@@ -18,9 +18,6 @@ import type {
   DesignSystemsTemplatesModalSurfaceViewProps,
   AssistantFeedbackReasonPanelSurfaceViewProps,
   QuestionsFormSurfaceViewProps,
-  DeepSeekCampaignModalSurfaceViewProps,
-  DeepSeekCampaignBadgeSurfaceViewProps,
-  DeepSeekCampaignModelBenefitSurfaceViewProps,
   // ui_click
   HomeNavClickProps,
   HelpPopoverClickProps,
@@ -78,8 +75,6 @@ import type {
   AmrAuthStageProps,
   AmrEntryClickProps,
   PreviewRunStatusSurfaceViewProps,
-  DeepSeekCampaignModalClickProps,
-  DeepSeekCampaignBadgeClickProps,
   RunFailedToastSurfaceViewProps,
   RunRecoveryActionSurfaceViewProps,
   RunStartBlockedSurfaceViewProps,
@@ -122,7 +117,6 @@ import type {
   SettingsConnectorsClickProps,
   SettingsLanguageClickProps,
   SettingsNotificationsClickProps,
-  SettingsPetsClickProps,
   SettingsPrivacyClickProps,
   SettingsDesignReviewClickProps,
   SettingsExternalMcpClickProps,
@@ -163,8 +157,6 @@ import type {
   UpdatePromptSurfaceViewProps,
   UpdateCheckResultProps,
   UpdateInstallResultProps,
-  WhatsNewPopupSurfaceViewProps,
-  WhatsNewPopupClickProps,
   EntryNavigationClickProps,
   AccountMenuClickProps,
   WorkspaceSwitcherClickProps,
@@ -190,15 +182,6 @@ type Track = (
 
 // Helper: forward a typed payload to the loose `track()` API. Centralized so
 // every call site stays one-line.
-import {
-  EXPERIENCE_SURVEY_ID,
-  EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES,
-  EXPERIENCE_SURVEY_IMPROVEMENT_OTHER,
-  EXPERIENCE_SURVEY_QUESTION_IDS,
-  EXPERIENCE_SURVEY_QUESTION_TEXT,
-  EXPERIENCE_SURVEY_TRIGGER,
-} from './experience-survey-contract';
-
 function send<T extends object>(
   track: Track,
   event: string,
@@ -379,13 +362,6 @@ export function trackQuestionsFormSurfaceView(
   send(track, 'surface_view', props);
 }
 
-export function trackRunFailedToastGoAmrClick(
-  track: Track,
-  props: RunFailedToastClickProps,
-): void {
-  send(track, 'ui_click', props);
-}
-
 export function trackRunRecoveryActionClick(
   track: Track,
   props: RunRecoveryActionClickProps,
@@ -426,41 +402,6 @@ export function trackStudioOnboardingHintClick(
 export function trackAmrEntryClick(
   track: Track,
   props: AmrEntryClickProps,
-): void {
-  send(track, 'ui_click', props);
-}
-
-export function trackDeepSeekCampaignModalSurfaceView(
-  track: Track,
-  props: DeepSeekCampaignModalSurfaceViewProps,
-): void {
-  send(track, 'surface_view', props);
-}
-
-export function trackDeepSeekCampaignBadgeSurfaceView(
-  track: Track,
-  props: DeepSeekCampaignBadgeSurfaceViewProps,
-): void {
-  send(track, 'surface_view', props);
-}
-
-export function trackDeepSeekCampaignModelBenefitSurfaceView(
-  track: Track,
-  props: DeepSeekCampaignModelBenefitSurfaceViewProps,
-): void {
-  send(track, 'surface_view', props);
-}
-
-export function trackDeepSeekCampaignModalClick(
-  track: Track,
-  props: DeepSeekCampaignModalClickProps,
-): void {
-  send(track, 'ui_click', props);
-}
-
-export function trackDeepSeekCampaignBadgeClick(
-  track: Track,
-  props: DeepSeekCampaignBadgeClickProps,
 ): void {
   send(track, 'ui_click', props);
 }
@@ -1084,13 +1025,6 @@ export function trackSettingsNotificationsClick(
   send(track, 'ui_click', props);
 }
 
-export function trackSettingsPetsClick(
-  track: Track,
-  props: SettingsPetsClickProps,
-): void {
-  send(track, 'ui_click', props);
-}
-
 export function trackSettingsPrivacyClick(
   track: Track,
   props: SettingsPrivacyClickProps,
@@ -1432,83 +1366,4 @@ export function trackUpdateCheckResult(
   props: UpdateCheckResultProps,
 ): void {
   send(track, 'update_check_result', props);
-}
-
-// ---- Post-update "what's new" card ---------------------------------------
-
-export function trackWhatsNewPopupSurfaceView(
-  track: Track,
-  props: WhatsNewPopupSurfaceViewProps,
-): void {
-  send(track, 'surface_view', props);
-}
-
-export function trackWhatsNewPopupClick(
-  track: Track,
-  props: WhatsNewPopupClickProps,
-): void {
-  send(track, 'ui_click', props);
-}
-
-// ---- experience survey ---------------------------------------------------
-// The experience survey is `type: api` in PostHog: PostHog stores and analyses
-// the responses while `ExperienceSurvey` renders the card. That makes the
-// client responsible for the three reserved event names PostHog's survey
-// analytics reads, which is the only place in this app that emits reserved
-// PostHog events rather than the v2 schema's own.
-
-export function trackExperienceSurveyShown(track: Track): void {
-  send(track, 'survey shown', {
-    $survey_id: EXPERIENCE_SURVEY_ID,
-    trigger: EXPERIENCE_SURVEY_TRIGGER,
-  });
-}
-
-export function trackExperienceSurveyDismissed(track: Track): void {
-  send(track, 'survey dismissed', {
-    $survey_id: EXPERIENCE_SURVEY_ID,
-    trigger: EXPERIENCE_SURVEY_TRIGGER,
-  });
-}
-
-/**
- * Reports a finished response. A skipped follow-up is omitted rather than sent
- * as null, so PostHog's per-question response counts stay honest about how
- * many people actually answered it.
- */
-export function trackExperienceSurveySent(
-  track: Track,
-  answers: { recommendation: number; improvement?: number; improvementOther?: string },
-): void {
-  const ids = EXPERIENCE_SURVEY_QUESTION_IDS;
-  const text = EXPERIENCE_SURVEY_QUESTION_TEXT;
-  const answered: Array<{ id: string; question: string; response: string | number }> = [];
-  const responses: Record<string, string | number> = {};
-
-  const add = (id: string, question: string, response: string | number) => {
-    answered.push({ id, question, response });
-    responses[`$survey_response_${id}`] = response;
-  };
-
-  add(ids.recommendation, text.recommendation, answers.recommendation);
-  if (typeof answers.improvementOther === 'string') {
-    // PostHog's open-choice convention: the response is what they typed. An
-    // empty field still reports the choice itself, so "none of these fit"
-    // survives instead of looking like the question was skipped.
-    add(
-      ids.improvement,
-      text.improvement,
-      answers.improvementOther.trim() || EXPERIENCE_SURVEY_IMPROVEMENT_OTHER,
-    );
-  } else if (typeof answers.improvement === 'number') {
-    const choice = EXPERIENCE_SURVEY_IMPROVEMENT_CHOICES[answers.improvement];
-    if (choice) add(ids.improvement, text.improvement, choice);
-  }
-
-  send(track, 'survey sent', {
-    $survey_id: EXPERIENCE_SURVEY_ID,
-    trigger: EXPERIENCE_SURVEY_TRIGGER,
-    $survey_questions: answered,
-    ...responses,
-  });
 }

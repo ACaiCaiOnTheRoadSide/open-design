@@ -1,4 +1,4 @@
-import { RailAccountRecoveryTip } from './CloudSignInTip';
+import { RailAccountRecoveryTip } from './RailAccountTips';
 import styles from './ProjectWorkspaceRecoveryTip.module.css';
 
 /**

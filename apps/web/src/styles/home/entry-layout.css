@@ -387,100 +387,6 @@
   width: 30px;
   flex: 0 0 30px;
 }
-.entry-local-mode-tip {
-  position: absolute;
-  left: var(--spacing-8, 8px);
-  right: var(--spacing-8, 8px);
-  /* Anchored to the footer (position: relative), whose bottom edge sits the
-     panel's 5px bottom padding + 1px ring above the panel's visible edge —
-     3 + 5 + 1 = 9px, matching the sides' 8 + 1px ring inset. */
-  bottom: 3px;
-  display: grid;
-  gap: 8px;
-  width: auto;
-  margin: 0;
-  padding: 8px;
-  box-sizing: border-box;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: left;
-  cursor: pointer;
-  z-index: 2;
-  /* A mousedown→mouseup gesture that selects the label text (any hair of
-     drag, e.g. a real click made while screen-recording) makes the browser
-     suppress the click event entirely — this card would then silently never
-     call begin(), with no spinner, no browser tab, and no visible error. */
-  user-select: none;
-  transition: border-color 120ms, background 120ms, transform 120ms;
-}
-.entry-local-mode-tip:hover,
-.entry-local-mode-tip:focus-visible {
-  border-color: var(--border-strong);
-  background: var(--bg-subtle);
-  outline: none;
-  transform: translateY(-1px);
-}
-.entry-local-mode-tip__head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: var(--text-strong);
-}
-.entry-local-mode-tip__login-badge {
-  display: inline-flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 30px;
-  overflow: hidden;
-  padding: 0 16px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--accent);
-  color: #00ff08;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.entry-local-mode-tip p {
-  margin: 0;
-}
-/* While the vela device-auth flow is pending the card stops being a button:
-   the body swaps to a progress line + cancel, so the hover lift would lie. */
-.entry-local-mode-tip.is-signing {
-  cursor: default;
-}
-.entry-local-mode-tip.is-signing:hover {
-  transform: none;
-  border-color: var(--border);
-  background: var(--bg-panel);
-}
-.entry-local-mode-tip__cancel {
-  justify-self: start;
-  margin-top: 2px;
-  padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.4;
-  cursor: pointer;
-  transition: border-color 120ms, background 120ms, color 120ms;
-}
-.entry-local-mode-tip__cancel:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-subtle);
-  color: var(--text);
-}
-
 /* ---------- Rail account skeleton (RailAccountSyncTip) ----------
    Stand-in for the account row (`.entry-nav-rail__account-trigger` below)
    while the just-signed-in `GET /api/workspace/context` re-read is still in
@@ -1159,62 +1065,11 @@
   -webkit-app-region: no-drag;
 }
 
-.entry-deepseek-campaign-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 26px;
-  padding: 4px 11px 4px 13px;
-  border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
-  border-radius: var(--radius-pill);
-  color: var(--brand-text);
-  background: color-mix(in srgb, var(--brand-soft) 82%, var(--bg-panel));
-  box-shadow: var(--shadow-xs);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  font-size: 12px;
-  font-weight: 700;
-  font-family: inherit;
-  line-height: 1;
-  text-decoration: none;
-  cursor: pointer;
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
-  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
-}
-
-.entry-deepseek-campaign-badge::before {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: var(--radius-circular);
-  background: var(--brand-text);
-  content: '';
-}
-
-.entry-deepseek-campaign-badge svg {
-  color: var(--brand-text);
-}
-
-.entry-deepseek-campaign-badge:hover {
-  border-color: color-mix(in srgb, var(--brand) 70%, var(--border));
-  background: var(--brand-soft);
-  transform: translateY(-1px);
-}
-
-.entry-deepseek-campaign-badge:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 @media (max-width: 760px) {
   /* Tighter right inset only — the vertical centering against the 44px
      chrome row is the same at every width. */
   .entry-top-right-cluster {
     right: 12px;
-  }
-  .entry-deepseek-campaign-badge {
-    max-width: calc(100vw - 88px);
   }
 }
 /* Frosted top edge: content scrolling up toward the (transparent) tab strip
@@ -2083,37 +1938,6 @@
   text-align: left;
 }
 
-.inline-switcher__campaign-badge {
-  flex: 0 0 auto;
-  padding: 2px 6px;
-  border-radius: 999px;
-  color: #153406;
-  background: #68f22e;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1.4;
-  cursor: help;
-  outline: none;
-}
-.inline-switcher__campaign-badge.is-restricted {
-  color: #5f645d;
-  background: #e4e7e2;
-}
-.inline-switcher__campaign-badge.is-unpaid {
-  color: #5f645d;
-  background: #eceeeb;
-}
-.inline-switcher__chip[data-campaign-highlight='true'] {
-  border-color: var(--accent);
-  animation: deepseek-campaign-chip-pulse 760ms cubic-bezier(0.23, 1, 0.32, 1) 2;
-}
-@keyframes deepseek-campaign-chip-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
-  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .inline-switcher__chip[data-campaign-highlight='true'] { animation: none; }
-}
 .inline-switcher__agent-status {
   display: inline-flex;
   align-items: center;
@@ -2849,7 +2673,7 @@
 
 /* Capsule treatment for the activation-retry card on THIS view only — the
  * base `.amr-login-activation` rule (artifacts.css) stays untouched so
- * Settings/AmrLoginPill and CloudSignInTip keep their compact inline card.
+ * Settings/AmrLoginPill keeps its compact inline card.
  * Compound selector (not cascade order) guarantees this wins over the base
  * padding/radius regardless of stylesheet import order. */
 .amr-login-activation.onboarding-cloud__activation {

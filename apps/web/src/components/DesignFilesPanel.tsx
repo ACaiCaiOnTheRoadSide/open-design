@@ -20,7 +20,6 @@ import {
   FILE_SYSTEM_READ_ERROR_MESSAGE,
   isFileSystemReadError,
 } from '../utils/fileSystemErrors';
-import { isVisualStabilityMode } from '../utils/visualStability';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { getPluginFolderCandidates } from './design-files/pluginFolders';
 import { FileSyncBadge } from '../collab/FileSyncBadge';
@@ -64,9 +63,6 @@ interface Props {
   // True while the host is reindexing a freshly replaced working dir. Drives
   // a loading overlay so the panel doesn't sit silently on the stale tree.
   reloading?: boolean;
-  // True while the chat agent is generating. The footer swaps its idle
-  // drop/upload hint for the typewriter "tip" line while a run is in flight.
-  running?: boolean;
   files: ProjectFile[];
   // Persisted folders from `/api/projects/:id/folders`, including empty ones
   // that no file lives under. Without these, a folder only appears once a file
@@ -319,118 +315,6 @@ function DesignFileImageThumb({
   );
 }
 
-// Useful-info tips that rotate one at a time in the panel footer, ordered as
-// a loose journey: file basics → feeding context → generating → iterating →
-// exporting/sharing → community. A tip with a `url` renders its typed line as
-// a link to that destination.
-const USEFUL_TIPS: ReadonlyArray<{ key: keyof Dict; url?: string }> = [
-  { key: 'designFiles.usefulInfoTip' },
-  { key: 'designFiles.usefulInfoTip2' },
-  { key: 'designFiles.usefulInfoTip9' },
-  { key: 'designFiles.usefulInfoTip10' },
-  { key: 'designFiles.usefulInfoTip4' },
-  { key: 'designFiles.usefulInfoTip11' },
-  { key: 'designFiles.usefulInfoTip12' },
-  { key: 'designFiles.usefulInfoTip13' },
-  { key: 'designFiles.usefulInfoTip14' },
-  { key: 'designFiles.usefulInfoTip15' },
-  { key: 'designFiles.usefulInfoTip5' },
-  { key: 'designFiles.usefulInfoTip6', url: 'https://discord.gg/mHAjSMV6gz' },
-  { key: 'designFiles.usefulInfoTip7', url: 'https://github.com/nexu-io/open-design' },
-  { key: 'designFiles.usefulInfoTip8', url: 'https://x.com/OpenDesignHQ' },
-  { key: 'designFiles.usefulInfoTip16', url: 'https://www.threads.com/@opendesign.ai' },
-  { key: 'designFiles.usefulInfoTip17', url: 'https://www.instagram.com/opendesign.ai/' },
-  { key: 'designFiles.usefulInfoTip18', url: 'https://www.youtube.com/@Open-Design-ai' },
-  { key: 'designFiles.usefulInfoTip19', url: 'https://www.linkedin.com/company/open-design-ai/' },
-  {
-    key: 'designFiles.usefulInfoTip20',
-    url: 'https://www.xiaohongshu.com/user/profile/691effad000000003002978f',
-  },
-];
-const TIP_TYPE_MS = 32; // per-character typing speed
-const TIP_HOLD_MS = 3800; // pause on a fully-typed tip before advancing
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
-}
-
-// Footer "tip" line that types out one tip at a time (typewriter), holds, then
-// advances to the next — mirroring Claude Design's empty-state hint. It is
-// intentionally auxiliary while a run is active; the preview status bar owns
-// progress and recovery feedback. Under prefers-reduced-motion the full tip is
-// shown immediately and just cycles.
-function RotatingTip({ auxiliary = false }: { auxiliary?: boolean }) {
-  const t = useT();
-  const [index, setIndex] = useState(0);
-  const [typed, setTyped] = useState('');
-  // Resolve tips each render but read them through a ref so the typing effect
-  // depends only on `index` — depending on the (re-created) array would reset
-  // the typewriter on every render and never advance.
-  const tipsRef = useRef<string[]>([]);
-  tipsRef.current = USEFUL_TIPS.map(({ key }) => t(key));
-
-  useEffect(() => {
-    const tips = tipsRef.current;
-    const full = tips[index] ?? '';
-    if (isVisualStabilityMode()) {
-      setIndex(0);
-      setTyped(tips[0] ?? '');
-      return;
-    }
-    if (prefersReducedMotion()) {
-      setTyped(full);
-      if (tips.length < 2) return;
-      const hold = window.setTimeout(
-        () => setIndex((i) => (i + 1) % tips.length),
-        TIP_HOLD_MS,
-      );
-      return () => window.clearTimeout(hold);
-    }
-    setTyped('');
-    let i = 0;
-    let holdTimer = 0;
-    const typeTimer = window.setInterval(() => {
-      i += 1;
-      setTyped(full.slice(0, i));
-      if (i >= full.length) {
-        window.clearInterval(typeTimer);
-        if (tips.length < 2) return;
-        holdTimer = window.setTimeout(
-          () => setIndex((p) => (p + 1) % tips.length),
-          TIP_HOLD_MS,
-        );
-      }
-    }, TIP_TYPE_MS);
-    return () => {
-      window.clearInterval(typeTimer);
-      window.clearTimeout(holdTimer);
-    };
-  }, [index]);
-
-  return (
-    <div className={`df-useful-info${auxiliary ? ' df-useful-info-auxiliary' : ''}`}>
-      <div className="df-useful-info-head">
-        <Icon name="sparkles" size={12} />
-        <span className="df-useful-info-label">{t('designFiles.usefulInfoLabel')}</span>
-      </div>
-      <span className="df-useful-info-tip">
-        {USEFUL_TIPS[index]?.url ? (
-          <a className="df-tip-link" href={USEFUL_TIPS[index].url} target="_blank" rel="noreferrer">
-            {typed}
-          </a>
-        ) : (
-          typed
-        )}
-        <span className="df-tip-caret" aria-hidden />
-      </span>
-    </div>
-  );
-}
-
 /**
  * Full-panel browser for a project's `.od/projects/<id>/` folder. Mirrors
  * Claude Design's "Design Files" surface: a single-line toolbar (up / refresh
@@ -449,7 +333,6 @@ export function DesignFilesPanel({
   downloadPending = false,
   rootDirName,
   reloading,
-  running = false,
   files,
   folders,
   liveArtifacts,

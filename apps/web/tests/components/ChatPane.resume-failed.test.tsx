@@ -5,6 +5,7 @@ import { forwardRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatPane } from '../../src/components/ChatPane';
+import type { SettingsSection } from '../../src/components/SettingsDialog';
 import {
   trackRunRecoveryActionClick,
   trackRunRecoveryActionSurfaceView,
@@ -81,11 +82,13 @@ function renderChat(opts: {
   onResumeRun?: (m: ChatMessage) => void;
   onRetry: (m: ChatMessage) => void;
   onSend?: (...args: unknown[]) => void;
+  onOpenSettings?: (section?: SettingsSection) => void;
   activeAgentId?: string;
+  message?: ChatMessage;
 }) {
   return render(
     <ChatPane
-      messages={[resumableFailedMessage()]}
+      messages={[opts.message ?? resumableFailedMessage()]}
       streaming={false}
       error={null}
       projectId="project-1"
@@ -101,6 +104,7 @@ function renderChat(opts: {
       activeConversationId="conv-1"
       onSelectConversation={vi.fn()}
       onDeleteConversation={vi.fn()}
+      onOpenSettings={opts.onOpenSettings}
       config={{ agentId: opts.activeAgentId ?? 'claude', agentCliEnv: {} } as unknown as AppConfig}
     />,
   );
@@ -170,6 +174,36 @@ describe('ChatPane resume-on-failure', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(String(onSend.mock.calls[0]![0])).toContain('interrupted by a transient failure');
     expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('opens execution settings for a non-resumable exhausted runtime', () => {
+    const onOpenSettings = vi.fn();
+    renderChat({
+      onRetry: vi.fn(),
+      onOpenSettings,
+      message: {
+        id: 'msg-hard-quota',
+        role: 'assistant',
+        content: 'Quota exhausted.',
+        createdAt: 1,
+        runId: 'run-hard-quota',
+        runStatus: 'failed',
+        agentId: 'claude',
+        events: [{
+          kind: 'status',
+          label: 'error',
+          detail: 'Quota exhausted.',
+          code: 'RATE_LIMITED',
+          failureCategory: 'rate_limit',
+          failureDetail: 'hard_quota',
+        }],
+      },
+    });
+
+    expect(screen.queryByRole('button', { name: 'promptTemplates.retry' })).toBeNull();
+    const settingsButton = screen.getByRole('button', { name: 'settings.codeAgent' });
+    fireEvent.click(settingsButton);
+    expect(onOpenSettings).toHaveBeenCalledWith('execution');
   });
 
   it('falls back to Retry when the active agent no longer matches the failed run', () => {

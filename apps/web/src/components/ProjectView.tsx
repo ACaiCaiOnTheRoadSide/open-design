@@ -56,7 +56,6 @@ import {
   runAgentProviderId,
 } from '../analytics/run-task';
 import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
-import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
   type AmrWalletSnapshot,
   type ByokChatProviderConfig,
@@ -137,7 +136,6 @@ import {
   resolveDesignDeliveryOutcome,
   type DesignDeliveryOutcome,
 } from '../runtime/design-delivery';
-import { notifyArtifactDelivered } from './experience-survey-trigger';
 import { RESUME_CONTINUE_PROMPT } from '../runtime/resume';
 import {
   amrBalanceGateScopeForWorkspaceContext,
@@ -645,11 +643,6 @@ interface Props {
   onOpenMcpSettings?: () => void;
   onBrowsePlugins?: () => void;
   onOpenConnectors?: () => void;
-  // Pet wiring forwarded to the chat composer so users can adopt /
-  // wake / tuck a pet without leaving the project view.
-  onAdoptPetInline?: (petId: string) => void;
-  onTogglePet?: () => void;
-  onOpenPetSettings?: () => void;
   onBack: () => void;
   onClearPendingPrompt: () => void;
   onTouchProject: () => void;
@@ -1785,9 +1778,6 @@ export function ProjectView({
   onOpenMcpSettings,
   onBrowsePlugins,
   onOpenConnectors,
-  onAdoptPetInline,
-  onTogglePet,
-  onOpenPetSettings,
   onBack,
   onClearPendingPrompt,
   onTouchProject,
@@ -7625,13 +7615,6 @@ export function ProjectView({
                 artifactPersistenceError,
               );
               latestAssistantMsg = finalized;
-              // Only the live completion path arms the experience survey. The
-              // reattach and artifact-recovery paths below also settle on
-              // `delivered`, but they do so while replaying a run that
-              // finished before this page load — "how was that?" about work
-              // the user cannot remember finishing is a worse question than
-              // one not asked.
-              if (deliveryOutcome === 'delivered') notifyArtifactDelivered();
               setMessages((curr) => {
                 const updated = curr.map((m) =>
                   m.id === assistantId
@@ -8303,17 +8286,9 @@ export function ProjectView({
       commentAttachments: ChatCommentAttachment[],
       meta?: ChatSendMeta,
     ): Promise<ChatSendOutcome> => {
-      if (activeConversationId && cloudModelSelected) {
-        const decision = await requestAmrArtifactUpgrade({
-          projectId: project.id,
-          conversationId: activeConversationId,
-          source: 'chat_send',
-        });
-        if (decision === 'cancel') return 'restore-draft';
-      }
       void handleSend(prompt, attachments, commentAttachments, meta);
     },
-    [activeConversationId, cloudModelSelected, handleSend, project.id],
+    [handleSend],
   );
 
   // Cancel every in-flight run for the current conversation (the user's own
@@ -11262,7 +11237,6 @@ export function ProjectView({
                 onModeChange('daemon');
               }}
               onOpenAmrSettings={onOpenAmrSettings}
-              onSwitchToAmrAndRetry={handleSwitchToAmrAndRetry}
               onLaunchAntigravityOauth={handleLaunchAntigravityOauth}
               onOpenMcpSettings={onOpenMcpSettings}
               onBrowsePlugins={onBrowsePlugins}
@@ -11293,10 +11267,6 @@ export function ProjectView({
                 ) : null
               }
               composerDraftSignal={composerDraftSignal}
-              petConfig={config.pet}
-              onAdoptPet={onAdoptPetInline}
-              onTogglePet={onTogglePet}
-              onOpenPetSettings={onOpenPetSettings}
               researchAvailable={config.mode === 'daemon'}
               byokApiProtocol={config.apiProtocol}
               byokImageModel={byokImageModelOverride}
