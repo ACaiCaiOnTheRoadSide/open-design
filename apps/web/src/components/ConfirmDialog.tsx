@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Button } from '@open-design/components';
 import { modalOverlay, modalContent } from '../motion';
+import styles from './ConfirmDialog.module.css';
 
 // 通用的居中确认弹窗,替代原生 window.confirm——后者由浏览器 chrome 绘制,
 // 与产品主题割裂。复用全局 .modal / .row / .hint 样式(见 mention-home.css)与
@@ -40,17 +41,11 @@ export function ConfirmDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, busy, onCancel]);
 
-  // 危险按钮:Button 原语无 danger 变体,内联覆盖颜色是最稳的(跨 CSS Module
-  // 的类名级联顺序不保证能盖过 primary)。hover 差异对确认框可接受。
-  const dangerStyle = danger
-    ? { background: 'var(--danger, #c0392b)', borderColor: 'var(--danger, #c0392b)', color: '#fff' }
-    : undefined;
-
   return (
     <AnimatePresence>
       {open ? (
         <motion.div
-          className="modal-backdrop"
+          className={`modal-backdrop ${styles.backdrop}`}
           onClick={busy ? undefined : onCancel}
           variants={modalOverlay}
           initial="hidden"
@@ -59,7 +54,7 @@ export function ConfirmDialog({
           role="presentation"
         >
           <motion.div
-            className="modal"
+            className={`modal ${styles.dialog}`}
             style={{ maxWidth: 420 }}
             onClick={(event) => event.stopPropagation()}
             variants={modalContent}
@@ -69,15 +64,15 @@ export function ConfirmDialog({
             role="dialog"
             aria-modal="true"
           >
-            {title ? <h2>{title}</h2> : null}
-            <p className="hint">{message}</p>
-            <div className="row">
-              <Button variant="ghost" onClick={onCancel} disabled={busy}>
+            {title ? <h2 className={styles.title}>{title}</h2> : null}
+            <p className={`hint ${styles.message}`}>{message}</p>
+            <div className={`row ${styles.actions}`}>
+              <Button className={styles.cancelButton} variant="ghost" onClick={onCancel} disabled={busy}>
                 {cancelLabel}
               </Button>
               <Button
+                className={danger ? styles.dangerButton : styles.confirmButton}
                 variant={danger ? 'default' : 'primary'}
-                style={dangerStyle}
                 onClick={onConfirm}
                 disabled={busy}
                 autoFocus
