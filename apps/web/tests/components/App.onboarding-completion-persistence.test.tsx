@@ -373,6 +373,22 @@ describe('App onboarding completion persistence', () => {
     expect(await navigatedToOnboarding()).toBe(true);
   });
 
+  it('retires the legacy first-run page and opens Home directly', async () => {
+    mockedLoadConfig.mockReturnValue(firstRunConfig());
+    mockedFetchDaemonConfig.mockResolvedValue({ onboardingCompleted: false });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('onboarding-completed').textContent).toBe('true');
+    });
+
+    expect(await navigatedToOnboarding()).toBe(false);
+    expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(
+      expect.objectContaining({ onboardingCompleted: true }),
+    );
+  });
+
   it('keeps a completed user out of onboarding when the daemon copy still says false', async () => {
     mockedLoadConfig.mockReturnValue(returningUserConfig());
     // The completion PUT never reached the daemon last session (offline /

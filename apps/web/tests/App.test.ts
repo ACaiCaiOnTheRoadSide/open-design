@@ -10,7 +10,6 @@ import {
   projectRouteSurfaceState,
   resolveDeepLinkedTeamSharedProject,
   resolveSettingsCloseConfig,
-  shouldRouteToFirstRunOnboarding,
   shouldSyncMediaProvidersOnSave,
 } from '../src/App';
 import type { AppConfig, Project } from '../src/types';
@@ -72,15 +71,6 @@ const baseConfig: AppConfig = {
   skillId: null,
   designSystemId: null,
 };
-
-describe('shouldRouteToFirstRunOnboarding', () => {
-  it('never hijacks an explicit project deep link while daemon config is hydrating', () => {
-    const unfinished = { ...baseConfig, onboardingCompleted: false };
-
-    expect(shouldRouteToFirstRunOnboarding(unfinished, '/projects/project-a')).toBe(false);
-    expect(shouldRouteToFirstRunOnboarding(unfinished, '/')).toBe(true);
-  });
-});
 
 describe('hydrateReadyTeamProject', () => {
   const project: Project = {

@@ -264,34 +264,6 @@ const AMR_AGENT_ID = 'amr';
 const AMR_PROFILE_ENV_KEY = 'OPEN_DESIGN_AMR_PROFILE';
 const AGENT_FOCUS_REFRESH_THROTTLE_MS = 10_000;
 
-/**
- * Whether this launch should hand the user to the first-run onboarding flow.
- *
- * Two conditions, both about the *user*, neither about where they happen to be
- * in the app: they have never completed onboarding (on either the local or the
- * daemon copy — `mergeDaemonConfig` ratchets the two before this runs), and
- * they did not arrive through an explicit deep link that onboarding must not
- * hijack (the collab demo and the community gallery are shareable URLs).
- *
- * Deliberately a pure predicate over a resolved config: the redirect belongs to
- * the one-shot boot pass, and expressing it as a function of "who the user is"
- * rather than "what just happened" keeps it from being re-decided mid-session.
- */
-export function shouldRouteToFirstRunOnboarding(
-  config: AppConfig,
-  pathname: string,
-): boolean {
-  if (config.onboardingCompleted === true) return false;
-  if (
-    pathname.startsWith('/projects/')
-    || pathname.startsWith('/collab-demo')
-    || pathname.startsWith('/community')
-  ) {
-    return false;
-  }
-  return true;
-}
-
 function workspaceProjectListViewForRoute(route: Route): WorkspaceProjectListView {
   if (route.kind === 'home' && route.view === 'all-projects') return 'all';
   if (route.kind === 'home' && route.view === 'drafts') return 'drafts';
@@ -1976,12 +1948,11 @@ function AppInner() {
   //
   // Boot is a ONE-SHOT: every dependency below is a stable callback, so this
   // runs once per app launch and never again. That is load-bearing, not
-  // incidental — this pass owns the first-run onboarding routing decision and
-  // rewrites the merged config back to localStorage + the daemon. Re-running it
-  // on navigation replays both: a user is re-judged against a config read that
-  // may lag their own completion, and gets bounced into the first-run flow they
-  // already finished. Anything route- or workspace-derived that boot needs must
-  // be read through a ref (see `workspaceProjectViewRef`), and anything that
+  // incidental — this pass rewrites the merged config back to localStorage +
+  // the daemon. Re-running it on navigation could overwrite a user's newer
+  // settings with a stale daemon snapshot. Anything route- or workspace-derived
+  // that boot needs must be read through a ref (see `workspaceProjectViewRef`),
+  // and anything that
   // must react to those changes belongs in its own effect.
   useEffect(() => {
     let cancelled = false;
@@ -2164,6 +2135,9 @@ function AppInner() {
           ),
           daemonMediaProvidersLoaded,
         );
+        // The legacy first-run page is no longer part of startup. Ratchet old
+        // persisted configs forward so refreshes land directly on the current Home.
+        next.onboardingCompleted = true;
         const hasLocalComposioKey = Boolean(next.composio?.apiKey?.trim());
         if (!hasLocalComposioKey && daemonComposioConfig) {
           next.composio = daemonComposioConfig;
@@ -2203,15 +2177,6 @@ function AppInner() {
         latestPersistedConfigRef.current = next;
         setConfig(next);
 
-        // Route first-run users through the global onboarding panel.
-        // The onboarding panel and the privacy banner have independent
-        // lifecycles: onboarding keys off `onboardingCompleted`, the
-        // banner keys off `privacyDecisionAt`. They may coexist on the
-        // first launch; the banner sits above the modal layer so it
-        // stays actionable regardless of the active view.
-        if (!WHITE_LABEL_SAAS && shouldRouteToFirstRunOnboarding(next, window.location.pathname)) {
-          navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
-        }
         setDaemonConfigLoaded(true);
         // Only a non-null GET payload means we actually observed daemon prefs.
         setDaemonAppConfigReady(daemonConfig != null);
