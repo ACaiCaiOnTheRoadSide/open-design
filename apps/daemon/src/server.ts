@@ -227,6 +227,7 @@ import {
 } from './runtimes/byok-opencode.js';
 import {
   buildOhMyAgentModelConfig,
+  buildOhMyAgentModelConfigFromProviderConfig,
   ohmyagentProviderFromEnv,
   OHMYAGENT_API_KEY_ENV,
 } from './runtimes/ohmyagent-config.js';
@@ -10371,10 +10372,27 @@ export async function startServer({
       );
     }
     const trustedRequestProviderConfig = getRequestContext()?.providerConfig ?? null;
-    const injectedOpenCodeProviderConfig = def.id === 'opencode'
+    const injectedOpenCodeProviderConfig = def.id === 'opencode' || (def.id === 'ohmyagent' && !byokProvider)
       ? await resolveOpenCodeProviderConfig()
       : null;
     if (def.id === 'opencode' && process.env.OD_BACKEND_URL && !injectedOpenCodeProviderConfig) {
+      return design.runs.fail(
+        run,
+        'AGENT_MODEL_NOT_CONFIGURED',
+        '本次运行未解析到模型配置，已安全中止。请在后台设置默认模型。',
+      );
+    }
+    const earlyOhMyAgentModelConfig = def.id === 'ohmyagent'
+      ? byokProvider
+        ? buildOhMyAgentModelConfig(byokProvider, null)
+        : buildOhMyAgentModelConfigFromProviderConfig(injectedOpenCodeProviderConfig, null)
+          ?? buildOhMyAgentModelConfig(ohmyagentProviderFromEnv(), null)
+      : null;
+    if (
+      def.id === 'ohmyagent' &&
+      selectedExecutionTransportKind === 'huskbox' &&
+      !earlyOhMyAgentModelConfig
+    ) {
       return design.runs.fail(
         run,
         'AGENT_MODEL_NOT_CONFIGURED',
@@ -11105,6 +11123,10 @@ export async function startServer({
       typeof appConfigForRun?.agentModels?.[def.id]?.model === 'string'
         ? appConfigForRun.agentModels[def.id].model
         : null;
+    const hasSelectedOhMyAgentModel = def.id === 'ohmyagent' && (
+      (typeof requestedRuntimeModel === 'string' && requestedRuntimeModel.trim().length > 0) ||
+      (typeof configuredModel === 'string' && configuredModel.trim().length > 0)
+    );
     let safeModel = resolveModelForAgent(
       def,
       typeof requestedRuntimeModel === 'string'
@@ -11115,6 +11137,9 @@ export async function startServer({
       process.env,
       requestedLiveModelScope,
     );
+    if (def.id === 'ohmyagent' && !hasSelectedOhMyAgentModel && earlyOhMyAgentModelConfig) {
+      safeModel = 'default';
+    }
     const hasDefaultModelEnvOverride = Boolean(
       def.defaultModelEnvVar &&
       typeof process.env[def.defaultModelEnvVar] === 'string' &&
@@ -12077,8 +12102,14 @@ export async function startServer({
         );
       }
     }
+    const ohmyagentModelOverride = hasSelectedOhMyAgentModel ? safeModel : null;
     const ohmyagentModelConfig = def.id === 'ohmyagent'
-      ? buildOhMyAgentModelConfig(byokProvider ?? ohmyagentProviderFromEnv(), safeModel)
+      ? byokProvider
+        ? buildOhMyAgentModelConfig(byokProvider, ohmyagentModelOverride)
+        : buildOhMyAgentModelConfigFromProviderConfig(
+            injectedOpenCodeProviderConfig,
+            ohmyagentModelOverride,
+          ) ?? buildOhMyAgentModelConfig(ohmyagentProviderFromEnv(), ohmyagentModelOverride)
       : null;
     const ohmyagentMcpConfig = def.externalMcpInjection === 'ohmyagent-config-file'
       ? buildOhMyAgentMcpConfig(enabledExternalMcp, oauthTokensForSpawn)

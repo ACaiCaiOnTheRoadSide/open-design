@@ -27,6 +27,8 @@ const ENV_KEYS = [
   'OD_HUSKBOX_API_KEY',
   'OD_HUSKBOX_IMAGE',
   'OD_HUSKBOX_RETRY_MAX_ATTEMPTS',
+  'OD_OPENCODE_PROVIDER_CONFIG',
+  'OD_OHMYAGENT_MODEL',
 ] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
@@ -65,6 +67,16 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   process.env.OD_HUSKBOX_API_KEY = 'huskbox-secret';
   process.env.OD_HUSKBOX_IMAGE = 'registry.test/ohmyagent:v1';
   process.env.OD_HUSKBOX_RETRY_MAX_ATTEMPTS = '1';
+  process.env.OD_OHMYAGENT_MODEL = 'stale-env-model';
+  process.env.OD_OPENCODE_PROVIDER_CONFIG = JSON.stringify({
+    provider: {
+      platform: {
+        npm: '@ai-sdk/openai-compatible',
+        options: { apiKey: 'platform-model-secret', baseURL: 'https://gateway.example/v1' },
+      },
+    },
+    model: 'platform/integration-model',
+  });
 
   vi.resetModules();
   const { startServer } = await import('../src/server.js');
@@ -115,7 +127,10 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   expect(request.body).toEqual(expect.objectContaining({
     idempotency_key: expect.any(String),
     image: 'registry.test/ohmyagent:v1',
-    cmd: expect.arrayContaining(['bash', 'ohmyagent', '--output-format', 'json']),
+    cmd: expect.arrayContaining([
+      'bash', 'ohmyagent', '--output-format', 'json',
+      '--model-config', expect.stringMatching(/^@\/workspace\/\.od\/tmp\/od-ohmyagent-model-.+\.json$/u),
+    ]),
     env: expect.objectContaining({
       OD_DATA_DIR: '/workspace',
       OD_AGENT_CWD: `/workspace/projects/${projectId}`,
@@ -126,6 +141,17 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   expect(request.body).not.toHaveProperty('idempotencyKey');
   expect(request.body).not.toHaveProperty('inputWorkspaceURL');
   expect(request.body.cmd).not.toEqual(expect.stringContaining('Return the integration answer.'));
+  expect(request.body.cmd).not.toContain('--model');
+  const remoteEnv = request.body.env as Record<string, string>;
+  const modelConfig = JSON.parse(Buffer.from(
+    remoteEnv.OD_OHMYAGENT_MODEL_CONFIG_B64!, 'base64',
+  ).toString('utf8')) as Record<string, unknown>;
+  expect(modelConfig).toEqual({
+    name: 'open-design-runtime', type: 'openai-chat', model: 'integration-model',
+    base_url: 'https://gateway.example/v1', api_key: 'env:OPEN_DESIGN_OHMYAGENT_API_KEY',
+  });
+  expect(JSON.stringify(modelConfig)).not.toContain('platform-model-secret');
+  expect(remoteEnv.OPEN_DESIGN_OHMYAGENT_API_KEY).toBe('platform-model-secret');
 
   expect(events).toEqual(expect.arrayContaining([
     expect.objectContaining({ event: 'start', data: expect.objectContaining({ agentId: 'ohmyagent' }) }),
