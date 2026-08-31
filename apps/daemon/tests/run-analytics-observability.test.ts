@@ -1,10 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectToolCallDetails,
   scanRunEventsForUsageAnalytics,
   summarizeRunTimingAnalytics,
   summarizeToolAnalytics,
 } from '../src/run-analytics-observability.js';
+
+describe('collectToolCallDetails', () => {
+  it('records safe metadata without copying payloads', () => {
+    const result = collectToolCallDetails([
+      {
+        event: 'agent', timestamp: 110,
+        data: { type: 'tool_use', id: 'call-1', name: 'mcp__image_generate', input: { secret: 'no' } },
+      },
+      {
+        event: 'agent', timestamp: 145,
+        data: { type: 'tool_result', toolUseId: 'call-1', isError: false, content: 'private' },
+      },
+      {
+        event: 'agent', timestamp: 150,
+        data: { type: 'tool_use', id: 'call-2', name: 'free text /tmp/secret' },
+      },
+    ], 100, 200);
+
+    expect(result).toEqual([
+      { id: 'call-1', name: 'mcp__image_generate', result: 'success', startedAt: 110, completedAt: 145 },
+      { id: 'call-2', name: 'other', result: 'unknown', startedAt: 150, completedAt: 150 },
+    ]);
+    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+});
 
 describe('scanRunEventsForUsageAnalytics', () => {
   it('extracts provider usage, cache tokens, and estimated context tokens', () => {

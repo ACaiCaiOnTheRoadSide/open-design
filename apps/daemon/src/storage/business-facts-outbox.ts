@@ -5,12 +5,13 @@ import type {
   BusinessFactsStore,
   MessageFact,
   ProjectFact,
+  ToolCallFact,
   UsageFact,
 } from './business-facts.js';
 
 type SqliteDb = Database.Database;
 type OutboxPayload =
-  | { kind: 'message'; principal: VerifiedPrincipal; message: MessageFact; usage?: UsageFact }
+  | { kind: 'message'; principal: VerifiedPrincipal; message: MessageFact; usage?: UsageFact; toolCalls?: ToolCallFact[] }
   | { kind: 'project-create'; principal: VerifiedPrincipal; project: ProjectFact }
   | { kind: 'project-update'; project: ProjectFact }
   | { kind: 'project-delete'; principal: VerifiedPrincipal; projectId: string; deletedAt: number }
@@ -18,7 +19,7 @@ type OutboxPayload =
   | { kind: 'agent-run-result'; principal: VerifiedPrincipal; result: AgentRunResultFact };
 
 export interface BusinessFactsOutbox {
-  recordMessage(message: MessageFact, usage?: UsageFact): Promise<void>;
+  recordMessage(message: MessageFact, usage?: UsageFact, toolCalls?: ToolCallFact[]): Promise<void>;
   enqueueProjectCreate(project: ProjectFact, principal?: VerifiedPrincipal): void;
   enqueueProjectUpdate(project: ProjectFact): void;
   enqueueProjectDelete(projectId: string, deletedAt: number, principal?: VerifiedPrincipal): void;
@@ -70,7 +71,7 @@ export function createBusinessFactsOutbox(
         try {
           if (payload.kind === 'message') {
             await runWithRequestContext(payload.principal, () =>
-              store.upsertMessage(payload.message, payload.usage));
+              store.upsertMessage(payload.message, payload.usage, payload.toolCalls));
           } else if (payload.kind === 'project-create') {
             await runWithRequestContext(payload.principal, () => store.createProject(payload.project));
           } else if (payload.kind === 'project-update') {
@@ -121,7 +122,7 @@ export function createBusinessFactsOutbox(
   };
 
   return {
-    async recordMessage(message, usage) {
+    async recordMessage(message, usage, toolCalls) {
       if (!store.enabled) return;
       const principal = verifiedPrincipal();
       const id = `message:${message.id}:${message.updatedAt}`;
@@ -129,10 +130,14 @@ export function createBusinessFactsOutbox(
         `SELECT payload_json AS payloadJson FROM business_fact_outbox WHERE id = ?`,
       ).get(id) as { payloadJson?: string } | undefined;
       let existingUsage: UsageFact | undefined;
+      let existingToolCalls: ToolCallFact[] | undefined;
       if (existing?.payloadJson) {
         try {
           const parsed = JSON.parse(existing.payloadJson) as OutboxPayload;
-          if (parsed.kind === 'message') existingUsage = parsed.usage;
+          if (parsed.kind === 'message') {
+            existingUsage = parsed.usage;
+            existingToolCalls = parsed.toolCalls;
+          }
         } catch {
           // Replacing an unreadable same-key payload repairs the poison row.
         }
@@ -140,9 +145,11 @@ export function createBusinessFactsOutbox(
       const mergedUsage: UsageFact | undefined = usage
         ? { ...(existingUsage ?? {}), ...usage }
         : existingUsage;
+      const mergedToolCalls = toolCalls?.length ? toolCalls : existingToolCalls;
       insertPayload(id, {
         kind: 'message', principal, message,
         ...(mergedUsage ? { usage: mergedUsage } : {}),
+        ...(mergedToolCalls?.length ? { toolCalls: mergedToolCalls } : {}),
       });
       await drain();
       const pending = db.prepare(`SELECT 1 FROM business_fact_outbox WHERE id = ?`).get(id);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { QueryResult, QueryResultRow } from 'pg';
 import {
+  businessToolCallEventKey,
   businessUsageEventKey,
   createBusinessFactsStore,
   type UsageFact,
@@ -96,6 +97,34 @@ describe('BusinessFactsStore', () => {
     expect(sql.at(-1)).toContain('GREATEST(message_token_usage.input_tokens');
     expect(sql.at(-1)).toContain('cost_usd = COALESCE(EXCLUDED.cost_usd');
     expect(values.at(-1)?.slice(13, 15)).toEqual([0.25, 1200]);
+  });
+
+  it('persists tool metadata with a hashed stable key', async () => {
+    const sql: string[] = [];
+    const values: unknown[][] = [];
+    const store = createBusinessFactsStore({
+      enabled: true,
+      principal: () => ({ tenantId: 't', userId: 'u' }),
+      transaction: async (work) => work({
+        query: async <R extends QueryResultRow>(text: string, params?: readonly unknown[]) => {
+          sql.push(text);
+          values.push([...(params ?? [])]);
+          return result<R>();
+        },
+      }),
+    });
+    const eventKey = businessToolCallEventKey('run-1', 'provider-call-id');
+    expect(eventKey).toBe(businessToolCallEventKey('run-1', 'provider-call-id'));
+    expect(eventKey).not.toContain('provider-call-id');
+    await store.upsertMessage({
+      id: 'msg', conversationId: 'c', projectId: 'p', runStatus: 'succeeded', createdAt: 1, updatedAt: 2,
+    }, undefined, [{
+      eventKey, runId: 'run-1', name: 'image_generate', result: 'success',
+      startedAt: 10, completedAt: 40,
+    }]);
+    expect(sql.at(-1)).toContain('INSERT INTO tool_call_facts');
+    expect(values.at(-1)?.slice(0, 3)).toEqual([eventKey, 'run-1', 'u']);
+    expect(values.at(-1)?.at(11)).toBe(30);
   });
 
   it('increments a project outcome only when its event key is first inserted', async () => {

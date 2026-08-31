@@ -841,6 +841,75 @@ export function canonicalizeToolAnalyticsName(raw: string | undefined): ToolAnal
   return 'other';
 }
 
+export interface ToolCallDetail {
+  id: string;
+  name: string;
+  result: 'success' | 'failed' | 'unknown';
+  startedAt: number;
+  completedAt: number;
+}
+
+function toolDetailName(raw: unknown): string {
+  if (typeof raw !== 'string') return 'other';
+  const trimmed = raw.trim();
+  return /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/.test(trimmed)
+    ? trimmed
+    : canonicalizeToolAnalyticsName(trimmed);
+}
+
+/** Per-call metadata for the private admin dashboard; never copies tool payloads. */
+export function collectToolCallDetails(
+  events: RunEventForAnalyticsObservability[],
+  runStartedAt: number,
+  runEndedAt: number,
+): ToolCallDetail[] {
+  const calls = new Map<string, ToolCallDetail>();
+  for (const rec of events) {
+    if (rec.event !== 'agent') continue;
+    const data = rec.data as {
+      type?: unknown;
+      id?: unknown;
+      name?: unknown;
+      toolUseId?: unknown;
+      isError?: unknown;
+      startedAt?: unknown;
+    } | null;
+    if (data?.type === 'tool_use' && typeof data.id === 'string' && data.id) {
+      const eventAt = typeof rec.timestamp === 'number' && Number.isFinite(rec.timestamp)
+        ? rec.timestamp : runStartedAt;
+      const payloadStartedAt = typeof data.startedAt === 'number' && Number.isFinite(data.startedAt)
+        ? data.startedAt : eventAt;
+      const existing = calls.get(data.id);
+      calls.set(data.id, {
+        id: data.id,
+        name: toolDetailName(data.name),
+        result: existing?.result ?? 'unknown',
+        startedAt: Math.min(existing?.startedAt ?? payloadStartedAt, payloadStartedAt),
+        completedAt: Math.max(existing?.completedAt ?? eventAt, eventAt),
+      });
+    } else if (data?.type === 'tool_result' && typeof data.toolUseId === 'string' && data.toolUseId) {
+      const completedAt = typeof rec.timestamp === 'number' && Number.isFinite(rec.timestamp)
+        ? rec.timestamp : runEndedAt;
+      const existing = calls.get(data.toolUseId);
+      calls.set(data.toolUseId, {
+        id: data.toolUseId,
+        name: existing?.name ?? 'other',
+        result: data.isError === true ? 'failed' : 'success',
+        startedAt: existing?.startedAt ?? completedAt,
+        completedAt: Math.max(existing?.startedAt ?? completedAt, completedAt),
+      });
+    }
+  }
+  return [...calls.values()].map((call) => {
+    const startedAt = Math.min(Math.max(call.startedAt, runStartedAt), runEndedAt);
+    return {
+      ...call,
+      startedAt,
+      completedAt: Math.min(Math.max(call.completedAt, startedAt), runEndedAt),
+    };
+  });
+}
+
 /**
  * Cheap tool family histogram + error counts from tool_use/tool_result events.
  * Canonicalizes names to a small allowlist; never includes inputs/outputs

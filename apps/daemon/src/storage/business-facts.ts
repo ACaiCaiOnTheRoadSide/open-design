@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { requireRequestContext, type VerifiedPrincipal } from '../request-context.js';
 import { resolveDaemonDbConfig } from './daemon-db.js';
 import { query, transaction, type PgQueryable } from './pg.js';
@@ -43,6 +44,15 @@ export interface AgentRunResultFact {
   completedAt: number;
 }
 
+export interface ToolCallFact {
+  eventKey: string;
+  runId: string;
+  name: string;
+  result: 'success' | 'failed' | 'unknown';
+  startedAt: number;
+  completedAt: number;
+}
+
 export interface BusinessFactsStore {
   readonly enabled: boolean;
   upsertProject(fact: ProjectFact): Promise<void>;
@@ -53,7 +63,7 @@ export interface BusinessFactsStore {
   discardProject(projectId: string): Promise<void>;
   deleteProject(projectId: string, deletedAt?: number): Promise<void>;
   upsertConversation(id: string, projectId: string): Promise<void>;
-  upsertMessage(fact: MessageFact, usage?: UsageFact): Promise<void>;
+  upsertMessage(fact: MessageFact, usage?: UsageFact, toolCalls?: ToolCallFact[]): Promise<void>;
   incrementProjectCounter(projectId: string, counter: 'download_count' | 'published_count'): Promise<void>;
   recordProjectEvent(projectId: string, event: 'download' | 'publish', eventKey: string): Promise<void>;
   recordAgentRunResult(fact: AgentRunResultFact, principal: Readonly<VerifiedPrincipal>): Promise<void>;
@@ -79,6 +89,10 @@ function safeOptionalNonNegative(value: number | undefined): number | null {
 /** One terminal aggregate per message; richer retries update this same event. */
 export function businessUsageEventKey(messageId: string, _usage: UsageFact): string {
   return `${messageId}:terminal-usage`;
+}
+
+export function businessToolCallEventKey(runId: string, toolCallId: string): string {
+  return `tool-call:${createHash('sha256').update(runId).update('\0').update(toolCallId).digest('hex')}`;
 }
 
 export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOptions>): BusinessFactsStore {
@@ -199,6 +213,8 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
         // leaves backend-visible conversation/message residuals.
         await client.query('DELETE FROM message_token_usage WHERE project_id = $1 AND tenant_id = $2',
           [projectId, actor.tenantId]);
+        await client.query('DELETE FROM tool_call_facts WHERE project_id = $1 AND tenant_id = $2',
+          [projectId, actor.tenantId]);
         await client.query(
           `DELETE FROM messages WHERE conversation_id IN (
              SELECT id FROM conversations WHERE project_id = $1
@@ -217,7 +233,7 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
         [id, projectId, actor.tenantId],
       );
     },
-    async upsertMessage(fact, usage) {
+    async upsertMessage(fact, usage, toolCalls = []) {
       const actor = identity();
       await runTransaction(async (client) => {
         await client.query(
@@ -242,11 +258,11 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
              )`,
           [fact.id, fact.conversationId, fact.runStatus, fact.createdAt, fact.updatedAt, actor.tenantId],
         );
-        if (!usage) return;
-        const input = safeCount(usage.inputTokens);
-        const output = safeCount(usage.outputTokens);
-        const total = safeCount(usage.totalTokens) || input + output;
-        await client.query(
+        if (usage) {
+          const input = safeCount(usage.inputTokens);
+          const output = safeCount(usage.outputTokens);
+          const total = safeCount(usage.totalTokens) || input + output;
+          await client.query(
           `INSERT INTO message_token_usage
              (event_key, user_id, tenant_id, project_id, conversation_id, message_id, model,
               input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
@@ -279,7 +295,37 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
             safeOptionalNonNegative(usage.costUsd), safeOptionalNonNegative(usage.durationMs),
             usage.createdAt, actor.tenantId,
           ],
-        );
+          );
+        }
+        for (const call of toolCalls) {
+          await client.query(
+            `INSERT INTO tool_call_facts
+               (event_key, run_id, user_id, tenant_id, project_id, conversation_id,
+                message_id, tool_name, result, started_at, completed_at, duration_ms)
+             SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+             WHERE EXISTS (
+               SELECT 1 FROM messages m JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.id = $7 AND c.id = $6 AND c.project_id = $5 AND (
+                  EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id AND p.tenant_id = $13)
+                  OR EXISTS (SELECT 1 FROM deleted_projects p WHERE p.id = c.project_id AND p.tenant_id = $13)
+                )
+             )
+             ON CONFLICT (event_key) DO UPDATE SET
+               tool_name = CASE WHEN EXCLUDED.tool_name = 'other' THEN tool_call_facts.tool_name ELSE EXCLUDED.tool_name END,
+               result = CASE WHEN EXCLUDED.result = 'unknown' THEN tool_call_facts.result ELSE EXCLUDED.result END,
+               started_at = LEAST(tool_call_facts.started_at, EXCLUDED.started_at),
+               completed_at = GREATEST(tool_call_facts.completed_at, EXCLUDED.completed_at),
+               duration_ms = GREATEST(tool_call_facts.duration_ms, EXCLUDED.duration_ms)
+             WHERE tool_call_facts.run_id = EXCLUDED.run_id
+               AND tool_call_facts.message_id = EXCLUDED.message_id
+               AND tool_call_facts.tenant_id = EXCLUDED.tenant_id`,
+            [
+              call.eventKey, call.runId, actor.userId, actor.tenantId, fact.projectId,
+              fact.conversationId, fact.id, call.name, call.result, call.startedAt,
+              call.completedAt, Math.max(0, call.completedAt - call.startedAt), actor.tenantId,
+            ],
+          );
+        }
       });
     },
     async recordProjectEvent(projectId, event, eventKey) {
@@ -308,7 +354,11 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
       await runQuery(
         `INSERT INTO appstats_run_results
            (event_key, run_id, attempt, user_id, tenant_id, access_mode, feature, result, completed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+         WHERE NOT EXISTS (
+           SELECT 1 FROM appstats_run_results
+           WHERE event_key = 'agent-run-backfill:' || $2
+         )
          ON CONFLICT (event_key) DO NOTHING`,
         [
           fact.eventKey, fact.runId, fact.attempt, actor.userId, actor.tenantId,

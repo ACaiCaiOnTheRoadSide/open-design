@@ -52,7 +52,12 @@ import {
   requireRequestContext,
   type VerifiedPrincipal,
 } from '../request-context.js';
-import type { AgentRunResultFact, BusinessFactsStore } from '../storage/business-facts.js';
+import {
+  businessToolCallEventKey,
+  type AgentRunResultFact,
+  type BusinessFactsStore,
+  type ToolCallFact,
+} from '../storage/business-facts.js';
 import type { BusinessFactsOutbox } from '../storage/business-facts-outbox.js';
 import {
   conversationTurnIndexForRun,
@@ -92,6 +97,7 @@ import {
 import {
   amrUserIdForRunAnalytics,
   agentProviderIdForRunAnalytics,
+  collectToolCallDetails,
   hasExplicitRequestedModelForAnalytics,
   runtimeTypeForRunAnalytics,
   scanRunEventsForUsageAnalytics,
@@ -2481,6 +2487,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         );
         if (run.projectId && run.conversationId && run.assistantMessageId) {
           const projectedAt = Date.now();
+          const toolCalls: ToolCallFact[] = collectToolCallDetails(
+            run.events,
+            run.createdAt,
+            projectedAt,
+          ).map((call) => ({
+            eventKey: businessToolCallEventKey(run.id, call.id),
+            runId: run.id,
+            name: call.name,
+            result: call.result,
+            startedAt: call.startedAt,
+            completedAt: call.completedAt,
+          }));
           await (ctx.businessFactsOutbox?.recordMessage({
             id: run.assistantMessageId,
             conversationId: run.conversationId,
@@ -2500,14 +2518,14 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             ...(usageAnalytics.cost_usd !== undefined ? { costUsd: usageAnalytics.cost_usd } : {}),
             ...(usageAnalytics.duration_ms !== undefined ? { durationMs: usageAnalytics.duration_ms } : {}),
             createdAt: projectedAt,
-          }) ?? ctx.businessFacts?.upsertMessage({
+          }, toolCalls) ?? ctx.businessFacts?.upsertMessage({
             id: run.assistantMessageId,
             conversationId: run.conversationId,
             projectId: run.projectId,
             runStatus: status.status,
             createdAt: run.createdAt,
             updatedAt: projectedAt,
-          }));
+          }, undefined, toolCalls));
         }
         // Whether this run is a non-first turn in its conversation — i.e. a
         // prior completed assistant turn exists (excluding this run's own

@@ -68,4 +68,28 @@ describe('business facts PostgreSQL migration contract', () => {
     expect(sql).toContain('idx_appstats_run_results_pending');
     expect(sql).toContain('WHERE reported_at IS NULL');
   });
+
+  it('backfills one final App Stats fact for otherwise-unreported historical runs', async () => {
+    const sql = await readFile(
+      path.join(resolvePgMigrationsDirectory(), '015_backfill_appstats_run_results.sql'),
+      'utf8',
+    );
+    expect(sql).toContain("'agent-run-backfill:' || q.run_id");
+    expect(sql).toContain("q.status IN ('completed', 'failed', 'canceled')");
+    expect(sql).toContain("CASE WHEN q.status = 'completed' THEN 'success' ELSE 'failed' END");
+    expect(sql).toContain('WHERE r.run_id = q.run_id');
+    expect(sql).toContain('ON CONFLICT (event_key) DO NOTHING');
+  });
+
+  it('defines privacy-safe per-tool facts for the admin dashboard', async () => {
+    const sql = await readFile(
+      path.join(resolvePgMigrationsDirectory(), '016_tool_call_facts.sql'),
+      'utf8',
+    );
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS tool_call_facts');
+    expect(sql).toContain('event_key text PRIMARY KEY');
+    expect(sql).toContain("CHECK (result IN ('success', 'failed', 'unknown'))");
+    expect(sql).toContain('duration_ms bigint NOT NULL');
+    expect(sql).not.toMatch(/\b(input|output|prompt|content)\s+text\b/);
+  });
 });
