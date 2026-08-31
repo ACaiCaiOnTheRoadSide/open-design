@@ -148,6 +148,7 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   ).toString('utf8')) as Record<string, unknown>;
   expect(modelConfig).toEqual({
     name: 'open-design-runtime', type: 'openai-chat', model: 'integration-model',
+    supports_images: true,
     base_url: 'https://gateway.example/v1', api_key: 'env:OPEN_DESIGN_OHMYAGENT_API_KEY',
   });
   expect(JSON.stringify(modelConfig)).not.toContain('platform-model-secret');

@@ -16,6 +16,7 @@ describe('OhMyAgent secure runtime config conversion', () => {
     expect(result).toEqual({
       config: {
         name: 'open-design-runtime', type: 'openai-chat', model: 'wire-model',
+        supports_images: true,
         base_url: 'https://proxy.example/v1', api_key: `env:${OHMYAGENT_API_KEY_ENV}`,
       },
       env: { [OHMYAGENT_API_KEY_ENV]: secret },
@@ -38,6 +39,7 @@ describe('OhMyAgent secure runtime config conversion', () => {
     expect(result).toEqual({
       config: {
         name: 'open-design-runtime', type: 'openai-responses', model: 'model/name',
+        supports_images: true,
         base_url: 'https://gateway.example/v1', api_key: `env:${OHMYAGENT_API_KEY_ENV}`,
       },
       env: { [OHMYAGENT_API_KEY_ENV]: secret },
@@ -78,9 +80,20 @@ describe('OhMyAgent secure runtime config conversion', () => {
     expect(buildOhMyAgentModelConfig(provider, 'default')).toEqual({
       config: {
         name: 'open-design-runtime', type: 'anthropic', model: 'managed-model',
+        supports_images: true,
         base_url: 'https://managed.example', api_key: `env:${OHMYAGENT_API_KEY_ENV}`,
       },
       env: { [OHMYAGENT_API_KEY_ENV]: 'managed-key' },
+    });
+  });
+
+  it('enables images for API-key-free runtime providers', () => {
+    expect(buildOhMyAgentModelConfig({
+      protocol: 'ollama', model: 'llava', baseUrl: 'http://localhost:11434',
+      apiKey: '', requiresApiKey: false,
+    }, 'default')?.config).toEqual({
+      name: 'open-design-runtime', type: 'openai-chat', model: 'llava',
+      supports_images: true, base_url: 'http://localhost:11434',
     });
   });
 

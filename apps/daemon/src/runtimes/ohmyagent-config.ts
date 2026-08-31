@@ -48,6 +48,7 @@ function runtimeModelConfig(
       name: 'open-design-runtime',
       type,
       model,
+      supports_images: true,
       ...(baseUrl ? { base_url: baseUrl.replace(/\/+$/u, '') } : {}),
       api_key: `env:${OHMYAGENT_API_KEY_ENV}`,
     },
@@ -115,7 +116,7 @@ export function buildOhMyAgentModelConfig(
   if (!keyRequired && !apiKey) {
     return {
       config: {
-        name: 'open-design-runtime', type, model,
+        name: 'open-design-runtime', type, model, supports_images: true,
         ...(baseUrl ? { base_url: baseUrl.replace(/\/+$/u, '') } : {}),
       },
       env: {},
