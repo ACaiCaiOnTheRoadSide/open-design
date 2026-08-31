@@ -10438,8 +10438,10 @@ function HtmlViewer({
     workspaceContext,
   ]);
 
-  const srcDocBaseHref = effectiveScopedSrcDocPreviewBase
-    ?? projectRawUrl(projectId, baseDirFor(file.name), workspaceContext);
+  const srcDocBaseHref = rawToken
+    ? projectRawSignedUrl(projectId, baseDirFor(file.name), rawToken)
+    : effectiveScopedSrcDocPreviewBase
+      ?? projectRawUrl(projectId, baseDirFor(file.name), workspaceContext);
   const srcDocTransportIdentity = [
     srcDocPreviewBaseIdentity,
     sourceSnapshotRefreshKey,

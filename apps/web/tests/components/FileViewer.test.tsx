@@ -99,6 +99,7 @@ import { __resetPreviewIsolationCache } from '../../src/runtime/powered-preview'
 import { installPreviewIframeMessageObserver } from '../../src/observability/iframe-error';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
 import { resetWorkspaceContextCache } from '../../src/collab/useWorkspaceContext';
+import { resetRawTokenStateForTests } from '../../src/providers/raw-token';
 import {
   CollabProvider,
   type CollabContextValue,
@@ -186,6 +187,7 @@ afterEach(() => {
   // remount does not flash the signed-out state. Left alone, a test that signs
   // into a team would silently sign the NEXT test in too.
   resetWorkspaceContextCache();
+  resetRawTokenStateForTests();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   analyticsTrackMock.mockReset();
@@ -7686,6 +7688,51 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.getByRole('button', { name: 'Undo' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Redo' })).toBeTruthy();
     expect((screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement).srcdoc).toBe(frame.srcdoc);
+  });
+
+  it('uses the cookie-free signed base for relative srcDoc assets when a raw token is available', async () => {
+    const file = htmlPreviewFile({ name: 'brand.html', path: 'brand.html' });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/projects/project-1/raw-token')) {
+        return new Response(JSON.stringify({
+          token: 'test-token',
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/scope-1/brand.html',
+          file: 'brand.html',
+          csp: "default-src 'none'",
+          iframeSandbox: 'allow-scripts allow-forms',
+          opaqueOrigin: true,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml='<!doctype html><html><body><script>location.reload()</script><img src="assets/monday-meeting.png"></body></html>'
+      />,
+    );
+
+    await waitFor(() => {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(frame.srcdoc).toContain(
+        '<base href="/raw-signed/test-token/project-1/">',
+      );
+      expect(frame.srcdoc).toContain('src="assets/monday-meeting.png"');
+      expect(frame.srcdoc).not.toContain(
+        '<base href="/api/projects/project-1/preview/scope-1/">',
+      );
+    });
   });
 
   it('uses a project-scoped preview base for runtime-created relative assets in srcDoc', async () => {
