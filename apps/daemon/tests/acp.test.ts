@@ -2803,6 +2803,34 @@ test('attachAcpSession marks OpenCode upstream idle session errors retryable', (
   assert.deepEqual(payload.error?.details, details);
 });
 
+test('attachAcpSession marks capacity-unavailable errors retryable', () => {
+  const child = new FakeAcpChild();
+  const events: Array<{ event: string; payload: unknown }> = [];
+
+  attachAcpSession({
+    child: child as never,
+    prompt: 'hello',
+    cwd: '/tmp/od-project',
+    model: null,
+    mcpServers: [],
+    send: (event, payload) => events.push({ event, payload }),
+  });
+
+  writeAcpResult(child, 1, {});
+  writeAcpResult(child, 2, { sessionId: 'session-1' });
+  writeAcpError(child, 3, {
+    code: -32603,
+    message: 'capacity unavailable',
+  });
+
+  const errorEvents = events.filter((entry) => entry.event === 'error');
+  assert.equal(errorEvents.length, 1);
+  const payload = errorEvents[0]?.payload as {
+    error?: { retryable?: unknown };
+  };
+  assert.equal(payload.error?.retryable, true);
+});
+
 test('attachAcpSession resumes via session/load when resumeSessionId is set', () => {
   const child = new FakeAcpChild();
   const writes: string[] = [];

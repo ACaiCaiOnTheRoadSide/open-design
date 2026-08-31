@@ -103,7 +103,7 @@ export function inferRpcErrorRetryable(message: string, data: unknown): boolean 
   if (/\b(request_too_large|request body exceeds configured limit)\b/i.test(text)) {
     return false;
   }
-  if (/\b(upstream_error|stream idle timeout|no data received within configured window|temporarily unavailable|overloaded|gateway timeout|service unavailable)\b/i.test(text)) {
+  if (/\b(upstream_error|stream idle timeout|no data received within configured window|temporarily unavailable|capacity unavailable|overloaded|gateway timeout|service unavailable)\b/i.test(text)) {
     return true;
   }
   return undefined;

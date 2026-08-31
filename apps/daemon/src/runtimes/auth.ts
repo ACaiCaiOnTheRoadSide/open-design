@@ -311,7 +311,7 @@ const AGENT_RATE_FAILURE_RE = new RegExp(
 
 // Upstream model/provider problems: overloaded, 5xx, temporarily unavailable.
 const AGENT_UPSTREAM_FAILURE_RE = new RegExp(
-  `(\\b(overloaded(?:_error)?|service (?:is )?(?:temporarily )?unavailable|bad gateway|gateway timeout|internal server error|upstream (?:error|unavailable)|provider (?:error|unavailable)|temporarily unavailable|model is currently overloaded|5xx)\\b|${STATUS_CTX}5\\d\\d\\b|\\b5\\d\\d\\s+(?:bad gateway|service unavailable|internal server error|gateway timeout))`,
+  `(\\b(overloaded(?:_error)?|capacity (?:is )?(?:temporarily )?unavailable|service (?:is )?(?:temporarily )?unavailable|bad gateway|gateway timeout|internal server error|upstream (?:error|unavailable)|provider (?:error|unavailable)|temporarily unavailable|model is currently overloaded|5xx)\\b|${STATUS_CTX}5\\d\\d\\b|\\b5\\d\\d\\s+(?:bad gateway|service unavailable|internal server error|gateway timeout))`,
   'i',
 );
 

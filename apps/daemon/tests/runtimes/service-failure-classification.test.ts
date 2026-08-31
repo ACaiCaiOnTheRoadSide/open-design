@@ -39,6 +39,7 @@ describe('classifyAgentServiceFailure', () => {
       'Service temporarily unavailable (503)',
       'Bad gateway',
       'The model is currently overloaded. Please try again later.',
+      'capacity unavailable',
     ]) {
       expect(classifyAgentServiceFailure(text)).toBe('UPSTREAM_UNAVAILABLE');
     }
