@@ -12,8 +12,8 @@ Reference architecture for generating slide presentations. Every presentation fo
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Presentation Title</title>
 
-    <!-- Fonts: use Fontshare or Google Fonts — never system fonts -->
-    <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=...">
+    <!-- Fonts: use bundled local fonts — never system fonts -->
+    <link rel="stylesheet" href="./assets/fonts/local-fonts.css">
 
     <style>
         /* ===========================================

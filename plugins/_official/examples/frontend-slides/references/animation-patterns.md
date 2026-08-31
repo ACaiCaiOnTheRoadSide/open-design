@@ -103,7 +103,7 @@ class TiltEffect {
 
 | Problem | Fix |
 |---------|-----|
-| Fonts not loading | Check Fontshare/Google Fonts URL; ensure font names match in CSS |
+| Fonts not loading | Check bundled local fonts URL; ensure font names match in CSS |
 | Animations not triggering | Verify Intersection Observer is running; check `.visible` class is being added |
 | Scroll snap not working | Ensure `scroll-snap-type: y mandatory` on html; each slide needs `scroll-snap-align: start` |
 | Mobile issues | Disable heavy effects at 768px breakpoint; test touch events; reduce particle count |

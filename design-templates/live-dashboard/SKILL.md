@@ -200,3 +200,7 @@ the fix. Do not emit if any dimension scores below 3.
 - `connectors.json` — when `inputs.connector !== mock`. See
   `references/connectors.md` for the schema.
 - Both files in the project cwd. Do not write anywhere else.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

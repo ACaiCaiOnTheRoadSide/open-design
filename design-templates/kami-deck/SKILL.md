@@ -205,3 +205,7 @@ language is different.
 - Upstream: [`tw93/kami`](https://github.com/tw93/kami) — original
   Claude skill (MIT). Kami's slides.py template documents the macro
   × 1.6 / micro × 0.6 ratios this skill applies.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

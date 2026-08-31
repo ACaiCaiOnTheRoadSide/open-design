@@ -61,3 +61,7 @@ Distilled from [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) â
 - [ ] Hero uses `min-h-[100dvh]`, never `100vh`
 - [ ] All transitions use custom cubic-bezier or spring; no `linear` / `ease-in-out`
 - [ ] Mobile: layout collapses to single column under 768px, all rotations + overlaps removed
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

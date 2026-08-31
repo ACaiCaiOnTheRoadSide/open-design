@@ -131,3 +131,7 @@ a source-code `<artifact>` block.
 - **Don't rewrite the nav script.** It's proven.
 - **No `scrollIntoView()`.** Breaks iframe.
 - **`data-screen-label` on every slide.**
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

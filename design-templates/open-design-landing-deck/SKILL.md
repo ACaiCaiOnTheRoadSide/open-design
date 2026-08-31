@@ -230,3 +230,7 @@ writes one self-contained HTML file.
 - [`guizang-ppt`](../guizang-ppt/) — the magazine-deck navigation
   pattern this skill borrows.
 - [`design-systems/atelier-zero/DESIGN.md`](../../design-systems/atelier-zero/DESIGN.md) — token spec.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

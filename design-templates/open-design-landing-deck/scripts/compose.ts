@@ -21,7 +21,7 @@
  *   npx tsx scripts/compose.ts inputs.example.json example.html
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { cp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -1004,9 +1004,7 @@ export function renderDeck(inputs: OpenDesignLandingDeckInputs, baseCss: string)
     `<meta name='viewport' content='width=device-width, initial-scale=1' />`,
     `<title>${inputs.deck_title}</title>`,
     `<meta name='description' content='${inputs.brand.description}' />`,
-    `<link rel='preconnect' href='https://fonts.googleapis.com' />`,
-    `<link rel='preconnect' href='https://fonts.gstatic.com' crossorigin />`,
-    `<link href='https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500;1,600;1,700&family=JetBrains+Mono:wght@400;500&display=swap' rel='stylesheet' />`,
+    `<link rel="stylesheet" href="./assets/fonts/local-fonts.css">`,
     `<style>${baseCss}${DECK_CSS}</style>`,
     `</head>`,
     `<body>`,
@@ -1040,7 +1038,14 @@ async function main(): Promise<void> {
   const inputs = JSON.parse(inputsRaw) as OpenDesignLandingDeckInputs;
   const html = renderDeck(inputs, css);
 
-  await mkdir(dirname(outputPath), { recursive: true });
+  const outputDir = dirname(outputPath);
+  const sourceFontsDir = resolve(SKILL_ROOT, 'assets', 'fonts');
+  const outputFontsDir = resolve(outputDir, 'assets', 'fonts');
+
+  await mkdir(outputDir, { recursive: true });
+  if (sourceFontsDir !== outputFontsDir) {
+    await cp(sourceFontsDir, outputFontsDir, { recursive: true });
+  }
   await writeFile(outputPath, html, 'utf8');
   console.log(
     `✓ wrote ${outputPath} (${(html.length / 1024).toFixed(1)} KB, ${inputs.slides.length} slides)`,

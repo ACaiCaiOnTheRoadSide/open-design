@@ -15,7 +15,7 @@
 - [ ] Form does **not** use `novalidate`; JS guard calls `checkValidity()` before showing success state
 - [ ] Success message uses `role="status"` or `aria-live="polite"` so screen readers announce it
 - [ ] All color values derived from DESIGN.md; only allowed hardcoded exception is `#2D6A4F` for `--success`
-- [ ] All user-supplied text tokens are HTML-escaped; color tokens adhere to strict grammar (`#hex`, `rgb/hsl/oklch`, `color-mix()`) and contain no unsafe characters (`;`, `{}`, `<`, `>`, `/*`, `@`, `url(`); font name tokens are URL-encoded in the Google Fonts URL; `{{LOGO_MARK}}` is escaped text initials or strictly sanitized inline SVG (no scripts/events)
+- [ ] All user-supplied text tokens are HTML-escaped; color tokens adhere to strict grammar (`#hex`, `rgb/hsl/oklch`, `color-mix()`) and contain no unsafe characters (`;`, `{}`, `<`, `>`, `/*`, `@`, `url(`); font tokens select only the bundled `Syne` or `DM Sans` families; `{{LOGO_MARK}}` is escaped text initials or strictly sanitized inline SVG (no scripts/events)
 
 ## P1 — Should pass for quality submission
 
@@ -35,7 +35,7 @@
 
 ## P2 — Nice-to-have polish
 
-- [ ] Google Fonts loaded with `display=swap` to avoid FOIT
+- [ ] Bundled fonts load from `assets/fonts/local-fonts.css` with no network request
 - [ ] Form inputs have matching `autocomplete` attributes (`given-name`, `email`)
 - [ ] Subtle micro-animation on button hover (scale or opacity only — no layout shift)
 - [ ] Decoration zone does not cover or overlap the form at any viewport width

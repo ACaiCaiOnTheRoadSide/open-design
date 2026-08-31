@@ -95,7 +95,7 @@ use them in eyebrows and ticks only, never as fills.
 ## Typography
 
 - **One family everywhere.** Every font slot is `'JetBrains Mono', monospace`.
-  The only allowed remote resource is the JetBrains Mono Google Fonts
+  The only allowed remote resource is the JetBrains Mono bundled local fonts
   `@import` (weights 300/400/500/700/800 + italic 400).
 - `.h1`/`.h2` are UPPERCASE, weight 800/700, `clamp()`-fluid
   (h1: `clamp(40px,5vw,64px)`).
@@ -189,3 +189,7 @@ upstream MIT-licensed
 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)
 (© lewis &lt;sudolewis@gmail.com&gt;), theme `blueprint`. The LICENSE file
 ships alongside this skill — keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

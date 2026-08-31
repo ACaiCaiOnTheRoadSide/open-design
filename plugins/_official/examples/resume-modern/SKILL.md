@@ -41,3 +41,7 @@ od:
 - 经历每条: 公司 + 职位 + 时间区间 (右对齐), 下方 1-3 条 bullet 用动词开头。
 - 不使用花哨颜色, 黑白灰 + 1 个 accent (深蓝 / 墨绿)。
 - 添加 @media print 样式, 隐藏不必要的元素, 颜色保留。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

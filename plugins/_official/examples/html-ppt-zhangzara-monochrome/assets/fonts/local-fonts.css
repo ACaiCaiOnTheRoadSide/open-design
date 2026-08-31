@@ -1,0 +1,62 @@
+/* Bundled fonts: keep these assets with the template; no network request is required. */
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./jetbrains-mono/JetBrainsMono-Italic[wght].ttf') format('truetype');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./jetbrains-mono/JetBrainsMono[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jost';
+  src: url('./jost/Jost-Italic[wght].ttf') format('truetype');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Jost';
+  src: url('./jost/Jost[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lora';
+  src: url('./lora/Lora-Italic[wght].ttf') format('truetype');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lora';
+  src: url('./lora/Lora[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('./noto-sans-sc/NotoSansSC[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Noto Serif SC';
+  src: url('./noto-serif-sc/NotoSerifSC[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}

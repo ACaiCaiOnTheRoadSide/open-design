@@ -97,9 +97,9 @@ shadow stronger than `--shadow-lg`.
 
 - **All three display slots are serif.** `Latin Modern Roman` is named first
   so machines with LaTeX fonts get the real thing; `Playfair Display` (+
-  `Noto Serif SC` for CJK, then Georgia) is the webfont fallback. Google
-  Fonts `@import` for Playfair Display (incl. italics), Noto Serif SC and
-  JetBrains Mono are the only permitted external references.
+  `Noto Serif SC` for CJK, then Georgia) is the bundled webfont fallback. Load
+  Playfair Display (including italics), Noto Serif SC and JetBrains Mono only
+  through `assets/fonts/local-fonts.css`; remote `@import` rules are forbidden.
 - Headings weight 700, body 400, line-height 1.6. No uppercase headings, no
   negative tracking beyond `--letter-tight:-.01em`.
 - `.kicker` is the theme signature: *italic*, link blue, sentence case,
@@ -182,3 +182,7 @@ Theme tokens and the deck scaffold come from the upstream MIT-licensed
 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)
 (© lewis &lt;sudolewis@gmail.com&gt;) — theme `academic-paper`. The LICENSE
 file ships alongside this skill; keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

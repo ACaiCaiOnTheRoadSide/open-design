@@ -66,3 +66,7 @@ od:
 - 严禁外链图片; 图片占位用 CSS 渐变 + 描述。
 - 必须用用户提供的内容; 自动生成合理的 subreddit / username / 票数。
 - 单文件 HTML; icon 内联 SVG (上下箭头、评论气泡、奖杯)。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

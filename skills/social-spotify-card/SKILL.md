@@ -65,3 +65,7 @@ od:
 - 严禁外链图片; 封面用 CSS 渐变 + 文字 logo / 几何描绘。
 - 微动效: 音波动效用 `@keyframes`, 可被 `prefers-reduced-motion` 关闭。
 - 单文件 HTML。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

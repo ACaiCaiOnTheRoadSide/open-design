@@ -84,7 +84,7 @@ Required sections, in order:
 
 Output a single self-contained `index.html` with:
 - All CSS inlined in a `<style>` block in `<head>`.
-- System font fallbacks if DESIGN.md fonts aren't loadable from Google Fonts etc.
+- Use only fonts bundled in `assets/fonts/`; otherwise use system-font fallbacks.
 - No external JS.
 - Semantic HTML (`<header>`, `<main>`, `<section>`, `<footer>`).
 - Each editable element tagged with `data-od-id="<unique-slug>"` so the host app's comment mode can target it.

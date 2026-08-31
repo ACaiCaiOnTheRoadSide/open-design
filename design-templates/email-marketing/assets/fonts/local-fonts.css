@@ -1,0 +1,9 @@
+/* Bundled fonts: keep these assets with the template; no network request is required. */
+
+@font-face {
+  font-family: 'Anton';
+  src: url('./anton/Anton-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}

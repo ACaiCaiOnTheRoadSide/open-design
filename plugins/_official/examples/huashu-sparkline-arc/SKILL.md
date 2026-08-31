@@ -95,7 +95,7 @@ structure, Al Gore *An Inconvenient Truth*, Duarte Inc. data storytelling.
 | `--sans` | `'Inter', 'PingFang SC', …, sans-serif` | headlines + body |
 | `--mono` | `'Geist Mono', 'SFMono-Regular', 'Menlo', monospace` | labels, annotations, numerals |
 
-**Fonts**: one Google Fonts `@import` (Inter 400–900 + Geist Mono 400–600)
+**Fonts**: one bundled local fonts `@import` (Inter 400–900 + Geist Mono 400–600)
 and nothing else. No CDN scripts, no chart libraries, no images — every chart
 is a hand-written inline SVG path. A second accent color is the cardinal sin
 of this style; grey is the only other voice.
@@ -187,3 +187,7 @@ of this style; grey is the only other voice.
    16:9; orange appears only at turning points; every page has the chrome
    strips and at least one waveform; no leftover demo (「澈流」/"CHELIU")
    text; grep for `TODO`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

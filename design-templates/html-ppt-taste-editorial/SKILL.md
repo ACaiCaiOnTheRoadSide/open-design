@@ -60,3 +60,7 @@ Distilled from [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) â
 - [ ] At least one hairline-grid table or comparison module
 - [ ] No drop shadows, no gradients, no emojis, no banned fonts
 - [ ] Keyboard, wheel / trackpad, touch swipe, and dot navigation all move one slide and keep the active dot / active slide in sync
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

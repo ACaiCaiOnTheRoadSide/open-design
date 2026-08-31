@@ -40,3 +40,7 @@ od:
 - 右下角品牌水印。
 - 整张卡片有微妙的纹理 (grid 网格 / noise / dot pattern)。
 - 截图后可直接配推文发出, 视觉简洁有力。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

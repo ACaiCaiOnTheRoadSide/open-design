@@ -100,7 +100,7 @@ is a light generic Keynote card deck.
 - `--accent` is a **single choice per deck** from exactly three values:
   Mi orange `#FF6900`, Spotify green `#1ED760`, Apple blue `#2997FF`.
   Mixing two of them in one deck is the cardinal sin of this style.
-- Fonts load via one Google Fonts `@import` (Inter + Noto Sans SC); no other
+- Fonts load via one bundled local fonts `@import` (Inter + Noto Sans SC); no other
   external resource of any kind.
 
 ### Signature devices (the visual DNA — every deck must show them)
@@ -186,3 +186,7 @@ is a light generic Keynote card deck.
    accent device per page; every digit tabular; versus bar widths match
    their printed values proportionally; no second accent anywhere; no
    leftover demo (「曜石」/「YAO」) text; grep for `TODO`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

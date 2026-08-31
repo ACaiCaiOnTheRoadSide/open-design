@@ -69,3 +69,7 @@ od:
 - 严禁外链图片; 全部 CSS + SVG + 可选 canvas。
 - 必须用用户提供的金句 / 标题; 如果用户输入是数据 → 提炼一句 ≤ 18 字的金句。
 - 单文件 HTML, 可被 `prefers-reduced-motion` 关动效。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

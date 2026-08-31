@@ -223,7 +223,7 @@
        canvas; for print we want them in document flow at the authored
        design size so the browser paginates one slide per sheet. The
        @page size is set from the width/height attributes via the inline
-       <style id="deck-stage-print-page"> that connectedCallback injects
+       <link rel="stylesheet" href="fonts/local-fonts.css"><style id="deck-stage-print-page"> that connectedCallback injects
        into <head> (the @page at-rule has no effect inside shadow DOM). */
     @media print {
       :host {

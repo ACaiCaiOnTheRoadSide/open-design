@@ -61,3 +61,7 @@ This aesthetic is mechanical, not animated. Use motion only as a precision mecha
 - [ ] ASCII syntax decoration appears at least three times (`[ ... ]`, `>>>`, `///`)
 - [ ] Numeric data uses tabular-nums + monospace — no proportional figures
 - [ ] No emojis, no curves, no gradients, no shadow effects
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

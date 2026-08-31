@@ -79,3 +79,7 @@ Pick ONE compute-bound job worth offloading:
 - [ ] `SharedArrayBuffer` path engages when `crossOriginIsolated` is true; `postMessage` fallback engages otherwise — verify BOTH branches degrade cleanly.
 - [ ] No unbounded growth: velocities/positions stay stable over minutes.
 - [ ] The "Transport" stat truthfully reports which path is live.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

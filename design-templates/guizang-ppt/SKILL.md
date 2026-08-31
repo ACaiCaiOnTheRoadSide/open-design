@@ -336,3 +336,7 @@ This skill's visual tone references:
 - The demo from YC president Garry Tan's blog post "Thin Harness, Fat Skills"
 
 You can treat these as style anchors.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

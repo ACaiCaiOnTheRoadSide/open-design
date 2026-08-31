@@ -238,3 +238,7 @@ panel — accent / scale / mode."). Stop after `</artifact>`.
 - **Panel hidden by default on viewports < 720px** — slide-in drawer
   via a "T" button at top-right.
 - **Don't ship more than 5 knobs.** Three is the sweet spot.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

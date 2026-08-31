@@ -1,0 +1,61 @@
+/* Bundled fonts: keep these assets with the template; no network request is required. */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('./geist/Geist-Italic[wght].ttf') format('truetype');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('./geist/Geist[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./geist-mono/GeistMono-Italic[wght].ttf') format('truetype');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./geist-mono/GeistMono[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('./inter/Inter-Italic[opsz,wght].ttf') format('truetype');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('./inter/Inter[opsz,wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./jetbrains-mono/JetBrainsMono-Italic[wght].ttf') format('truetype');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./jetbrains-mono/JetBrainsMono[wght].ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}

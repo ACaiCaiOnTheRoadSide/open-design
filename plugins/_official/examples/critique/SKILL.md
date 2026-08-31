@@ -256,3 +256,7 @@ the report in chat; the user will read the artifact.
 - **Single-file HTML only** — no external CSS/JS. Inline everything.
 - **Radar chart is mandatory** — gives the report a recognizable
   silhouette and lets the user spot weak axes at a glance.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

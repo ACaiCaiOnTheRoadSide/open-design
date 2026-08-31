@@ -98,7 +98,7 @@ DNA: data visualization treated as an art piece.
 | `--serif` | `'Noto Serif SC', 'Songti SC', serif` | display headings, quotes, insight text |
 | `--sans` | `'Inter', 'PingFang SC', 'Hiragino Sans GB', sans-serif` | labels, numbers, body |
 
-Fonts come from one Google Fonts `@import` (Inter 300–600 + Noto Serif SC
+Fonts come from one bundled local fonts `@import` (Inter 300–600 + Noto Serif SC
 300–700) — the only external reference allowed. **No purple, no blue, no
 neon, no pure black, no gradients other than the two locked radial washes.**
 
@@ -198,3 +198,7 @@ neon, no pure black, no gradients other than the two locked radial washes.**
    `#/N` hash stay in sync; no overflow beyond 1920×1080; every chart plate
    has its `Fig. NN` caption; only the three series colors appear in any
    chart; no leftover demo (「青屿」/"QINGYU") text; grep for `TODO`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

@@ -96,7 +96,7 @@ Emit one short sentence before the artifact (e.g. *"Cinematic social media matri
 - The artifact **must** use the `<artifact>` wrapper exactly as shown below — the daemon parser keys on the wrapper element.
 - `identifier="social-media-matrix-tracker"` is the canonical id (don't suffix with project name).
 - `type="text/html"` and `title` are required.
-- Inline CSS + JS only. No external framework / CDN. No external font imports beyond what `template.html` already declares.
+- Inline CSS + JS only. No external framework / CDN. Keep the bundled local font stylesheet and `assets/fonts/`; do not add external font imports.
 - The final document is the **adapted** `template.html` (with DESIGN.md tokens applied), not a verbatim copy and not a separate `index.html`. Do not emit both.
 
 ```xml
@@ -105,3 +105,7 @@ Emit one short sentence before the artifact (e.g. *"Cinematic social media matri
 <html>...</html>
 </artifact>
 ```
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

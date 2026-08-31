@@ -72,7 +72,7 @@ Zero-dependency, animation-rich HTML presentations that run entirely in the brow
 ### Design tokens
 
 - All colors, fonts, sizes, and easing live in `:root` CSS custom properties; retheme by editing tokens only.
-- Typography: distinctive webfonts from Google Fonts or Fontshare — **never** Inter, Roboto, Arial, or system fonts as display type. Avoid `#6366f1` indigo and purple-gradient-on-white clichés.
+- Typography: distinctive webfonts from `assets/fonts/local-fonts.css` only — **never** remote font services, Inter, Roboto, Arial, or system fonts as display type. Avoid `#6366f1` indigo and purple-gradient-on-white clichés.
 - Pick one preset from `references/STYLE_PRESETS.md` (12 curated presets: Bold Signal, Electric Studio, Creative Voltage, Dark Botanical, Notebook Tabs, Pastel Geometry, Split Pastel, Vintage Editorial, Neon Cyber, Terminal Green, Swiss Modern, Paper & Ink) or design a custom system with the same discipline. The seed ships **Bold Signal**.
 
 ### Layout vocabulary (compose slides from these)
@@ -112,3 +112,7 @@ Ask (or infer) whether the deck is speaker-led or reading-first:
 ## Attribution
 
 Design system, fixed-stage model, presets, and workflow come from the upstream MIT-licensed [zarazhangrui/frontend-slides](https://github.com/zarazhangrui/frontend-slides) (© 2025 Zara Zhang). The LICENSE file ships in this plugin folder; keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

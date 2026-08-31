@@ -161,3 +161,7 @@ Type stack:
 | Use dark mode | Stay on Gmail's default light theme (`#f6f8fc` page) |
 | Brand the Gmail chrome with Orbit | Orbit branding lives only inside the digest body (subject `Orbit` tag + footer micro-tag) |
 | Put yellow important stars on multiple inbox rows | Only the Orbit Daily Digest row can carry the important marker |
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

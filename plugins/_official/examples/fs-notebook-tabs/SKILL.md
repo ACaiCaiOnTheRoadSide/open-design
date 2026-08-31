@@ -97,7 +97,7 @@ A theme-locked deck plugin derived from the MIT-licensed [zarazhangrui/frontend-
 }
 ```
 
-Fonts load via one Google Fonts `@import` (`Bodoni Moda` ital,wght 0,400/0,700/1,400 + `DM Sans` 400/500/700). **Forbidden:** any other font, Inter/Roboto/Arial/system display fonts, any color outside the tokens above, gradients as decoration, indigo `#6366f1`, dark-glassmorphism panels.
+Fonts load via one bundled local fonts `@import` (`Bodoni Moda` ital,wght 0,400/0,700/1,400 + `DM Sans` 400/500/700). **Forbidden:** any other font, Inter/Roboto/Arial/system display fonts, any color outside the tokens above, gradients as decoration, indigo `#6366f1`, dark-glassmorphism panels.
 
 ## Signature devices (every slide carries all of them)
 
@@ -119,6 +119,10 @@ Fonts load via one Google Fonts `@import` (`Bodoni Moda` ital,wght 0,400/0,700/1
 
 ## Output contract
 
-- Single self-contained `.html`: all CSS and JS inline, zero build step, zero external JS libraries or CDN scripts (no Chart.js, no mermaid — pure CSS/SVG only). Icons are inline SVG. No remote images. The only allowed external reference is the Google Fonts `@import`.
+- Single self-contained `.html`: all CSS and JS inline, zero build step, zero external JS libraries or CDN scripts (no Chart.js, no mermaid — pure CSS/SVG only). Icons are inline SVG. No remote images. The only allowed external reference is the bundled local fonts `@import`.
 - Comment every block: `/* === SECTION NAME === */`.
 - **From `example.html`, change only the content** (text, section/tab names, data values, icon paths). The tokens, paper device, tabs, chrome, and controller script are the product — do not rewrite them, and never introduce colors or fonts outside this spec.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

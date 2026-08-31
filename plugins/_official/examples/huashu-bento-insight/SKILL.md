@@ -104,7 +104,7 @@ free-form unequal-height composition, weight contrast, sparklines.
 | `--display` | `'Geist', 'Inter', …` | display headlines |
 | `--mono` | `'Geist Mono', 'SF Mono', ui-monospace, …` | all KPI numerals |
 
-- Fonts come from one Google Fonts `@import` (Inter + Geist + Geist Mono) —
+- Fonts come from one bundled local fonts `@import` (Inter + Geist + Geist Mono) —
   the only allowed external reference. No other CDN, no icon fonts, no
   Chart.js/mermaid; charts are pure CSS/SVG.
 - Brand may be re-themed to the user's primary color, but the triad stays:
@@ -193,3 +193,7 @@ free-form unequal-height composition, weight contrast, sparklines.
    their printed values proportionally; every bento page has unequal card
    heights and ≤ 1 dark card; no emoji; no fourth accent color; no leftover
    demo (「澄流」/"ClearFlow") text; grep for `TODO`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

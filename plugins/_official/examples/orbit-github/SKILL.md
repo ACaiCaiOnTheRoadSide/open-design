@@ -158,3 +158,7 @@ Type stack:
 | Render a review request as a normal row | Sit it in the yellow attention block (`#fff8c5` bg, `#d4a72c` border) with reviewer status dots row |
 | Use placeholder repo names like `org/repo` | Use `nexu-io/open-design` (this org's actual primary repo) |
 | Pluck arbitrary label colors | Use realistic dev-team hues — `bug` red, `enhancement` blue, `documentation` light blue, `frontend` purple |
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

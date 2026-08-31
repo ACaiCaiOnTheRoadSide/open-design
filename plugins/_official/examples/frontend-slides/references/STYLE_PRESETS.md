@@ -254,7 +254,7 @@ Curated visual styles for Frontend Slides. Each preset is inspired by real desig
 
 **Vibe:** Futuristic, techy, confident
 
-**Typography:** `Clash Display` + `Satoshi` (Fontshare)
+**Typography:** `Archivo Black` + `Space Grotesk` (bundled local alternatives)
 
 **Colors:** Deep navy (#0a0f1c), cyan accent (#00ffcc), magenta (#ff00aa)
 
@@ -310,7 +310,7 @@ Curated visual styles for Frontend Slides. Each preset is inspired by real desig
 | Pastel Geometry | Plus Jakarta Sans | Plus Jakarta Sans | Google |
 | Split Pastel | Outfit | Outfit | Google |
 | Vintage Editorial | Fraunces | Work Sans | Google |
-| Neon Cyber | Clash Display | Satoshi | Fontshare |
+| Neon Cyber | Archivo Black | Space Grotesk | Bundled local |
 | Terminal Green | JetBrains Mono | JetBrains Mono | JetBrains |
 
 ---

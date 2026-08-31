@@ -107,7 +107,7 @@ Hard rules derived from the sheet:
 - **Mono** (step counters, theme chip, code): `JetBrains Mono`.
 - No serif, no slab, no handwriting, no brush — those belong to sibling
   themes (`editorial-serif`, `peoples-platform`), not this one.
-- Google Fonts via `@import` is the only allowed remote resource.
+- bundled local fonts via `@import` is the only allowed remote resource.
 
 ## Signature devices (keep these; they are the style)
 
@@ -151,7 +151,7 @@ SVG compositions; no photos, no external image hosts.
 ## Page structure & runtime contract
 
 - One self-contained HTML file: inline `<style>` + inline `<script>`, zero
-  build, zero external JS/CSS (Google Fonts `@import` excepted).
+  build, zero external JS/CSS (bundled local fonts `@import` excepted).
 - Every page is `<section class="slide" data-title="...">` inside
   `<div class="deck" id="deck">` — a horizontal scroll-snap strip, each
   slide exactly `100vw × 100vh` (`flex:0 0 100vw`), 16:9 / 1280×720
@@ -189,3 +189,7 @@ come from the upstream MIT-licensed
 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)
 (© lewis &lt;sudolewis@gmail.com&gt;). The LICENSE file ships alongside this
 plugin — keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

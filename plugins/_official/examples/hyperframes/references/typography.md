@@ -119,7 +119,7 @@ for cat in R:
     print()
 ```
 
-Five categories: trending sans, trending serif, monospace, impact/condensed, script/handwriting. All dynamically filtered from Google Fonts metadata — no hardcoded font names. Cross classification boundaries when pairing.
+Five categories: trending sans, trending serif, monospace, impact/condensed, script/handwriting. All dynamically filtered from the bundled font catalog metadata — no hardcoded font names. Cross classification boundaries when pairing.
 
 ## Selection Thinking
 

@@ -67,7 +67,7 @@ scribbly) but keep the connectors and annotations loose and informal.
    - `<!doctype html>` through `</html>`, CSS inline, no external JS, no
      external images (CSS/SVG placeholders only).
    - Use Inter / system-ui for the board and IBM Plex Mono for labels via
-     Google Fonts; a light marker font is allowed for annotations only.
+     the bundled local font assets; a light marker font is allowed for annotations only.
    - Defined dark device-frame borders, medium-grey content blocks on white
      screens, and a single accent color for arrows and annotations so the
      board reads clearly even as a small thumbnail.
@@ -93,3 +93,7 @@ Emit between `<artifact>` tags:
 ```
 
 One sentence before the artifact, nothing after.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

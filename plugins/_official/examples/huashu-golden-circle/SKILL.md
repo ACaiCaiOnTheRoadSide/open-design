@@ -98,7 +98,7 @@ architecture.
 | `--display` | `'Jost', 'Manrope', 'PingFang SC', …` | uppercase tracked labels |
 | `--sans` | `'Manrope', 'PingFang SC', …` | headlines + body |
 
-- Fonts come from the single existing Google Fonts `@import`
+- Fonts come from the single existing bundled local fonts `@import`
   (Jost 400–700 + Manrope 400–800); Chinese falls back to PingFang SC /
   Microsoft YaHei. No other `@import`, no CDN scripts, no icon fonts.
 - `--tint-2/--tint-3` are tints of the accent, not second colors. **A second
@@ -192,3 +192,7 @@ divs — is the only diagram in the deck. Keep its geometry verbatim:
    the figure or one of its locked derivatives; ring labels sit inside their
    bands at every `--gc` size used; exactly one accent hue in the whole
    file; no leftover demo ("同心"/"TONGXIN") text; grep for `TODO`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

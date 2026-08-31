@@ -128,3 +128,7 @@ If the user asks for refreshability, source auditability, or scheduled updates, 
 - The screen still reads clearly at 50% zoom.
 - The dashboard uses at most one solid black primary action per area.
 - Status labels and issue/PR chips are pastel pills, not saturated badges.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

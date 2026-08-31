@@ -41,3 +41,7 @@ od:
 - 配色: 选择柔和的莫兰迪色或粉色系; 元素圆润, 大量留白。
 - 字号大、行距宽、对比强（小红书在手机上看, 小字根本看不清）。
 - 每张卡片右下角小水印 (作者名 / 日期)。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

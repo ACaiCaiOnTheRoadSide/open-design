@@ -108,7 +108,7 @@ every deck.
 ## Typography (locked)
 
 - **One typeface for everything**: Geist Mono 400/500/600/700 from Google
-  Fonts (`https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&display=swap`).
+  Fonts (`assets/fonts/local-fonts.css`).
   Fallback stack `'SF Mono', Consolas, monospace`. No second typeface, ever.
 - **Titles are large weight-400 mono, never bold display.** Display
   `clamp(36px, 7vw, 88px)` weight 400 letter-spacing -2px; headings
@@ -190,3 +190,7 @@ every deck.
 - Keep both theme token blocks; never hard-code a themed color where a token
   exists.
 - Start from `example.html`; replace content only — never redesign the theme.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

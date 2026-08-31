@@ -67,7 +67,7 @@ Page background outside the stage is `#0a0a0a` (the runtime letterbox). **The em
 
 ## Typography (locked — exactly two faces)
 
-Google Fonts: `Bodoni Moda` (700/800/900) + `Manrope` (400–800). No third typeface, ever — not Playfair, not Inter, not system fonts.
+bundled local fonts: `Bodoni Moda` (700/800/900) + `Manrope` (400–800). No third typeface, ever — not Playfair, not Inter, not system fonts.
 
 - **Bodoni Moda 900** — every primary display moment, with negative tracking (−0.01em to −0.03em) and tight leading (0.9–0.95). Scale tiers: 460px jumbo numeral (navy panels only) · 200px agenda title · 184px cover lines · 180px closing lines · 128–130px statements/section headlines · 104–120px chart/process headlines · 144px KPI figures (60px unit suffix) · 92px side-panel stats.
 - **Bodoni Moda 800** — ornament words (68–84px), tile/card titles (40–64px). **Bodoni Moda 700** — small prepositions only.
@@ -106,11 +106,15 @@ Longer decks repeat masters 03–07 per section; **never invent a new layout mas
 
 ## Output contract
 
-- Single self-contained `.html`: all CSS and the full runtime JS inline; zero build step, zero external JS, no CDN scripts, no remote images. The Google Fonts `<link>` for Bodoni Moda + Manrope is the only allowed external reference.
+- Single self-contained `.html`: all CSS and the full runtime JS inline; zero build step, zero external JS, no CDN scripts, no remote images. The bundled local fonts `<link>` for Bodoni Moda + Manrope is the only allowed external reference.
 - Charts are pure CSS/HTML (the `.s5` bar-chart pattern); diagrams use the tile/rule vocabulary; icons, if needed, are inline SVG in ink/emerald.
 - No scrolling, no overflow, no overlapping text at 1920×1080.
-- CJK: pair Bodoni Moda with `Noto Serif SC` 900 for display and Manrope with `Noto Sans SC` for chrome (append to the same Google Fonts request); relax display tracking to 0 and leading to ~1.05 for Chinese headlines; keep the palette and rules identical.
+- CJK: pair Bodoni Moda with `Noto Serif SC` 900 for display and Manrope with `Noto Sans SC` for chrome (append to the same bundled local fonts request); relax display tracking to 0 and leading to ~1.05 for Chinese headlines; keep the palette and rules identical.
 
 ## Attribution
 
 Design system, tokens, slide masters, and the deck-stage runtime come from the upstream MIT-licensed [zarazhangrui/beautiful-html-templates](https://github.com/zarazhangrui/beautiful-html-templates) `emerald-editorial` template (© 2026 Zara Zhang). The LICENSE file ships in this plugin folder; keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

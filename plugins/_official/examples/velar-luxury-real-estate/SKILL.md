@@ -29,7 +29,7 @@ This is the authoritative build brief. Follow it exactly — the named colors, f
 ## Global setup — locked
 
 - Page background `#f5f0ea` (warm off-white). Body wrapper `overflow-x: clip`.
-- Fonts via `@import` in an inline `<style>`: **Syne** (400, 700, 800, 900) + **Inter** (300, 400, 500, 600) from Google Fonts.
+- Fonts via `@import` in an inline `<style>`: **Syne** (400, 700, 800, 900) + **Inter** (300, 400, 500, 600) from bundled local fonts.
 - Constants: `GRASS_GREEN = '#213138'` (preloader bg + default logo color), `FULL_TEXT = 'Velar.'`, `HOUSE_IMG` (inlined data URI in the seed), `BG_IMG` (higgs.ai hero bg), and the 5 cloudfront gallery videos (in order — keep them).
 
 ## Section 1 — Preloader / intro overlay
@@ -97,3 +97,7 @@ Gallery content `.s3-gallery-content` (`z-index:1`, flex center, full height, `c
 ## Color Rules — hard
 
 Warm off-white `#f5f0ea` page; deep teal `#213138` for preloader + default logo; dark `#1a1a1a` for the statement/gallery sections; statement text `#e8e4df`; hero text black. Do not introduce other accent hues — the palette is intentionally monochromatic-luxury.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

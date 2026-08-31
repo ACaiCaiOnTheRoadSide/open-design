@@ -53,7 +53,7 @@ All pages share a token-based design system in `assets/base.css`.
 npx skills add https://github.com/lewislulu/html-ppt-skill
 ```
 
-One command, no build. Pure static HTML/CSS/JS with only CDN webfonts.
+One command, no build. Pure static HTML/CSS/JS with bundled local webfonts.
 
 ## What the skill gives you
 
@@ -210,7 +210,7 @@ html-ppt/
 ├── references/              (detailed catalogs, load as needed)
 ├── assets/
 │   ├── base.css             (tokens + primitives — do not edit per deck)
-│   ├── fonts.css            (webfont imports)
+│   ├── fonts.css            (bundled webfont declarations)
 │   ├── runtime.js           (keyboard + presenter + overview + theme cycle)
 │   ├── themes/*.css         (36 token overrides, one per theme)
 │   └── animations/
@@ -266,3 +266,7 @@ Esc                                     close all overlays
 ## License & author
 
 MIT. Copyright (c) 2026 lewis &lt;sudolewis@gmail.com&gt;.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

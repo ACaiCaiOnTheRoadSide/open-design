@@ -68,3 +68,7 @@ This aesthetic is mechanical and instant.
 - [ ] Numeric data uses tabular-nums + monospace
 - [ ] No emojis, no curves, no gradients, no shadow effects
 - [ ] Terminal green appears on zero or one element only — never as text body color
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

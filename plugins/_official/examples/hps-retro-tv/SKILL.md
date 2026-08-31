@@ -99,7 +99,7 @@ tokens only — never hard-code a color in slide markup.
 Shadows are always the chunky tube pair — a hard `0 Npx 0` offset plus a
 soft warm blur together. Never a plain flat or pure-black shadow.
 
-Fonts come from Google Fonts `@import` only (Playfair Display, Inter,
+Fonts come from bundled local fonts `@import` only (Playfair Display, Inter,
 Noto Sans SC, JetBrains Mono). No other external resource of any kind.
 
 ## Signature decor devices (the broadcast kit)
@@ -194,3 +194,7 @@ from the upstream MIT-licensed
 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)
 (© lewis &lt;sudolewis@gmail.com&gt;), theme `retro-tv`. The LICENSE
 file ships alongside this skill — keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

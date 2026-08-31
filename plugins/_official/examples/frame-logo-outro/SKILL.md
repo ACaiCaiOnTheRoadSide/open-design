@@ -62,3 +62,7 @@ od:
 - 必须用用户提供的品牌名 + tagline; 若没有, 跑 fallback "HTML Anything" / "Anything → beautiful HTML"。
 - 单文件 HTML; 整个动画完成后 freeze (不要 loop, 这是视频结尾帧)。
 - 顶部可选 5px ribbon (accent 色) 增加品牌识别。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

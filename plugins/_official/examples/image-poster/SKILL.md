@@ -103,3 +103,7 @@ with `gpt-image-2` at 1:1.*). Do **not** emit an `<artifact>` tag.
   in-frame text. Real copy beats lorem.
 - Save every render — never describe an image without producing the
   file. The user expects something to open in the file viewer.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

@@ -194,7 +194,7 @@ html-ppt-skill/
 │   └── authoring-guide.md        full workflow
 ├── assets/
 │   ├── base.css                  shared tokens + primitives
-│   ├── fonts.css                 webfont imports
+│   ├── fonts.css                 bundled webfont declarations
 │   ├── runtime.js                keyboard + presenter + overview
 │   ├── themes/*.css              36 theme token files
 │   └── animations/
@@ -223,7 +223,7 @@ html-ppt-skill/
   the whole deck reflows tastefully.
 - **Iframe isolation for previews.** Theme / layout / full-deck showcases all
   use `<iframe>` per slide so each preview is a real, independent render.
-- **Zero build.** Pure static HTML/CSS/JS. CDN only for webfonts, highlight.js
+- **Zero build.** Pure static HTML/CSS/JS. bundled local webfonts; CDN only for highlight.js
   and chart.js (optional).
 - **Senior-designer defaults.** Opinionated type scale, spacing rhythm,
   gradients and card treatments — no "Corporate PowerPoint 2006" vibes.

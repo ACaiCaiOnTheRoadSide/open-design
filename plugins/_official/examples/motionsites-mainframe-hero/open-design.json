@@ -1,0 +1,69 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-motionsites-mainframe-hero",
+  "title": "Mainframe Motion Hero",
+  "title_i18n": {
+    "zh-CN": "Mainframe 动效 Hero",
+    "en": "Mainframe Motion Hero"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-08-28T09:26:07Z",
+  "description": "A cinematic creative-agency hero with fullscreen character video, mouse-driven video scrubbing, editorial typography, typewriter copy, compact action pills, and a responsive mobile menu.",
+  "description_i18n": {
+    "zh-CN": "电影感创意机构 Hero，包含全屏人物视频、鼠标横向擦洗、编辑排印、打字机文案、紧凑操作胶囊和响应式移动菜单。",
+    "en": "A cinematic creative-agency hero with fullscreen character video, mouse-driven video scrubbing, editorial typography, typewriter copy, compact action pills, and a responsive mobile menu."
+  },
+  "license": "SEE-SOURCE",
+  "author": {
+    "name": "MotionSites"
+  },
+  "homepage": "https://motionsites.ai/",
+  "tags": [
+    "example",
+    "prototype",
+    "marketing",
+    "web",
+    "desktop",
+    "landing-page",
+    "hero",
+    "motion"
+  ],
+  "compat": {
+    "agentSkills": [{ "path": "./SKILL.md" }]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "marketing",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Create a cinematic fullscreen creative-agency hero using the Mainframe motion template, then replace the brand and copy while preserving its video choreography and responsive behavior.",
+        "zh-CN": "使用 Mainframe 动效模板创建电影感全屏创意机构 Hero，替换品牌和文案，同时保留视频编排与响应式行为。"
+      },
+      "exampleOutputs": [{ "path": "./example.html", "title": "Mainframe Motion Hero" }]
+    },
+    "context": {
+      "skills": [{ "path": "./SKILL.md" }],
+      "designSystem": { "primary": false },
+      "craft": ["state-coverage", "accessibility-baseline"],
+      "assets": [
+        "./example.html",
+        "./assets/background.mp4",
+        "./references/source-prompt.md",
+        "./references/source.json"
+      ]
+    },
+    "pipeline": {
+      "stages": [{ "id": "generate", "atoms": ["file-write", "live-artifact"] }]
+    },
+    "capabilities": ["prompt:inject", "fs:write"]
+  }
+}

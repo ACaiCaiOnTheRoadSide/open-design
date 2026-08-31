@@ -83,21 +83,13 @@ od:
       type: string
       description: "Text initials are HTML-escaped by default. Inline SVG is allowed only after strict allowlist-based sanitization (removing scripts, event handlers, foreignObject, and external references); unsafe input falls back to escaped text."
       required: false
-    - name: display_font_url
-      type: string
-      description: "Display font name with spaces encoded as '+' (e.g., 'Syne', 'DM+Sans'). Used in Google Fonts URL."
-      required: true
     - name: display_font_css
       type: string
-      description: "Display font name as it appears in CSS (e.g., 'Syne', 'DM Sans'). Already quoted if needed; no extra quotes in template."
-      required: true
-    - name: body_font_url
-      type: string
-      description: "Body font name with spaces encoded as '+' (e.g., 'DM+Sans', 'IBM+Plex+Serif'). Used in Google Fonts URL."
+      description: "Bundled display font CSS name. Use `Syne` (recommended) or `'DM Sans'`; no other remote font names are allowed."
       required: true
     - name: body_font_css
       type: string
-      description: "Body font name as it appears in CSS (e.g., 'DM Sans', 'IBM Plex Serif'). Already quoted if needed; no extra quotes in template."
+      description: "Bundled body font CSS name. Use `'DM Sans'` (recommended) or `Syne`; no other remote font names are allowed."
       required: true
   outputs:
     primary: index.html
@@ -123,8 +115,7 @@ Pre-launch pages are your first handshake with future users. This skill builds a
    - **Text tokens** (`{{PRODUCT_NAME}}`, `{{TAGLINE}}`): HTML-escape `<`, `>`, `&`, `"`, `'` before insertion into HTML text nodes or attribute values.
    - **HTML tokens** (`{{LOGO_MARK}}`): If using text initials, HTML-escape them by default. If using inline SVG, you must strictly sanitize it using an allowlist: strip `<script>` tags, event handlers (`on*`), `<foreignObject>`, external refs (`href`, `xlink:href`, `url()`), and any disallowed attributes/elements before insertion. If the SVG cannot be safely sanitized, fallback to escaped text initials. Never emit raw, unsanitized arbitrary HTML. Ensure any SVG scales cleanly within its container.
    - **Color expression tokens** (`{{BG_EXPRESSION}}`, `{{FG_EXPRESSION}}`, `{{ACCENT_EXPRESSION}}`, `{{DECO_EXPRESSION}}`, `{{STRIPE_EXPRESSION}}`, `{{SUCCESS_EXPRESSION}}`, `{{BORDER_EXPRESSION}}`, `{{BTN_LABEL_EXPRESSION}}`, `{{TICKER_BG_EXPRESSION}}`, `{{TICKER_FG_EXPRESSION}}`, `{{DECO_STROKE_EXPRESSION}}`, `{{LOGO_SHADOW_EXPRESSION}}`, `{{LOGO_FG_EXPRESSION}}`): Must strictly adhere to an explicit color grammar (`#hex`, `rgb`/`rgba`, `hsl`/`hsla`, `oklch`, or `color-mix()` using only local variables). Hard reject any input containing `;`, `{}`, `<`, `>`, comments (`/*`), `@`, `url(`, or external refs to prevent CSS injection. Do not wrap in `#` or add extra quotes. Examples: `rgba(196, 169, 154, 0.38)`, `color-mix(in srgb, var(--fg) 38%, transparent)`, `#FDE8DF`. Insert as-is into `:root` CSS variables. Derive `--success` from DESIGN.md if present; otherwise use the allowed fallback `#2D6A4F` only.
-   - **Font name tokens** (`{{DISPLAY_FONT_CSS}}`, `{{BODY_FONT_CSS}}`): These are CSS font-family values, already quoted if they contain spaces (e.g., `'DM Sans'`, `Syne`). Insert as-is into `--font-display` and `--font-body` declarations; do NOT add extra quotes.
-   - **Font URL tokens** (`{{DISPLAY_FONT_URL}}`, `{{BODY_FONT_URL}}`): Spaces must be encoded as `+` for the Google Fonts URL (e.g., `DM+Sans`, `IBM+Plex+Serif`). Validate the URL is well-formed before insertion.
+   - **Font name tokens** (`{{DISPLAY_FONT_CSS}}`, `{{BODY_FONT_CSS}}`): Use only the bundled `Syne` and `'DM Sans'` families registered by `assets/fonts/local-fonts.css`. Values are already quoted if needed; insert them as-is into `--font-display` and `--font-body` and do not add extra quotes.
 3. **Verify token mapping rules** — All color tokens are now in CSS variables:
    - `--bg` = `{{BG_EXPRESSION}}` (e.g., `#FDE8DF`)
    - `--fg` = `{{FG_EXPRESSION}}` (e.g., `#1A1410`)
@@ -226,3 +217,7 @@ Emit the artifact between tags:
 One line of description above the artifact; nothing below.
 
 **Post-emission:** If the user asks for changes, update the index.html in-place and re-run the P0 checklist gates before emitting the next version. Do not skip validation on iterations.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

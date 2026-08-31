@@ -57,3 +57,7 @@ od:
 - 严禁 grid 全屏铺线、阴影、3D 立体柱; 严禁 emoji。
 - 必须用用户提供的数据。如果输入是文本结论, 自动估算合理坐标 (但要标注 "schematic"); 如果是 CSV/JSON, 直接绘制。
 - 单文件 HTML; 数据点旁注释格式: `<text class="annot">2024 · 412M</text>`。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

@@ -43,3 +43,7 @@ od:
 - 底部"方法论"折叠区。
 - 配色克制专业: 主色 1 + 中性色阶, 图表用调色板。
 - **必须解析用户提供的实际数据**, 不要捏造。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

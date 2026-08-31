@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#050505">
+  <title>Mainframe® — Creative systems studio</title>
+  <style>
+    @font-face {
+      font-family: 'Albert Sans';
+      src: url('./assets/fonts/albert-sans-variable.woff2') format('woff2');
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+    :root {
+      --font-heading: 'Albert Sans', 'Helvetica Neue', Arial, sans-serif;
+      --font-body: 'Albert Sans', 'Helvetica Neue', Arial, sans-serif;
+      --white: #fff;
+      --black: #050505;
+      --focus: #9ee7ff;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; margin: 0; }
+    html { background: var(--black); }
+    body {
+      min-width: 320px;
+      overflow: hidden;
+      color: var(--white);
+      background: var(--black);
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    button, a { font: inherit; }
+    button { cursor: pointer; }
+    a { color: inherit; }
+
+    :focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 4px;
+      border-radius: 4px;
+    }
+
+    .background-video {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: 70% center;
+      background: var(--black);
+    }
+
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 10;
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--white);
+      text-decoration: none;
+    }
+    .brand__name {
+      font-family: var(--font-heading);
+      font-size: 21px;
+      line-height: 1;
+      letter-spacing: -0.035em;
+    }
+    .brand__mark {
+      font-size: 25px;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      user-select: none;
+    }
+
+    .desktop-nav {
+      display: none;
+      align-items: center;
+      font-size: 23px;
+      line-height: 1.2;
+    }
+    .desktop-nav a,
+    .desktop-cta {
+      text-decoration: none;
+      transition: opacity 200ms ease;
+    }
+    .desktop-nav a:hover,
+    .desktop-cta:hover { opacity: 0.6; }
+    .desktop-cta {
+      display: none;
+      font-size: 23px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .menu-toggle {
+      position: relative;
+      z-index: 11;
+      display: inline-flex;
+      width: 44px;
+      height: 44px;
+      margin: -10px -10px -10px 0;
+      padding: 10px;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 50%;
+      color: var(--white);
+      background: transparent;
+    }
+    .menu-toggle__bars {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .menu-toggle__bar {
+      display: block;
+      width: 24px;
+      height: 2px;
+      background: currentColor;
+      transform-origin: center;
+      transition: transform 300ms ease, opacity 300ms ease;
+    }
+    .menu-toggle[aria-expanded="true"] .menu-toggle__bar:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .menu-toggle[aria-expanded="true"] .menu-toggle__bar:nth-child(2) { opacity: 0; }
+    .menu-toggle[aria-expanded="true"] .menu-toggle__bar:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+    .mobile-menu {
+      position: fixed;
+      inset: 0;
+      z-index: 9;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 32px;
+      padding: 92px 32px 48px;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.9);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 300ms ease, visibility 300ms ease;
+    }
+    .mobile-menu.is-open {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    .mobile-menu a {
+      font-size: 32px;
+      font-weight: 500;
+      line-height: 1.05;
+      text-decoration: none;
+    }
+    .mobile-menu .mobile-menu__cta {
+      text-decoration: underline;
+      text-underline-offset: 4px;
+    }
+
+    .hero {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      width: 100%;
+      height: 100vh;
+      height: 100svh;
+      flex-direction: column;
+      justify-content: flex-end;
+      overflow: hidden;
+      padding: 96px 20px calc(48px + env(safe-area-inset-bottom));
+    }
+    .hero__content {
+      position: relative;
+      z-index: 2;
+      width: min(100%, 576px);
+    }
+    .intro {
+      margin: 0 0 20px;
+      color: var(--white);
+      font-size: clamp(18px, 4vw, 26px);
+      font-weight: 400;
+      line-height: 1.3;
+      filter: blur(4px);
+      pointer-events: none;
+      user-select: none;
+    }
+    .typewriter {
+      min-height: 54px;
+      margin: 0 0 20px;
+      color: var(--white);
+      font-size: clamp(18px, 4vw, 26px);
+      font-weight: 400;
+      line-height: 1.35;
+    }
+    .cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.1em;
+      margin-left: 2px;
+      vertical-align: middle;
+      background: var(--white);
+      animation: blink 1s step-end infinite;
+    }
+    .cursor.is-hidden { display: none; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      margin: 0 -3px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 400ms ease, transform 400ms ease;
+    }
+    .actions.is-visible { opacity: 1; transform: translateY(0); }
+    .pill {
+      display: inline-flex;
+      min-height: 30px;
+      flex-shrink: 0;
+      align-items: center;
+      justify-content: center;
+      margin: 0 3px 6px;
+      padding: 0.3em 16px;
+      white-space: nowrap;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 999px;
+      background: var(--white);
+      color: #000;
+      font-size: 13px;
+      line-height: 1.2;
+      text-decoration: none;
+      transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease;
+    }
+    .pill:hover { border-color: #000; background: #000; color: var(--white); }
+    .pill--outline {
+      gap: 8px;
+      border-color: var(--white);
+      background: transparent;
+      color: var(--white);
+    }
+    .pill--outline:hover { border-color: var(--white); background: var(--white); color: #000; }
+    .pill__email { text-decoration: underline; text-underline-offset: 1px; }
+    .copy-icon { width: 12px; height: 12px; flex: 0 0 auto; }
+    .status {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (min-width: 640px) {
+      .nav { padding: 20px 32px; }
+      .brand__name { font-size: 26px; }
+      .brand__mark { font-size: 30px; }
+      .hero { padding-right: 32px; padding-left: 32px; }
+      .intro, .typewriter { margin-bottom: 24px; }
+      .pill { padding-right: 20px; padding-left: 20px; font-size: 15px; }
+      .pill--outline { gap: 12px; }
+    }
+
+    @media (min-width: 768px) {
+      .desktop-nav, .desktop-cta { display: flex; }
+      .menu-toggle, .mobile-menu { display: none; }
+      .hero {
+        justify-content: center;
+        padding: 90px 40px 0;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .hero { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
+      .intro { margin-bottom: 16px; }
+      .typewriter { margin-bottom: 16px; }
+      .pill { padding-right: 13px; padding-left: 13px; font-size: 12.5px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+      .cursor { display: none; }
+      .actions { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <video
+    id="backgroundVideo"
+    class="background-video"
+    data-od-id="background-video"
+    muted
+    playsinline
+    preload="auto"
+    aria-hidden="true"
+  >
+    <source src="./assets/background.mp4" type="video/mp4">
+  </video>
+
+  <header class="nav" data-od-id="navigation">
+    <a class="brand" data-od-id="brand" href="#hero" aria-label="Mainframe home">
+      <span class="brand__name">Mainframe®</span>
+      <span class="brand__mark" aria-hidden="true">✳︎</span>
+    </a>
+
+    <nav class="desktop-nav" data-od-id="desktop-navigation" aria-label="Primary navigation">
+      <a href="#labs">Labs</a><span aria-hidden="true">,&nbsp;</span>
+      <a href="#studio">Studio</a><span aria-hidden="true">,&nbsp;</span>
+      <a href="#openings">Openings</a><span aria-hidden="true">,&nbsp;</span>
+      <a href="#shop">Shop</a>
+    </nav>
+
+    <a class="desktop-cta" data-od-id="desktop-cta" href="mailto:hello@mainframe.co">Get in touch</a>
+
+    <button class="menu-toggle" id="menuToggle" data-od-id="menu-toggle" type="button" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open menu">
+      <span class="menu-toggle__bars" aria-hidden="true">
+        <span class="menu-toggle__bar"></span>
+        <span class="menu-toggle__bar"></span>
+        <span class="menu-toggle__bar"></span>
+      </span>
+    </button>
+  </header>
+
+  <nav class="mobile-menu" id="mobileMenu" data-od-id="mobile-navigation" aria-label="Mobile navigation" aria-hidden="true">
+    <a href="#labs">Labs</a>
+    <a href="#studio">Studio</a>
+    <a href="#openings">Openings</a>
+    <a href="#shop">Shop</a>
+    <a class="mobile-menu__cta" href="mailto:hello@mainframe.co">Get in touch</a>
+  </nav>
+
+  <main>
+    <section class="hero" id="hero" data-od-id="hero">
+      <div class="hero__content" data-od-id="hero-content">
+        <p class="intro" data-od-id="intro-label">
+          Hey there, meet A.R.I.A,<br>
+          Mainframe's Adaptive Response Interface Agent
+        </p>
+
+        <p class="typewriter" data-od-id="typewriter" aria-label="Glad you stopped in. Good taste tends to find us. Now, what are we building?">
+          <span id="typedText" aria-hidden="true"></span><span class="cursor" id="cursor" aria-hidden="true"></span>
+        </p>
+
+        <div class="actions" id="actions" data-od-id="hero-actions">
+          <a class="pill" data-od-id="pitch-action" href="mailto:hello@mainframe.co?subject=I%20have%20an%20idea">Pitch us an idea</a>
+          <a class="pill" data-od-id="careers-action" href="#openings">Come work here</a>
+          <a class="pill" data-od-id="hello-action" href="mailto:hello@mainframe.co?subject=Hello">Send a brief hello</a>
+          <a class="pill" data-od-id="process-action" href="#studio">See how we operate</a>
+          <button class="pill pill--outline" id="copyEmail" data-od-id="copy-email" type="button">
+            <span>Reach us: <span class="pill__email">hello@mainframe.co</span></span>
+            <svg class="copy-icon" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <rect x="1" y="3" width="7" height="8" rx="1" stroke="currentColor" stroke-width="1.2"/>
+              <rect x="4" y="1" width="7" height="8" rx="1" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
+          </button>
+          <span class="status" id="copyStatus" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+      const video = document.getElementById('backgroundVideo');
+      const typedText = document.getElementById('typedText');
+      const cursor = document.getElementById('cursor');
+      const actions = document.getElementById('actions');
+      const menuToggle = document.getElementById('menuToggle');
+      const mobileMenu = document.getElementById('mobileMenu');
+      const copyEmail = document.getElementById('copyEmail');
+      const copyStatus = document.getElementById('copyStatus');
+      const message = 'Glad you stopped in. Good taste tends to find us. Now, what are we building?';
+      const email = 'hello@mainframe.co';
+      const SENSITIVITY = 0.8;
+
+      let typeDelay;
+      let typeTimer;
+
+      function finishTypewriter() {
+        window.clearTimeout(typeDelay);
+        window.clearInterval(typeTimer);
+        typedText.textContent = message;
+        cursor.classList.add('is-hidden');
+      }
+
+      function startTypewriter() {
+        if (reducedMotion.matches) {
+          finishTypewriter();
+          return;
+        }
+        let index = 0;
+        typeDelay = window.setTimeout(() => {
+          typeTimer = window.setInterval(() => {
+            index += 1;
+            typedText.textContent = message.slice(0, index);
+            if (index >= message.length) {
+              window.clearInterval(typeTimer);
+              cursor.classList.add('is-hidden');
+            }
+          }, 38);
+        }, 600);
+      }
+
+      if (reducedMotion.matches) {
+        actions.classList.add('is-visible');
+      } else {
+        window.setTimeout(() => actions.classList.add('is-visible'), 400);
+      }
+      startTypewriter();
+
+      let previousX = null;
+      let targetTime = 0;
+      let seekPending = false;
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function queueSeek() {
+        if (seekPending || !Number.isFinite(video.duration) || video.duration <= 0) return;
+        if (Math.abs(video.currentTime - targetTime) < 0.01) return;
+        seekPending = true;
+        video.currentTime = targetTime;
+      }
+
+      video.addEventListener('loadedmetadata', () => {
+        targetTime = clamp(video.currentTime, 0, video.duration);
+      });
+
+      video.addEventListener('seeked', () => {
+        seekPending = false;
+        if (Math.abs(video.currentTime - targetTime) >= 0.01) {
+          window.requestAnimationFrame(queueSeek);
+        }
+      });
+
+      window.addEventListener('mousemove', (event) => {
+        if (reducedMotion.matches || !Number.isFinite(video.duration) || video.duration <= 0) {
+          previousX = event.clientX;
+          return;
+        }
+        if (previousX === null) {
+          previousX = event.clientX;
+          targetTime = video.currentTime;
+          return;
+        }
+        const delta = event.clientX - previousX;
+        previousX = event.clientX;
+        const offset = (delta / window.innerWidth) * SENSITIVITY * video.duration;
+        targetTime = clamp(targetTime + offset, 0, video.duration);
+        queueSeek();
+      }, { passive: true });
+
+      function setMenu(open) {
+        menuToggle.setAttribute('aria-expanded', String(open));
+        menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+        mobileMenu.setAttribute('aria-hidden', String(!open));
+        mobileMenu.classList.toggle('is-open', open);
+        if (open) {
+          window.setTimeout(() => mobileMenu.querySelector('a').focus(), 0);
+        } else if (document.activeElement && mobileMenu.contains(document.activeElement)) {
+          menuToggle.focus();
+        }
+      }
+
+      menuToggle.addEventListener('click', () => {
+        setMenu(menuToggle.getAttribute('aria-expanded') !== 'true');
+      });
+
+      mobileMenu.addEventListener('click', (event) => {
+        if (event.target.closest('a')) setMenu(false);
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && menuToggle.getAttribute('aria-expanded') === 'true') {
+          setMenu(false);
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        if (window.innerWidth >= 768 && menuToggle.getAttribute('aria-expanded') === 'true') {
+          setMenu(false);
+        }
+      });
+
+      async function copyAddress() {
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(email);
+          } else {
+            const helper = document.createElement('textarea');
+            helper.value = email;
+            helper.setAttribute('readonly', '');
+            helper.style.position = 'fixed';
+            helper.style.opacity = '0';
+            document.body.appendChild(helper);
+            helper.select();
+            if (!document.execCommand('copy')) throw new Error('Copy command failed');
+            helper.remove();
+          }
+          copyStatus.textContent = 'Email address copied.';
+          copyEmail.setAttribute('aria-label', 'Copied hello@mainframe.co');
+          window.setTimeout(() => {
+            copyStatus.textContent = '';
+            copyEmail.removeAttribute('aria-label');
+          }, 2200);
+        } catch (error) {
+          copyStatus.textContent = 'Could not copy. Email: ' + email;
+        }
+      }
+
+      copyEmail.addEventListener('click', copyAddress);
+
+      const onMotionChange = (event) => {
+        if (event.matches) {
+          finishTypewriter();
+          actions.classList.add('is-visible');
+          previousX = null;
+        }
+      };
+      if (typeof reducedMotion.addEventListener === 'function') {
+        reducedMotion.addEventListener('change', onMotionChange);
+      } else if (typeof reducedMotion.addListener === 'function') {
+        reducedMotion.addListener(onMotionChange);
+      }
+    })();
+  </script>
+</body>
+</html>

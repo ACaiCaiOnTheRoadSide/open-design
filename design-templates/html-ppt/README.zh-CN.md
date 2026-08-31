@@ -227,8 +227,7 @@ html-ppt-skill/
   `assets/base.css` + 当前主题文件里。改一个变量，整份 deck 优雅地重排。
 - **Iframe 隔离预览。** 主题 / 布局 / 完整 deck 的 showcase 都用 `<iframe>`，
   确保每个预览都是真实、独立的渲染结果。
-- **零构建。** 纯静态 HTML/CSS/JS。只有 webfont / highlight.js / chart.js
-  (可选) 走 CDN。
+- **零构建。** 纯静态 HTML/CSS/JS。webfont 已内置；只有 highlight.js / chart.js（可选）走 CDN。
 - **资深设计师的默认值。** 字号规律、间距节奏、渐变、卡片处理都有态度 ——
   绝不是 "PowerPoint 2006" 那种味道。
 - **中英双语一等公民。** 预导入了 Noto Sans SC / Noto Serif SC。

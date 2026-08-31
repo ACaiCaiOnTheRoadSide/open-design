@@ -53,7 +53,7 @@ upstream MIT-licensed
 skill (`templates/slide-deck.html`), pinned and shipped as one self-contained
 seed — `example.html`. The upstream mermaid diagram slide has been replaced by
 a pure CSS/SVG pipeline page; the deck has **zero external JS dependencies**
-(Google Fonts `@import` is the only external reference).
+(bundled local fonts `@import` is the only external reference).
 
 Signature combination (what makes this skin this skin):
 
@@ -133,7 +133,7 @@ author must read correctly in both.** Semantic colors (`--green/--red/--blue`)
 are for status only (trends, before/after labels, diagram node families) —
 never decorative.
 
-## Fonts (locked — Google Fonts `@import` only)
+## Fonts (locked — bundled local fonts `@import` only)
 
 | Slot | Font | Usage |
 | --- | --- | --- |
@@ -201,9 +201,13 @@ No third font. No bold serif — drama comes from size, not weight.
 2. No colors or fonts outside the two locked token sheets. No new hex values.
 3. Both themes must work — check every slide in dark and light.
 4. Zero external JS: no mermaid, no Chart.js, no CDN scripts. Diagrams and
-   charts are pure CSS/SVG using the masters above. Google Fonts `@import`
+   charts are pure CSS/SVG using the masters above. bundled local fonts `@import`
    is the only allowed external reference.
 5. Real content, real numbers — no lorem ipsum. Replace all fictional
    "Nocturne" demo content.
 6. 8–15 slides; always open with `.slide--title` and close with
    `.slide--bleed` or `.slide--quote`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

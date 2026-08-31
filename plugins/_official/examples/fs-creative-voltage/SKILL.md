@@ -85,8 +85,8 @@ A locked single-theme deck plugin derived from the **Creative Voltage** preset (
 }
 ```
 
-Google Fonts (the only external reference allowed):
-`https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Yellowtail&display=swap`
+bundled local fonts (the only external reference allowed):
+`assets/fonts/local-fonts.css`
 
 **Forbidden:** any color outside the token table; Inter / Roboto / Arial / system display fonts; purple gradients; generic indigo `#6366f1`; rounded-corner glassmorphism. Neon yellow is an accent, never a slide background.
 
@@ -143,7 +143,7 @@ Google Fonts (the only external reference allowed):
 
 ## Output contract
 
-- One self-contained `.html` file: all CSS and JS inline, no build step, no external JS libraries, no CDN scripts; Google Fonts link is the only external reference.
+- One self-contained `.html` file: all CSS and JS inline, no build step, no external JS libraries, no CDN scripts; bundled local fonts link is the only external reference.
 - Icons are inline SVG stroked in `#d4ff00` (or `#1a1a2e` on neon ticks). No remote images; halftone patterns, gradients, and panels are the visual language.
 - No scrolling, no overflow, no overlapping text panels. Comment each section `/* === SECTION NAME === */`.
 - CSS gotcha: never negate CSS functions directly (`-clamp()` is silently ignored) — use `calc(-1 * clamp(...))`.
@@ -151,3 +151,7 @@ Google Fonts (the only external reference allowed):
 ## Attribution
 
 Theme tokens and the fixed-stage model come from the upstream MIT-licensed [zarazhangrui/frontend-slides](https://github.com/zarazhangrui/frontend-slides) (© 2025 Zara Zhang), Creative Voltage preset. The LICENSE file ships in this plugin folder; keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

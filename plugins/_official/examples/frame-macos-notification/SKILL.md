@@ -68,3 +68,7 @@ od:
 - icon 不能用外链 emoji 图片, 用 unicode emoji 或 CSS 绘制几何。
 - 必须用用户提供的内容; 标题 + 正文清晰来自用户输入。
 - 单文件 HTML, 注意 `backdrop-filter` Safari 需要 `-webkit-` 前缀。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

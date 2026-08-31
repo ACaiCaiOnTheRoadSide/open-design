@@ -85,3 +85,7 @@ Emit one short orientation sentence, then the artifact:
 
 The artifact must render correctly when opened directly from disk with no
 build step and no network access.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

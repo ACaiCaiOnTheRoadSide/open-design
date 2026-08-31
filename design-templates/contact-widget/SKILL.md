@@ -72,7 +72,7 @@ Output is **pure front-end**. No tracking, no phone-home, no required external s
 
 Clean, minimal SaaS aesthetic. Looks like a real product widget, not a toy demo:
 
-- **Typography:** Inter (Google Fonts), 14px base, semi-bold headings
+- **Typography:** Inter (bundled locally), 14px base, semi-bold headings
 - **Colors:** A single user-chosen `primary_color` drives the bubble, avatar, send button, and accent. Everything else is a neutral slate palette (`#1e293b` / `#64748b` / `#f1f5f9`). **No purple gradients, no glassmorphism, no AI-style rainbow accents.**
 - **Radius:** 16px on cards, full-round on bubble and avatars
 - **Shadows:** Subtle `0 8px 32px rgba(0,0,0,0.12)` on the widget panel, `0 4px 12px` on bubble
@@ -104,7 +104,7 @@ The skill accepts these parameters from the user:
    requested widget and cannot be safely defaulted.
 2. Generate one HTML file with all provided values inlined as literals (no template engine, no `{{ }}` placeholders in the output)
 3. Open the widget panel by default on first paint so the preview is useful
-4. **Do not** add any `<script src="…">` pointing to third-party SDKs unless the user explicitly asks for backend integration. The output must run from disk with zero network calls beyond the Google Fonts CSS.
+4. **Do not** add any `<script src="…">` pointing to third-party SDKs unless the user explicitly asks for backend integration. The output must run from disk with zero network calls, including font requests.
 
 ## Backend integration (optional, user-driven only)
 
@@ -129,3 +129,7 @@ This needs an IM/chat SDK. Any of the following work; pick whichever fits your s
 - **Intercom** — https://intercom.com
 
 Do not auto-inject any `<script>` into the generated output — only add backend integration if the user explicitly opts in.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

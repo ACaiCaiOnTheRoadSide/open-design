@@ -49,6 +49,41 @@ export interface SkillCardMeta {
 
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---/;
 
+function bundledFontDataUrl(relativePath: string): string {
+  const bytes = readFileSync(new URL(relativePath, import.meta.url));
+  return `data:font/ttf;base64,${bytes.toString('base64')}`;
+}
+
+const FALLBACK_CARD_FONT_CSS = `
+@font-face {
+  font-family: 'Inter';
+  src: url('${bundledFontDataUrl('./assets/fallback-fonts/inter/Inter[opsz,wght].ttf')}') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('${bundledFontDataUrl('./assets/fallback-fonts/jetbrains-mono/JetBrainsMono[wght].ttf')}') format('truetype');
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Playfair Display';
+  src: url('${bundledFontDataUrl('./assets/fallback-fonts/playfair-display/PlayfairDisplay[wght].ttf')}') format('truetype');
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Playfair Display';
+  src: url('${bundledFontDataUrl('./assets/fallback-fonts/playfair-display/PlayfairDisplay-Italic[wght].ttf')}') format('truetype');
+  font-style: italic;
+  font-weight: 400 900;
+  font-display: block;
+}`;
+
 /**
  * Tiny YAML scanner just for the keys we need. Handles:
  *   - top-level scalars: `name: foo` / `name: "foo"` / `name: 'foo'`
@@ -235,10 +270,8 @@ export function renderFallbackCard(meta: SkillCardMeta, indexInCatalog: number):
 <head>
 <meta charset="utf-8" />
 <title>${escapeHtml(meta.slug)} preview card</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
 <style>
+${FALLBACK_CARD_FONT_CSS}
   :root {
     --paper-warm: #efe7d2;
     --paper-dark: #e6dcc1;

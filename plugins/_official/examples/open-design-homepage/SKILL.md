@@ -27,3 +27,7 @@ It is here to demonstrate the **visual ceiling** OpenDesign targets for interact
 ## Using it
 
 Open `example.html` in the preview to explore the live, interactive result. All content is bundled locally — fonts, imagery, and 3D geometry ship in `assets/`, so there are no CDN scripts or external fonts. The one runtime network request is the Draco decoder, fetched from Google's `gstatic` CDN on demand (the same pattern the other WebGL examples use for their libraries). To adapt the aesthetic (typography, 3D treatment, sticker collage, scroll motion) into your own build, study the structure here and recreate it with your preferred React Three Fiber / Next.js setup.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the existing JavaScript `FontFace` registrations and their relative font URLs. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

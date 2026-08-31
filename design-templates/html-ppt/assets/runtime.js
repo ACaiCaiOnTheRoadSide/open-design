@@ -357,7 +357,7 @@
 <head>
 <meta charset="utf-8">
 <title>Presenter View</title>
-<style>
+<link rel="stylesheet" href="fonts/local-fonts.css"><style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;

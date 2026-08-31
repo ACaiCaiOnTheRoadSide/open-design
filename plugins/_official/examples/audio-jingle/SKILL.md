@@ -132,3 +132,7 @@ tempo from 92 to 108 BPM" rather than "make it different").
   cool" — generators reward specific texture words.
 - Save the file every turn. The audio viewer shows transport controls
   the moment the file lands.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

@@ -95,7 +95,7 @@ tokens only — never hard-code a color in slide markup.
 }
 ```
 
-Fonts come from Google Fonts `@import` only (Archivo Black, Space Grotesk,
+Fonts come from bundled local fonts `@import` only (Archivo Black, Space Grotesk,
 Noto Sans SC, JetBrains Mono). No other external resource of any kind.
 
 ## Signature decor devices (the Memphis kit)
@@ -177,3 +177,7 @@ from the upstream MIT-licensed
 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)
 (© lewis &lt;sudolewis@gmail.com&gt;), theme `memphis-pop`. The LICENSE
 file ships alongside this skill — keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

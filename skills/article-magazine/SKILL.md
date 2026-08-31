@@ -44,3 +44,7 @@ od:
 - 列表项使用自定义 bullet（小方块 / accent 圆点）。
 - 章节之间用 `<hr>` 分隔, 但样式做成中央居中的小 ornament。
 - 文末加一个简单的 "如果觉得有用，欢迎转发" 行动卡片。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

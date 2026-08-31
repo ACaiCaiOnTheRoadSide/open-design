@@ -318,3 +318,7 @@ design-templates/open-design-landing/
 - [`design-systems/atelier-zero/DESIGN.md`](../../design-systems/atelier-zero/DESIGN.md) — token spec.
 - [`apps/landing-page/`](../../apps/landing-page/) — deployable Astro static counterpart.
 - [`design-templates/open-design-landing-deck/`](../open-design-landing-deck/) — sibling slides skill that reuses this design system.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

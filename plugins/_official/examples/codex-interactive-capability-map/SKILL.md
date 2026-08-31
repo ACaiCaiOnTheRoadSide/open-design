@@ -78,3 +78,7 @@ Emit one single-file HTML artifact:
 ```
 
 Include all CSS and JavaScript inline. Do not use lorem ipsum. Do not leave placeholder cards. If the source does not include enough concrete details, infer a small, clearly labeled conceptual model from the source instead of inventing unrelated content.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

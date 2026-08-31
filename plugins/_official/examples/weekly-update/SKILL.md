@@ -65,3 +65,7 @@ Produce a single-file horizontal-swipe HTML deck for a weekly team update.
 <artifact identifier="weekly-update-w42" type="text/html" title="Weekly Update — Growth · W42">
 <!doctype html>...</artifact>
 ```
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

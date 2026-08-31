@@ -81,7 +81,7 @@ Bold, clean, professional, high-contrast split-panel decks. Theme locked to the 
 
 Forbidden: any other hue, gradients, purple/indigo (#6366f1), warm accents, photography, illustrations, drop shadows, rounded hero cards. The palette is exactly white / cobalt / near-black plus their soft alphas.
 
-## Typography (all Manrope, Google Fonts weights 400/500/800)
+## Typography (all Manrope, bundled local fonts weights 400/500/800)
 
 - **Display / H2** — Manrope 800, tight negative letter-spacing (`-0.025em` to `-0.035em`), line-height ≤ 1.08. Title ~152px, H2 60–88px. A terminal period in `--accent-blue` (`<span class="blue">.</span>`) is a signature flourish.
 - **Quote hero** — Manrope 800 at ~92px with an oversized cobalt `“` mark (~220px): **quote typography is the deck's hero visual.**
@@ -145,7 +145,7 @@ Every slide is the same shell:
 
 ## Output contract
 
-- Single self-contained `.html`: all CSS/JS inline, zero build, zero external JS, no CDN scripts. Google Fonts link for Manrope is the only external reference.
+- Single self-contained `.html`: all CSS/JS inline, zero build, zero external JS, no CDN scripts. bundled local fonts link for Manrope is the only external reference.
 - Icons are inline SVG (stroke `#4361ee` on white, `#ffffff` on cobalt). Charts are pure CSS. No remote images.
 - No scrolling, no overflow: split content into more slides instead of shrinking type. Low-density speaker-led decks: one idea per slide, 1–3 bullets. High-density reading-first decks: structured grids, max 4–6 cards.
 - Comment every section: `/* === SECTION NAME === */`. Never negate CSS functions directly (`-clamp()` is silently ignored) — use `calc(-1 * clamp(...))`.
@@ -153,3 +153,7 @@ Every slide is the same shell:
 ## Attribution
 
 Theme, fixed-stage model, and workflow come from the upstream MIT-licensed [zarazhangrui/frontend-slides](https://github.com/zarazhangrui/frontend-slides) (© 2025 Zara Zhang), Electric Studio preset (STYLE_PRESETS.md section 2). The LICENSE file ships in this plugin folder; keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

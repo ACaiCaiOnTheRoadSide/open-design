@@ -67,7 +67,7 @@ Ported from the MIT-licensed [zarazhangrui/beautiful-html-templates](https://git
 ```
 
 - **No other colors.** No gradients, no shadows, no purple/indigo, no pure white or black surfaces. `rgba(239,231,212,0.18)` (cream at 18%) is the only permitted alpha, used for chart grid lines.
-- **No other fonts.** `Source Serif 4` (weights 300–800, weight 500 is the display default) for all headings and body; `JetBrains Mono` (400/500/700, weight 500 default) for kickers, numbers, captions, and axis labels. Load via the Google Fonts `<link>` already in the seed.
+- **No other fonts.** `Source Serif 4` (weights 300–800, weight 500 is the display default) for all headings and body; `JetBrains Mono` (400/500/700, weight 500 default) for kickers, numbers, captions, and axis labels. Load via the bundled local fonts `<link>` already in the seed.
 
 ## Typography & signature devices
 
@@ -109,3 +109,7 @@ Reuse these masters for longer decks (a second `.two-col` or `.data`, another `.
 ## Attribution
 
 Template design, palette, and the `deck-stage` runtime come from the upstream MIT-licensed [zarazhangrui/beautiful-html-templates](https://github.com/zarazhangrui/beautiful-html-templates) (© 2026 Zara Zhang), template `editorial-forest`. The LICENSE file ships in this plugin folder; keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

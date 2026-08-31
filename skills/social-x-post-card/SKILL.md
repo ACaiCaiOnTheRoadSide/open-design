@@ -63,3 +63,7 @@ od:
 - 若用户输入是数据 → 自动总结成一句"金句"推文 (≤ 280 字符)。
 - 单文件 HTML; icon 内联 SVG; 不要任何外部图片 URL。
 - 可选: 卡片背后加微妙径向高光 `radial-gradient(...)` 增加视频叠加的可读性。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

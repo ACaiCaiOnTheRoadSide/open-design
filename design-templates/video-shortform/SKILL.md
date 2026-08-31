@@ -126,3 +126,7 @@ rendered, the filename, and one concrete variation idea.
   timeout), report the error verbatim. Don't silently retry.
 - Do not claim a render has been "sent", "started", or "is running"
   unless you have already called `"$OD_NODE_BIN" "$OD_BIN" media generate`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

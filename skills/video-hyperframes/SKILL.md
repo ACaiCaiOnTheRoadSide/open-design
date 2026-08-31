@@ -44,3 +44,7 @@ od:
 - 字号巨大 (text-9xl), 一句话即可, 不要堆砌。
 - 配色统一一套电影感 (深色背景 + 1 个霓虹强调色)。
 - 输出最后包含一段简短注释 `<!-- HYPERFRAMES_META: ... -->`, 包含每帧 duration / transition / sceneSummary 的 JSON 元数据, 用于后续转 Remotion。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

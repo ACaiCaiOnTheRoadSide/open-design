@@ -72,7 +72,7 @@ fills, dashed borders, slight rotations.
 4. **Write** a single HTML document:
    - `<!doctype html>` through `</html>`, CSS inline.
    - Use the system's available "Caveat", "Patrick Hand", or "Architects
-     Daughter" fonts via Google Fonts; otherwise fall back to italic serif.
+     Daughter" fonts from the bundled local assets; otherwise fall back to italic serif.
    - Slight rotations everywhere (`transform: rotate(-0.6deg)`) to break
      the grid and feel hand-drawn.
    - `data-od-id` on header, tabs, sidebar, KPIs, chart, bar-chart,
@@ -95,3 +95,7 @@ Emit between `<artifact>` tags:
 ```
 
 One sentence before the artifact, nothing after.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

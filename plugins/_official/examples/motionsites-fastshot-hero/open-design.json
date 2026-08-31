@@ -1,0 +1,70 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-motionsites-fastshot-hero",
+  "title": "Fastshot AI Hero",
+  "title_i18n": {
+    "zh-CN": "Fastshot AI 动效 Hero",
+    "en": "Fastshot AI Hero"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-08-28T09:26:20Z",
+  "description": "A restrained AI app-builder hero with misty lake video, dark glass composer, responsive action controls, proof logos, mobile navigation, and precise one-shot entrance motion.",
+  "description_i18n": {
+    "zh-CN": "克制的 AI 应用生成器 Hero，包含晨雾湖景视频、深色玻璃输入卡、响应式操作区、客户标识、移动导航和一次性入场动效。",
+    "en": "A restrained AI app-builder hero with misty lake video, dark glass composer, responsive action controls, proof logos, mobile navigation, and precise one-shot entrance motion."
+  },
+  "license": "SEE-SOURCE",
+  "author": {
+    "name": "MotionSites"
+  },
+  "homepage": "https://motionsites.ai/",
+  "tags": [
+    "example",
+    "prototype",
+    "marketing",
+    "web",
+    "desktop",
+    "landing-page",
+    "hero",
+    "motion",
+    "ai"
+  ],
+  "compat": {
+    "agentSkills": [{ "path": "./SKILL.md" }]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "marketing",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Create an AI app-builder landing hero using the Fastshot motion template, then replace the brand and copy while preserving its composer layout and responsive choreography.",
+        "zh-CN": "使用 Fastshot 动效模板创建 AI 应用生成器落地页 Hero，替换品牌和文案，同时保留输入卡布局与响应式动效编排。"
+      },
+      "exampleOutputs": [{ "path": "./example.html", "title": "Fastshot AI Hero" }]
+    },
+    "context": {
+      "skills": [{ "path": "./SKILL.md" }],
+      "designSystem": { "primary": false },
+      "craft": ["state-coverage", "accessibility-baseline"],
+      "assets": [
+        "./example.html",
+        "./assets/background.mp4",
+        "./references/source-prompt.md",
+        "./references/source.json"
+      ]
+    },
+    "pipeline": {
+      "stages": [{ "id": "generate", "atoms": ["file-write", "live-artifact"] }]
+    },
+    "capabilities": ["prompt:inject", "fs:write"]
+  }
+}

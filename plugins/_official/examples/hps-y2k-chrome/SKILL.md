@@ -80,7 +80,7 @@ system or the runtime script. No colors or fonts outside this spec.**
 ```
 
 Fonts: **Space Grotesk** is both display and body type (`'Noto Sans SC'`
-fallback for CJK), JetBrains Mono for code/labels. Loaded via Google Fonts
+fallback for CJK), JetBrains Mono for code/labels. Loaded via bundled local fonts
 `@import` only — the sole permitted external resource.
 
 ## Signature devices (use these, nothing else)
@@ -175,3 +175,7 @@ come from the upstream MIT-licensed
 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)
 (© lewis &lt;sudolewis@gmail.com&gt;). The LICENSE file ships alongside this
 plugin — keep it in place when redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

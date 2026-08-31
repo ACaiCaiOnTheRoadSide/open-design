@@ -68,3 +68,7 @@ od:
 - 加键盘 ← / → 切换 + hash 同步; 角标固定: 右下 `№N/M`, 左下 deck title。
 - 必须用用户的真实内容; 严禁 lorem ipsum。
 - 单文件 HTML; Tailwind CDN; 不要外链图片。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

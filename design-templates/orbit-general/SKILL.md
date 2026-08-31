@@ -200,3 +200,7 @@ If still ambiguous, fall back to a status-dot list (the safest default).
 | Square or rounded-square avatars | Always circles; sizes 28 / 32 / 40 / 44 px depending on context |
 | Drop shadows / gradients / glows on cards | Flat surfaces only; differentiate cards with the 1px `#EAE5DD` hairline border |
 | Use brand colors from the user's design system | Use exclusively the canvas tokens above (`#FAF7F2`, `#1A1816`, `#D86A47` …) — Orbit's own editorial language |
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

@@ -100,7 +100,7 @@ Amazon six-page narrative memos, Stripe Press.
 --sans:         "Inter", "Noto Sans SC", -apple-system, sans-serif;
 ```
 
-- Fonts via Google Fonts `@import`: Newsreader (display, incl. italic),
+- Fonts via bundled local fonts `@import`: Newsreader (display, incl. italic),
   Source Serif 4 (prose), Noto Serif SC (CJK serif), Inter, Noto Sans SC.
 - **All numerals tabular**: the shared `.num` class sets
   `font-variant-numeric: tabular-nums`; every metric, year, and display
@@ -174,3 +174,7 @@ signature page.
 - ❌ Proportional figures in metrics — tabular numerals everywhere.
 - ✅ One detail at 120% (the display number), the rest at 80%.
 - ✅ Honest footnotes and sources under every metric panorama.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

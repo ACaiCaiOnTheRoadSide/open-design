@@ -68,7 +68,7 @@ parameters:
       resolves per-glyph fallback automatically.
 outputs:
   - path: <out>/index.html
-    description: Self-contained HTML, kami CSS inlined, zero JS, zero external dependencies beyond Google Fonts.
+    description: Self-contained HTML, kami CSS inlined, zero JS, zero external font dependencies.
 capabilities_required:
   - file-write
 example_prompt: |
@@ -232,3 +232,7 @@ design-templates/kami-landing/
   slide deck in the same kami language.
 - Upstream: [`tw93/kami`](https://github.com/tw93/kami) — original
   Claude skill (MIT) that the design system adapts.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

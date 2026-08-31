@@ -62,3 +62,7 @@ od:
 - 字体不能用 Inter / 衬线, 必须手写感。
 - 单文件 HTML, 不要外部图标库 (用 inline SVG)。
 - 必须用用户的真实流程内容; 节点文字直接来自用户输入。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

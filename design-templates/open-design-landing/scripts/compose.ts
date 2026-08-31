@@ -14,7 +14,7 @@
  *   npx tsx scripts/compose.ts inputs.example.json example.html
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { cp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -87,9 +87,7 @@ function renderHead(i: EditorialCollageInputs, css: string): string {
 <meta name='viewport' content='width=device-width, initial-scale=1' />
 <title>${i.brand.name} — ${i.brand.tagline}</title>
 <meta name='description' content='${i.brand.description}' />
-<link rel='preconnect' href='https://fonts.googleapis.com' />
-<link rel='preconnect' href='https://fonts.gstatic.com' crossorigin />
-<link href='https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500;1,600;1,700&family=JetBrains+Mono:wght@400;500&display=swap' rel='stylesheet' />
+<link rel="stylesheet" href="./assets/fonts/local-fonts.css">
 <style>${css}${CODE_INLINE_CSS}</style>
 </head>`;
 }
@@ -807,7 +805,14 @@ async function main(): Promise<void> {
   const inputs = JSON.parse(inputsRaw) as EditorialCollageInputs;
   const html = renderPage(inputs, css);
 
-  await mkdir(dirname(outputPath), { recursive: true });
+  const outputDir = dirname(outputPath);
+  const sourceFontsDir = resolve(SKILL_ROOT, 'assets', 'fonts');
+  const outputFontsDir = resolve(outputDir, 'assets', 'fonts');
+
+  await mkdir(outputDir, { recursive: true });
+  if (sourceFontsDir !== outputFontsDir) {
+    await cp(sourceFontsDir, outputFontsDir, { recursive: true });
+  }
   await writeFile(outputPath, html, 'utf8');
   console.log(`✓ wrote ${outputPath} (${(html.length / 1024).toFixed(1)} KB)`);
 }

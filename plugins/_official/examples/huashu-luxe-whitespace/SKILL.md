@@ -99,7 +99,7 @@ comparison bars, and the gradient hairline separators.
 | `--sans` | `'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif` | the only family |
 
 - **Font loading**: exactly one
-  `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap')`
+  `@import url('`assets/fonts/local-fonts.css`
   at the top of the stylesheet. Weights 200/300/400/500/600 only — **700+ is
   forbidden**; emphasis in this style is achieved by stepping 300 → 500, not
   by bolding.
@@ -188,3 +188,7 @@ comparison bars, and the gradient hairline separators.
    row, the bottom brand mark, and at least one hairline device; no weight
    above 600 anywhere; gold count per page ≤ 5; no leftover demo
    ("素白"/"SOBLANC") text; grep for `TODO`.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

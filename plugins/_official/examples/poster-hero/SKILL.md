@@ -40,3 +40,7 @@ od:
 - 底部右下角放品牌 / 二维码 (用 SVG 占位)。
 - 使用大胆的色彩: 渐变背景 (from-violet-500 via-fuchsia-500 to-indigo-500 之类), 文字白色 + 1 个对比色高亮。
 - 使用 SVG 做装饰性元素 (圆 / 三角 / 波浪 / 噪点纹理)。
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

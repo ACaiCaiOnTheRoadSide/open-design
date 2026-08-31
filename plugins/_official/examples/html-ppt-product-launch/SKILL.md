@@ -96,3 +96,7 @@ Visual system, layouts, themes and the runtime keyboard model come from
 the upstream MIT-licensed [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill). The
 LICENSE file ships at `design-templates/html-ppt/LICENSE`; please keep it in place when
 redistributing.
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.

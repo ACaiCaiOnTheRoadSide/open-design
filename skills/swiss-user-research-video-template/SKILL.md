@@ -79,3 +79,7 @@ Emit one concise orientation sentence and then a single HTML artifact:
 <html>...</html>
 </artifact>
 ```
+
+## Bundled font assets
+
+Keep `assets/fonts/` with every copied or generated template. Preserve the authored relative link/import to `assets/fonts/local-fonts.css`; it registers the template fonts locally. Do not add remote font stylesheets, font preconnects, remote `@import` rules, or remote `@font-face` URLs.
