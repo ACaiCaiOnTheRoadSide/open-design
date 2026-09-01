@@ -2048,6 +2048,35 @@
    is on; it docks beside the artifact preview so canvas clicks remain
    available for placing comments. */
 .comment-side-dock {
+  --comment-blue: #86b6df;
+  --comment-purple: #9c8ed5;
+  --comment-pink: #d7a1be;
+  --comment-gold: #d2b269;
+  --comment-on-accent: #2f2d36;
+  --comment-accent: var(--comment-purple);
+  --comment-accent-strong: color-mix(in srgb, var(--comment-purple) 72%, var(--text));
+  --comment-accent-gradient: linear-gradient(
+    110deg,
+    var(--comment-blue) 0%,
+    var(--comment-purple) 34%,
+    var(--comment-pink) 68%,
+    var(--comment-gold) 100%
+  );
+  --comment-accent-surface: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--comment-blue) 11%, var(--bg-panel)) 0%,
+    color-mix(in srgb, var(--comment-purple) 10%, var(--bg-panel)) 34%,
+    color-mix(in srgb, var(--comment-pink) 10%, var(--bg-panel)) 68%,
+    color-mix(in srgb, var(--comment-gold) 9%, var(--bg-panel)) 100%
+  );
+  --comment-accent-surface-strong: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--comment-blue) 17%, var(--bg-panel)) 0%,
+    color-mix(in srgb, var(--comment-purple) 16%, var(--bg-panel)) 34%,
+    color-mix(in srgb, var(--comment-pink) 16%, var(--bg-panel)) 68%,
+    color-mix(in srgb, var(--comment-gold) 14%, var(--bg-panel)) 100%
+  );
+  --comment-accent-border: color-mix(in srgb, var(--comment-purple) 48%, var(--border));
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -2078,16 +2107,14 @@
   writing-mode: horizontal-tb;
 }
 .comment-side-panel {
-  --comment-accent: #ff5a3c;
-  --comment-accent-strong: color-mix(in srgb, var(--comment-accent) 78%, var(--text));
-  --comment-accent-surface: color-mix(in srgb, var(--comment-accent) 10%, var(--bg-panel));
-  --comment-accent-surface-strong: color-mix(in srgb, var(--comment-accent) 18%, var(--bg-panel));
-  --comment-accent-border: color-mix(in srgb, var(--comment-accent) 64%, var(--border));
   position: relative;
   width: 320px;
   height: 100%;
   max-width: 100%;
-  background: var(--bg-panel, #fff);
+  background:
+    radial-gradient(circle at 4% 2%, color-mix(in srgb, var(--comment-blue) 10%, transparent), transparent 34%),
+    radial-gradient(circle at 96% 98%, color-mix(in srgb, var(--comment-gold) 8%, transparent), transparent 36%),
+    var(--bg-panel, #fff);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
@@ -2210,8 +2237,8 @@
   justify-content: center;
   padding: 0 4px;
   border-radius: var(--radius-pill);
-  background: #ff5a3c;
-  color: #fff;
+  background: var(--comment-accent-gradient);
+  color: var(--comment-on-accent);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
@@ -2360,12 +2387,13 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  color: #fff;
+  color: var(--comment-on-accent);
   flex-shrink: 0;
 }
 .comment-side-check.checked {
-  background: var(--comment-accent);
-  border-color: var(--comment-accent);
+  background: var(--comment-accent-gradient);
+  border-color: color-mix(in srgb, var(--comment-purple) 68%, var(--border));
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--comment-purple) 22%, transparent);
 }
 .comment-side-body {
   font-size: 13px;
@@ -2424,9 +2452,10 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--comment-accent);
-  color: #fff;
-  border: 1px solid var(--comment-accent);
+  background: var(--comment-accent-gradient);
+  color: var(--comment-on-accent);
+  border: 1px solid color-mix(in srgb, var(--comment-purple) 56%, var(--border));
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--comment-purple) 18%, transparent);
   border-radius: var(--radius-sm);
   padding: 5px 10px;
   font-size: 12px;
@@ -2439,8 +2468,10 @@
   cursor: not-allowed;
 }
 .comment-side-selectbar .primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--comment-accent) 88%, #000);
-  border-color: color-mix(in srgb, var(--comment-accent) 88%, #000);
+  background: var(--comment-accent-gradient);
+  border-color: color-mix(in srgb, var(--comment-purple) 72%, var(--border));
+  filter: saturate(1.08) brightness(0.97);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--comment-purple) 24%, transparent);
 }
 .comment-side-new-comment {
   flex: 0 0 auto;

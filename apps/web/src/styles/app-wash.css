@@ -37,6 +37,16 @@
      no-backdrop-filter blocks below still restore solid surfaces. */
   --veil-canvas: transparent; /* was var(--bg)/#fff: .workspace, .viewer, .df-panel, .df-main */
   --veil-panel: transparent; /* was var(--bg-panel): chat .pane */
+
+  /* A quieter, local echo of the app wash for the otherwise white-looking
+     center of the chat transcript. Existing wash colors make this follow the
+     light/dark palette automatically; the extra transparent mix keeps text
+     resting on a calm reading surface rather than a visible illustration. */
+  --chat-log-ornament:
+    radial-gradient(72% 42% at 4% 12%, color-mix(in srgb, var(--wash-blue) 22%, transparent), transparent 72%),
+    radial-gradient(62% 36% at 96% 32%, color-mix(in srgb, var(--wash-pink) 18%, transparent), transparent 70%),
+    radial-gradient(74% 42% at 12% 96%, color-mix(in srgb, var(--wash-mist) 18%, transparent), transparent 72%),
+    radial-gradient(60% 34% at 94% 92%, color-mix(in srgb, var(--wash-peach) 20%, transparent), transparent 68%);
 }
 
 /* Whisper-level wash in dark: the same design language, but the blobs sit
@@ -132,6 +142,7 @@ html.is-window-blurred:has(.workspace-shell--desktop[data-host-platform='darwin'
     --veil-page: var(--bg);
     --veil-canvas: var(--bg);
     --veil-panel: var(--bg-panel);
+    --chat-log-ornament: none;
   }
   html:has(.workspace-shell--desktop[data-host-platform='darwin']),
   html:has(.workspace-shell--desktop[data-host-platform='darwin']) body {
@@ -149,6 +160,7 @@ html.is-window-blurred:has(.workspace-shell--desktop[data-host-platform='darwin'
     --veil-page: var(--bg);
     --veil-canvas: var(--bg);
     --veil-panel: var(--bg-panel);
+    --chat-log-ornament: none;
   }
   html:has(.workspace-shell--desktop[data-host-platform='darwin']),
   html:has(.workspace-shell--desktop[data-host-platform='darwin']) body {

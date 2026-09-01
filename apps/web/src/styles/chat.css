@@ -234,6 +234,14 @@
 }
 .chat-header-actions .icon-only:hover { background: var(--bg-subtle); color: var(--text); }
 
+/* The transcript itself remains transparent; this fixed wrapper carries a
+   whisper-light pastel ornament so the center no longer reads as a flat white
+   page. Because the scrolling child paints above it, the wash stays still as
+   messages move and never reduces text or control opacity. */
+.chat-log-wrap {
+  background: var(--chat-log-ornament, transparent);
+}
+
 .chat-log {
   flex: 1;
   overflow-y: auto;
