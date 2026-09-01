@@ -257,6 +257,45 @@ describe('RecentProjectsStrip', () => {
     expect(gridThumb).not.toContain('min-height: 108px');
   });
 
+  it('shows compact status dots without visible status copy', () => {
+    const { container } = render(
+      <RecentProjectsStrip
+        projects={[
+          project({ id: 'running', name: 'Running project', status: { value: 'running' } }),
+          project({ id: 'completed', name: 'Completed project', status: { value: 'succeeded' } }),
+          project({ id: 'failed', name: 'Failed project', status: { value: 'failed' } }),
+          project({ id: 'draft', name: 'Draft project', status: { value: 'not_started' } }),
+        ]}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('img', { name: 'Running' })).toHaveClass(
+      'recent-projects__card-status-indicator--running',
+    );
+    expect(screen.getByRole('img', { name: 'Completed' })).toHaveClass(
+      'recent-projects__card-status-indicator--succeeded',
+    );
+    expect(screen.getByRole('img', { name: 'Failed' })).toHaveClass(
+      'recent-projects__card-status-indicator--failed',
+    );
+    expect(container.querySelectorAll('.recent-projects__card-status-indicator')).toHaveLength(3);
+    expect(screen.queryByText('Running')).toBeNull();
+    expect(screen.queryByText('Completed')).toBeNull();
+    expect(screen.queryByText('Failed')).toBeNull();
+  });
+
+  it('uses yellow breathing, green completed, and red failed status colors', () => {
+    const css = readFileSync(
+      join(process.cwd(), 'src/styles/home/recent-projects.css'),
+      'utf8',
+    );
+
+    expect(css).toMatch(/card-status-indicator--running[^}]*#FFBA12[^}]*status-breathe/su);
+    expect(css).toMatch(/card-status-indicator--succeeded[^}]*var\(--green\)/su);
+    expect(css).toMatch(/card-status-indicator--failed[^}]*var\(--red\)/su);
+  });
+
   it('scans a shared project cover once after the same card materializes', async () => {
     stubCoverProbe();
     vi.mocked(fetchProjectFiles).mockResolvedValue([{

@@ -1746,6 +1746,16 @@ export function RecentProjectsStrip({
               // Incomplete is terminal but needs attention; show the status dot so
               // it reads as "not done", not a static success pill (#1247 / #1060).
               status === 'incomplete');
+          const statusTone = publishedDesignSystem || status === 'succeeded'
+            ? 'succeeded'
+            : status === 'failed'
+              ? 'failed'
+              : isActive
+                ? 'running'
+                : null;
+          const visibleStatusLabel = publishedDesignSystem
+            ? t('designs.status.published')
+            : statusLabel(status, t);
           const shared = isShared(project.id);
           const selected = selectedProjectIds.has(project.id);
           const readonlyShared = shared && !creator.ownedBySelf;
@@ -1930,6 +1940,14 @@ export function RecentProjectsStrip({
                         </svg>
                         {t('recentProjects.sharedBadge')}
                       </span>
+                    ) : null}
+                    {statusTone ? (
+                      <span
+                        className={`recent-projects__card-status-indicator recent-projects__card-status-indicator--${statusTone}`}
+                        role="img"
+                        aria-label={visibleStatusLabel}
+                        title={visibleStatusLabel}
+                      />
                     ) : null}
                   </div>
                   <div className="recent-projects__card-footer">

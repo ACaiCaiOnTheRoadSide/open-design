@@ -412,42 +412,23 @@
 .modal-confirm .row button.recent-projects__move-confirm.primary:active {
   color: var(--brand);
 }
-.recent-projects__card-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-weight: 500;
-}
-.recent-projects__card-status-running {
-  color: var(--accent);
-}
-.recent-projects__card-status-awaiting_input,
-.recent-projects__card-status-incomplete {
-  color: var(--amber);
-}
-.recent-projects__card-status-queued,
-.recent-projects__card-status-not_started,
-.recent-projects__card-status-canceled {
-  color: var(--text-muted);
-}
-.recent-projects__card-status-succeeded {
-  color: var(--green);
-}
-.recent-projects__card-status-failed {
-  color: var(--red);
-}
-.recent-projects__card-status-published {
-  color: var(--green);
-}
-.recent-projects__card-status-dot {
-  width: 6px;
-  height: 6px;
+.recent-projects__card-status-indicator {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
   border-radius: 50%;
+  flex: 0 0 auto;
   background: currentColor;
-  flex-shrink: 0;
 }
-.recent-projects__card-status-running .recent-projects__card-status-dot {
-  animation: recent-projects-pulse 1.4s ease-in-out infinite;
+.recent-projects__card-status-indicator--running {
+  color: #FFBA12;
+  animation: recent-projects-status-breathe 1.8s ease-in-out infinite;
+}
+.recent-projects__card-status-indicator--succeeded {
+  color: var(--green);
+}
+.recent-projects__card-status-indicator--failed {
+  color: var(--red);
 }
 .recent-projects__card-menu-anchor {
   position: absolute;
@@ -594,9 +575,22 @@
     pointer-events: none;
   }
 }
-@keyframes recent-projects-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+@keyframes recent-projects-status-breathe {
+  0%, 100% {
+    opacity: 0.58;
+    transform: scale(0.88);
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 30%, transparent);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recent-projects__card-status-indicator--running {
+    animation: none;
+  }
 }
 @keyframes recent-projects-shimmer {
   to {
