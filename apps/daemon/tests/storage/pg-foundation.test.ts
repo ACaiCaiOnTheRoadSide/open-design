@@ -268,6 +268,8 @@ describe('postgres migrations', () => {
       '012_legacy_conversation_timestamps.sql',
       '013_appstats_run_results.sql',
       '014_legacy_message_projection.sql',
+      '015_backfill_appstats_run_results.sql',
+      '016_tool_call_facts.sql',
     ]);
     for (const filename of sqlFiles) {
       const sql = await readFile(path.join(directory, filename), 'utf8');
@@ -297,6 +299,8 @@ describe('postgres migrations', () => {
       '012_legacy_conversation_timestamps.sql',
       '013_appstats_run_results.sql',
       '014_legacy_message_projection.sql',
+      '015_backfill_appstats_run_results.sql',
+      '016_tool_call_facts.sql',
     ]);
     const projectScopeSql = fake.calls.find(({ sql }) => sql.includes('ADD COLUMN IF NOT EXISTS project_id'))?.sql;
     expect(projectScopeSql).toContain('memory_entries_project_id_check');

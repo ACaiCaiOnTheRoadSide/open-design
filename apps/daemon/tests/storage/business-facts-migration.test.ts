@@ -77,6 +77,7 @@ describe('business facts PostgreSQL migration contract', () => {
     expect(sql).toContain("'agent-run-backfill:' || q.run_id");
     expect(sql).toContain("q.status IN ('completed', 'failed', 'canceled')");
     expect(sql).toContain("CASE WHEN q.status = 'completed' THEN 'success' ELSE 'failed' END");
+    expect(sql).not.toMatch(/\b(?:created_at|updated_at)\b/);
     expect(sql).toContain('WHERE r.run_id = q.run_id');
     expect(sql).toContain('ON CONFLICT (event_key) DO NOTHING');
   });

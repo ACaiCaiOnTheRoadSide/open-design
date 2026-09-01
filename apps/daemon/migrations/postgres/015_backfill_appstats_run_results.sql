@@ -12,9 +12,7 @@ INSERT INTO appstats_run_results (
   access_mode,
   feature,
   result,
-  completed_at,
-  created_at,
-  updated_at
+  completed_at
 )
 SELECT
   'agent-run-backfill:' || q.run_id,
@@ -25,9 +23,7 @@ SELECT
   'online',
   'agent.run',
   CASE WHEN q.status = 'completed' THEN 'success' ELSE 'failed' END,
-  (EXTRACT(EPOCH FROM q.finished_at) * 1000)::BIGINT,
-  NOW(),
-  NOW()
+  (EXTRACT(EPOCH FROM q.finished_at) * 1000)::BIGINT
 FROM run_queue q
 WHERE q.status IN ('completed', 'failed', 'canceled')
   AND q.finished_at IS NOT NULL
