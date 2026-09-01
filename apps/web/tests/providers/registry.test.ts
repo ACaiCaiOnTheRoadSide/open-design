@@ -812,6 +812,64 @@ describe('fetchProjectFiles', () => {
   });
 });
 
+describe('uploadProjectFiles', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('preserves structured daemon upload errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: { code: 'PROJECT_NOT_FOUND', message: 'project not found' },
+    }), {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const screenshot = new File(['png'], 'screenshot.png', { type: 'image/png' });
+
+    await expect(uploadProjectFiles('missing-project', [screenshot])).resolves.toEqual({
+      uploaded: [],
+      failed: [{
+        name: 'screenshot.png',
+        code: 'PROJECT_NOT_FOUND',
+        error: 'project not found',
+      }],
+      error: 'project not found',
+    });
+  });
+
+  it('preserves legacy top-level upload errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      code: 'UPLOAD_REJECTED',
+      error: 'unsupported image',
+    }), { status: 400 })));
+    const screenshot = new File(['png'], 'screenshot.png', { type: 'image/png' });
+
+    await expect(uploadProjectFiles('project-1', [screenshot])).resolves.toMatchObject({
+      failed: [{
+        name: 'screenshot.png',
+        code: 'UPLOAD_REJECTED',
+        error: 'unsupported image',
+      }],
+      error: 'unsupported image',
+    });
+  });
+
+  it('falls back to the HTTP status for non-JSON proxy failures', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Request Entity Too Large', {
+      status: 413,
+      headers: { 'content-type': 'text/plain' },
+    })));
+    const screenshot = new File(['png'], 'screenshot.png', { type: 'image/png' });
+
+    await expect(uploadProjectFiles('project-1', [screenshot])).resolves.toMatchObject({
+      uploaded: [],
+      failed: [{ name: 'screenshot.png', error: 'Request failed (413).' }],
+      error: 'Request failed (413).',
+    });
+  });
+});
+
 describe('writeProjectTextFileDetailed', () => {
   afterEach(() => {
     vi.restoreAllMocks();

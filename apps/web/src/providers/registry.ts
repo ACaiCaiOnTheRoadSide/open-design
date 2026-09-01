@@ -2186,11 +2186,16 @@ export async function deleteLiveArtifact(
 
 async function readApiErrorBody(resp: Response): Promise<{ message: string; code?: string }> {
   try {
-    const json = (await resp.json()) as { error?: { code?: string; message?: string } | string; message?: string };
+    const json = (await resp.json()) as {
+      error?: { code?: string; message?: string } | string;
+      code?: string;
+      message?: string;
+    };
     const message = typeof json.error === 'string' ? json.error : json.error?.message ?? json.message;
+    const code = typeof json.error === 'object' ? json.error?.code : json.code;
     return {
       message: typeof message === 'string' && message.length > 0 ? message : `Request failed (${resp.status}).`,
-      ...(typeof json.error === 'object' && typeof json.error?.code === 'string' ? { code: json.error.code } : {}),
+      ...(typeof code === 'string' ? { code } : {}),
     };
   } catch {
     return { message: `Request failed (${resp.status}).` };
@@ -2859,15 +2864,13 @@ export async function uploadProjectFiles(
       );
 
       if (!resp.ok) {
-        const payload = (await resp.json().catch(() => null)) as
-          | { code?: string; error?: string }
-          | null;
-        error = payload?.error ?? `upload failed (${resp.status})`;
+        const failure = await readApiErrorBody(resp);
+        error = failure.message;
         for (const f of batch) {
-          failed.push({ name: f.name, code: payload?.code, error: error });
+          failed.push({ name: f.name, code: failure.code, error });
         }
         for (const f of remaining) {
-          failed.push({ name: f.name, code: payload?.code, error: error });
+          failed.push({ name: f.name, code: failure.code, error });
         }
         break;
       }
