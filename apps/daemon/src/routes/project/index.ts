@@ -26,7 +26,11 @@ import {
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
 import { readMeta as readBrandMeta } from '../../brands/store.js';
-import { runWithRequestContext } from '../../request-context.js';
+import {
+  captureRequestPrincipal,
+  runWithCapturedRequestContext,
+  runWithRequestContext,
+} from '../../request-context.js';
 import { createProjectArtifactFile } from '../../artifacts/create.js';
 import { ArtifactPublicationBlockedError } from '../../artifacts/publication-guard.js';
 import { ArtifactRegressionError } from '../../artifacts/stub-guard.js';
@@ -7418,8 +7422,15 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
   app.post(
     '/api/projects/:id/upload',
     (req, res, next) => {
+      // Multipart parsing is driven by request-stream async resources created
+      // before principal middleware enters ALS. Restore the already-verified
+      // principal around multer completion so the authority handler reached by
+      // next() cannot observe a missing identity.
+      const requestPrincipal = captureRequestPrincipal();
+      const continueInRequestContext = (error?: unknown) =>
+        runWithCapturedRequestContext(requestPrincipal, () => next(error));
       const project = getProject(db, req.params.id);
-      if (!projectSync) return handleProjectUpload(req, res, next);
+      if (!projectSync) return handleProjectUpload(req, res, continueInRequestContext);
       void projectSync.runMutation(req.params.id, project?.metadata, () =>
         new Promise<void>((resolve, reject) => {
           let settled = false;
@@ -7432,17 +7443,21 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
           };
           res.once('finish', settle);
           res.once('close', settle);
-          handleProjectUpload(req, res, (error?: unknown) => {
-            if (error) {
-              res.off('finish', settle);
-              res.off('close', settle);
-              reject(error);
-              return;
-            }
-            next();
+          runWithCapturedRequestContext(requestPrincipal, () => {
+            handleProjectUpload(req, res, (error?: unknown) => {
+              runWithCapturedRequestContext(requestPrincipal, () => {
+                if (error) {
+                  res.off('finish', settle);
+                  res.off('close', settle);
+                  reject(error);
+                  return;
+                }
+                next();
+              });
+            });
           });
         }),
-      ).catch(next);
+      ).catch(continueInRequestContext);
     },
     async (req, res) => {
       try {

@@ -1,9 +1,12 @@
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import type http from 'node:http';
+import { AsyncResource } from 'node:async_hooks';
+import fs from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAuthorizeProjectRequest } from '../src/collab/project-request-authority.js';
 import { createPrincipalAuthMiddleware } from '../src/principal-auth.js';
-import { requireRequestContext } from '../src/request-context.js';
+import { getRequestContext, requireRequestContext } from '../src/request-context.js';
+import { registerProjectUploadRoutes } from '../src/routes/project/index.js';
 
 describe('hosted unbound project HTTP tenancy', () => {
   let server: http.Server | undefined;
@@ -71,5 +74,63 @@ describe('hosted unbound project HTTP tenancy', () => {
       expect((await fetch(`${base}${path}`, { method: 'POST', headers: headers('tenant-a', 'user-a') })).status).toBe(200);
     }
     expect((await fetch(`${base}/api/projects/legacy`, { headers: headers('tenant-a', 'user-a') })).status).toBe(404);
+  });
+
+  it('restores the verified principal after multipart parsing leaves request ALS', async () => {
+    const app = express();
+    app.use('/api', createPrincipalAuthMiddleware({
+      enabled: true, source: 'trusted-proxy', apiToken: 'test-token',
+    }));
+    const detachedUploadResource = new AsyncResource('detached-project-upload');
+    registerProjectUploadRoutes(app, {
+      db: {},
+      http: {
+        sendApiError: (res: Response, status: number, code: string, message: string) =>
+          res.status(status).json({ error: { code, message } }),
+      },
+      uploads: {
+        handleProjectUpload: (req: Request, _res: Response, next: NextFunction) => {
+          detachedUploadResource.runInAsyncScope(() => {
+            req.files = [];
+            next();
+          });
+        },
+      },
+      node: { fs },
+      paths: { PROJECTS_DIR: '/tmp' },
+      projectStore: {
+        getProject: () => ({ id: 'owned-a', metadata: {} }),
+        getWorkspaceProject: () => null,
+        getWorkspaceProjectByProjectId: () => null,
+      },
+      projectFiles: { readProjectFile: async () => { throw new Error('not used'); } },
+      authorizeProjectRequest: async (_req: Request, res: Response) => {
+        if (getRequestContext()) return true;
+        res.status(403).json({ error: { code: 'PROJECT_PERMISSION_DENIED' } });
+        return false;
+      },
+    } as never);
+
+    const listeningServer = await new Promise<http.Server>((resolve, reject) => {
+      const started = app.listen(0, '127.0.0.1', (error?: Error) => {
+        if (error) reject(error);
+        else resolve(started);
+      });
+    });
+    server = listeningServer;
+    const address = listeningServer.address();
+    const base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+    const response = await fetch(`${base}/api/projects/owned-a/upload`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'x-tenant-id': 'tenant-a',
+        'x-od-user-id': 'user-a',
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ files: [] });
+    detachedUploadResource.emitDestroy();
   });
 });
