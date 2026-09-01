@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
+const FLUID_TIME_SCALE = 1.35;
+
 const VERTEX_SHADER = `
 attribute vec2 a_position;
 void main() {
@@ -310,7 +312,7 @@ export function HomePearlFluidBackground() {
         gl.uniform2f(resolutionLocation, width, height);
         gl.uniform2f(pointerLocation, pointer.x, pointer.y);
         gl.uniform2f(velocityLocation, velocity.x, velocity.y);
-        gl.uniform1f(timeLocation, (now - startedAt) / 1000);
+        gl.uniform1f(timeLocation, ((now - startedAt) / 1000) * FLUID_TIME_SCALE);
         gl.uniform1f(influenceLocation, influence);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
