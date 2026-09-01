@@ -40,6 +40,15 @@ export type AuthorizeProjectToolRequest = (
   options: AuthorizeProjectRequestOptions,
 ) => Promise<AuthorizedProjectToolRequest | null>;
 
+function principalShape(tenantId: string | undefined, userId: string | undefined) {
+  if (!tenantId || !userId) return 'missing';
+  if (tenantId === '__legacy__' || tenantId === '__legacy_quarantine__'
+    || userId === '__legacy__' || userId === '__legacy_quarantine__') return 'legacy';
+  if (tenantId === userId) return 'personal';
+  if (tenantId.endsWith(`/${userId}`)) return 'team-user';
+  return 'other';
+}
+
 export async function enforceLocalProjectDataPlaneRequest(input: {
   req: any;
   projectId: string;
@@ -261,6 +270,20 @@ export function createAuthorizeProjectRequest(deps: {
         || owner.tenantId !== principal.tenantId
         || owner.userId !== principal.userId
       ) {
+        const rawRequestId = req.get?.('x-request-id') ?? req.headers?.['x-request-id'];
+        const requestId = typeof rawRequestId === 'string' ? rawRequestId.slice(0, 128) : null;
+        console.warn('[project-authority] unbound owner denied', JSON.stringify({
+          requestId,
+          projectId,
+          mode: options.mode,
+          capability: options.mode === 'write' ? options.capability : null,
+          principalPresent: Boolean(principal),
+          ownerPresent: Boolean(owner),
+          tenantMatches: Boolean(principal && owner && owner.tenantId === principal.tenantId),
+          userMatches: Boolean(principal && owner && owner.userId === principal.userId),
+          principalShape: principalShape(principal?.tenantId, principal?.userId),
+          ownerShape: principalShape(owner?.tenantId, owner?.userId),
+        }));
         sendApiError(
           res,
           options.mode === 'read' ? 404 : 403,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAuthorizeProjectRequest } from '../../src/collab/project-request-authority.js';
 import { verifyWorkspaceRequestContext } from '../../src/collab/request-workspace-context.js';
 import { createCachedWorkspaceDirectoryFetcher } from '../../src/collab/vela-workspace-context.js';
@@ -12,10 +12,12 @@ function request(input: {
   workspaceId?: string;
   memberId?: string;
   query?: Record<string, string>;
+  requestId?: string;
 }) {
   const headers: Record<string, string | undefined> = {
     'x-od-workspace-id': input.workspaceId,
     'x-od-workspace-member-id': input.memberId,
+    'x-request-id': input.requestId,
   };
   return {
     query: input.query ?? {},
@@ -58,8 +60,11 @@ function context(overrides: Record<string, unknown> = {}) {
 }
 
 describe('createAuthorizeProjectRequest', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('isolates hosted unbound projects by durable tenant and user owner', async () => {
     const sendApiError = vi.fn();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const authorize = createAuthorizeProjectRequest({
       db: {},
       getWorkspaceProject: () => null,
@@ -75,8 +80,25 @@ describe('createAuthorizeProjectRequest', () => {
     )).resolves.toBe(true);
     await expect(runWithRequestContext(
       { tenantId: 'tenant-b', userId: 'user-a' },
-      () => authorize(request({}), response(), 'project-a', { mode: 'read' }),
+      () => authorize(request({ requestId: 'request-a' }), response(), 'project-a', { mode: 'read' }),
     )).resolves.toBe(false);
+    expect(warn).toHaveBeenLastCalledWith(
+      '[project-authority] unbound owner denied',
+      JSON.stringify({
+        requestId: 'request-a',
+        projectId: 'project-a',
+        mode: 'read',
+        capability: null,
+        principalPresent: true,
+        ownerPresent: true,
+        tenantMatches: false,
+        userMatches: true,
+        principalShape: 'other',
+        ownerShape: 'other',
+      }),
+    );
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('tenant-b');
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('user-a');
     expect(sendApiError).toHaveBeenLastCalledWith(
       expect.anything(), 404, 'PROJECT_NOT_FOUND', 'project not found',
     );
