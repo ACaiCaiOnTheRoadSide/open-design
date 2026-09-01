@@ -32,7 +32,7 @@ type TableSpec = LegacyMetadataTableSpec;
 type OwnerKind = 'library_asset' | 'library_task' | 'library_token' | 'library_embedding'
   | 'plugin' | 'plugin_marketplace' | 'plugin_snapshot';
 
-const IMPORT_VERSION = 2;
+const IMPORT_VERSION = 3;
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const QUARANTINE_TENANT = '__legacy_quarantine__';
 const FINGERPRINT: Record<string, readonly string[]> = {
@@ -203,8 +203,8 @@ export async function importLegacyPostgresMetadata(options: LegacyMetadataImport
       // upgrade repair from ordinary project UPDATE producers.
       const fillOwner = spec.name === 'projects'
         ? options.sqlite.prepare(`UPDATE projects SET
-            fact_tenant_id=CASE WHEN fact_tenant_id IS NULL OR fact_tenant_id='' THEN ? ELSE fact_tenant_id END,
-            fact_creator_id=CASE WHEN fact_creator_id IS NULL OR fact_creator_id='' THEN ? ELSE fact_creator_id END
+            fact_tenant_id=CASE WHEN fact_tenant_id IS NULL OR fact_tenant_id='' OR fact_tenant_id IN ('__legacy__','__legacy_quarantine__') THEN ? ELSE fact_tenant_id END,
+            fact_creator_id=CASE WHEN fact_creator_id IS NULL OR fact_creator_id='' OR fact_creator_id IN ('__legacy__','__legacy_quarantine__') OR fact_creator_id=fact_tenant_id THEN ? ELSE fact_creator_id END
           WHERE id = ?`)
         : spec.name === 'routines'
           ? options.sqlite.prepare(`UPDATE routines SET

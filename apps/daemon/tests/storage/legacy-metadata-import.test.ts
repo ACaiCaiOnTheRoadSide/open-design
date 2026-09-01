@@ -271,6 +271,25 @@ describe('legacy PostgreSQL metadata import', () => {
     });
   });
 
+  it('reruns v3 to replace a quarantined local owner with the recovered PostgreSQL owner', async () => {
+    const db = sqlite(); databases.push(db);
+    db.prepare('INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('p1', 'current project', '{"source":"sqlite"}', '__legacy_quarantine__', '__legacy_quarantine__', 100, 200);
+    db.exec('CREATE TABLE external_metadata_imports (source_id TEXT PRIMARY KEY, imported_at INTEGER NOT NULL)');
+    db.prepare('INSERT INTO external_metadata_imports VALUES (?, ?)')
+      .run('legacy-postgres-full-metadata:legacy:v2', 1);
+
+    await importLegacyPostgresMetadata({ sqlite: db, pg: pgSource(fullRows), schema: 'legacy' });
+
+    expect(db.prepare('SELECT name, metadata_json, fact_tenant_id, fact_creator_id FROM projects').get()).toEqual({
+      name: 'current project', metadata_json: '{"source":"sqlite"}', fact_tenant_id: 'tenant-1', fact_creator_id: 'user-1',
+    });
+    expect(db.prepare('SELECT source_id FROM external_metadata_imports ORDER BY source_id').all()).toEqual([
+      { source_id: 'legacy-postgres-full-metadata:legacy:v2' },
+      { source_id: 'legacy-postgres-full-metadata:legacy:v3' },
+    ]);
+  });
+
   it('treats a narrow facts schema as a no-op without recording a marker', async () => {
     const db = sqlite(); databases.push(db);
     const pg = pgSource({

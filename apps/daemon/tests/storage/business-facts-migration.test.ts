@@ -82,6 +82,18 @@ describe('business facts PostgreSQL migration contract', () => {
     expect(sql).toContain('ON CONFLICT (event_key) DO NOTHING');
   });
 
+  it('recovers only unambiguous synthetic project owners from durable usage facts', async () => {
+    const sql = await readFile(
+      path.join(resolvePgMigrationsDirectory(), '017_recover_legacy_project_owners.sql'),
+      'utf8',
+    );
+    expect(sql).toContain('FROM message_token_usage');
+    expect(sql).toContain('COUNT(DISTINCT ROW(tenant_id, user_id)) = 1');
+    expect(sql).toContain("project.tenant_id IN ('__legacy__', '__legacy_quarantine__')");
+    expect(sql).toContain('project.creator_id = project.tenant_id');
+    expect(sql).not.toMatch(/UPDATE\s+projects[\s\S]*WHERE\s+project\.id\s*=\s*principal\.project_id\s*;/u);
+  });
+
   it('defines privacy-safe per-tool facts for the admin dashboard', async () => {
     const sql = await readFile(
       path.join(resolvePgMigrationsDirectory(), '016_tool_call_facts.sql'),

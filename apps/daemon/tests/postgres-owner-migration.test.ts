@@ -83,6 +83,52 @@ describe.skipIf(!url)('real PostgreSQL owner migration', () => {
     }
   });
 
+  it('recovers only synthetic project owners with one durable usage principal', async () => {
+    const recoverySchema = `${schema}_recovery`;
+    const recovery = new Client({ connectionString: url });
+    let recoveryConnected = false;
+    try {
+      await recovery.connect();
+      recoveryConnected = true;
+      await recovery.query(`CREATE SCHEMA "${recoverySchema}"`);
+      await recovery.query(`SET search_path TO "${recoverySchema}"`);
+      for (const filename of ['004_business_facts.sql', '017_recover_legacy_project_owners.sql']) {
+        if (filename.startsWith('017')) {
+          await recovery.query(`INSERT INTO projects (id,name,tenant_id,creator_id,created_at,updated_at) VALUES
+            ('unique','Unique','__legacy__','__legacy__',1,1),
+            ('ambiguous','Ambiguous','__legacy__','__legacy__',1,1),
+            ('owned','Owned','tenant-real','user-real',1,1),
+            ('synthetic','Synthetic','tenant-synthetic','tenant-synthetic',1,1)`);
+          await recovery.query(`INSERT INTO conversations (id,project_id) VALUES
+            ('c1','unique'), ('c2','ambiguous'), ('c3','owned'), ('c4','synthetic')`);
+          await recovery.query(`INSERT INTO messages (id,conversation_id,created_at,updated_at) VALUES
+            ('m1','c1',1,1), ('m2','c2',1,1), ('m3','c2',1,1), ('m4','c3',1,1), ('m5','c4',1,1)`);
+          await recovery.query(`INSERT INTO message_token_usage
+            (event_key,user_id,tenant_id,project_id,conversation_id,message_id,model,created_at) VALUES
+            ('u1','user-a','tenant-a','unique','c1','m1','test',1),
+            ('a1','user-a','tenant-a','ambiguous','c2','m2','test',1),
+            ('a2','user-b','tenant-a','ambiguous','c2','m3','test',1),
+            ('o1','other-user','other-tenant','owned','c3','m4','test',1),
+            ('s1','user-s','tenant-synthetic','synthetic','c4','m5','test',1)`);
+        }
+        const sql = await readFile(path.resolve(import.meta.dirname, '../migrations/postgres', filename), 'utf8');
+        await recovery.query(sql);
+      }
+      const result = await recovery.query('SELECT id, tenant_id, creator_id FROM projects ORDER BY id');
+      expect(result.rows).toEqual([
+        { id: 'ambiguous', tenant_id: '__legacy__', creator_id: '__legacy__' },
+        { id: 'owned', tenant_id: 'tenant-real', creator_id: 'user-real' },
+        { id: 'synthetic', tenant_id: 'tenant-synthetic', creator_id: 'user-s' },
+        { id: 'unique', tenant_id: 'tenant-a', creator_id: 'user-a' },
+      ]);
+    } finally {
+      if (recoveryConnected) {
+        await recovery.query(`DROP SCHEMA IF EXISTS "${recoverySchema}" CASCADE`);
+        await recovery.end();
+      }
+    }
+  });
+
   it('applies 007 and enforces tenant-scoped identity plus backend uniqueness', async () => {
     client = new Client({ connectionString: url });
     await client.connect();
