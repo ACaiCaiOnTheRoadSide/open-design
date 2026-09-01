@@ -14,6 +14,8 @@ import {
   typeInComposer,
 } from '../helpers/lexical-composer';
 import type { ChatAttachment, ChatCommentAttachment } from '../../src/types';
+import { CollabProvider, type CollabContextValue } from '../../src/collab/collab-context';
+import { workspaceContextFixture } from '../helpers/workspace-context';
 
 vi.mock('../../src/providers/registry', async () => {
   const actual = await vi.importActual<typeof import('../../src/providers/registry')>(
@@ -33,6 +35,62 @@ afterEach(() => {
 });
 
 describe('ChatComposer /search command', () => {
+  it('uses the latest workspace identity when uploading an annotation screenshot', async () => {
+    const workspaceContext = workspaceContextFixture({
+      workspaceId: 'workspace-current',
+      workspaceMemberId: 'member-current',
+    });
+    const emptyWorkspaceContexts: [] = [];
+    const composer = (
+      <ChatComposer
+        projectId="project-1"
+        projectFiles={[]}
+        streaming={false}
+        onEnsureProject={async () => 'project-1'}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        initialWorkspaceContexts={emptyWorkspaceContexts}
+        workspaceContexts={emptyWorkspaceContexts}
+      />
+    );
+    const { rerender } = render(
+      <CollabProvider value={{ workspaceContext: null } as CollabContextValue}>
+        {composer}
+      </CollabProvider>,
+    );
+    mockedUploadProjectFiles.mockResolvedValue({
+      uploaded: [{ path: 'drawing.png', name: 'drawing.png', kind: 'image', size: 7 }],
+      failed: [],
+    });
+
+    rerender(
+      <CollabProvider value={{ workspaceContext } as CollabContextValue}>
+        {composer}
+      </CollabProvider>,
+    );
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(ANNOTATION_EVENT, {
+        detail: {
+          file: new File(['drawing'], 'drawing.png', { type: 'image/png' }),
+          note: 'update this area',
+          action: 'draft',
+          filePath: 'index.html',
+          markKind: 'stroke',
+          bounds: { x: 1, y: 2, width: 30, height: 40 },
+        },
+      }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mockedUploadProjectFiles).toHaveBeenCalledTimes(1));
+    expect(mockedUploadProjectFiles).toHaveBeenCalledWith(
+      'project-1',
+      [expect.objectContaining({ name: 'drawing.png' })],
+      undefined,
+      workspaceContext,
+    );
+  });
+
   it('sends staged file attachments even when the text draft is empty', async () => {
     const onSend = vi.fn();
     mockedUploadProjectFiles.mockResolvedValue({

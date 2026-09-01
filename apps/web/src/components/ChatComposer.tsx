@@ -2163,6 +2163,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       stagedVisualComments,
       streaming,
       t,
+      workspaceContext,
     ]);
 
     // Stages attachments that a surface already uploaded to the project itself
