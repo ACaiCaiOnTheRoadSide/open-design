@@ -15885,7 +15885,11 @@ function HtmlViewer({
           ? createPortal(
               <div
                 data-od-file-actions-owner={file.name}
-                style={{ display: workspaceActive ? 'contents' : 'none' }}
+                style={{
+                  display: workspaceActive ? 'inline-flex' : 'none',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
               >
                 {filePrimaryActions}
               </div>,

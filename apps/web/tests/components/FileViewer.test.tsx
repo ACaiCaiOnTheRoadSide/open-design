@@ -2438,6 +2438,9 @@ describe('FileViewer SVG artifacts', () => {
         expect(node).not.toBeNull();
         return node!;
       });
+      expect(owner.style.display).toBe('inline-flex');
+      expect(owner.style.gap).toBe('6px');
+      expect(within(owner).getByRole('button', { name: /export/i })).toBeInTheDocument();
 
       rerender(<FileViewer {...props} workspaceActive={false} />);
 
