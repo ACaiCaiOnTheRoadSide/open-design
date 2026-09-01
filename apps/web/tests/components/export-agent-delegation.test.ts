@@ -30,12 +30,26 @@ describe('agent export delegation', () => {
       fileName: 'pages/home.html',
       title: '../unsafe/name',
       format: 'jpeg',
+      deck: false,
     });
 
     expect(image.skillIds).toEqual(['html-to-image']);
     expect(image.outputName).toBe('-unsafe-name-full-page.jpg');
     expect(image.outputName).not.toContain('/');
     expect(image.prompt).toContain('whole scrollable page');
+    expect(image.prompt).not.toContain('with --deck');
+  });
+
+  it('forces deck rendering when the viewer identifies a slide deck', () => {
+    const image = buildImageAgentExport({
+      fileName: 'decks/launch.html',
+      title: 'Launch',
+      format: 'png',
+      deck: true,
+    });
+
+    expect(image.prompt).toContain('invoke render-image.mjs with --deck');
+    expect(image.prompt).toContain('every slide is captured and stitched');
   });
 
   it('delegates PDF through the renderer skill with deck pagination', () => {

@@ -117,13 +117,17 @@ against the workspace `node_modules`.
 
 ```bash
 . ${TMPDIR:-/tmp}/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
-node ${TMPDIR:-/tmp}/od-pptx-export/render-image.mjs --format <png|jpeg|webp|pdf> \
+node ${TMPDIR:-/tmp}/od-pptx-export/render-image.mjs [--deck] --format <png|jpeg|webp|pdf> \
   "<project-dir>/<page>.html" "<project-dir>/<page-title>-整页图.<png|jpg|webp|pdf>"
 ```
 
 - Pass `--format` with exactly the format the user chose (default `png` when
   unspecified). `--quality 1-100` tunes jpeg/webp compression (default 92).
   For PDF use a `.pdf` output name (the `-整页图` marker is optional).
+- When the export request says the viewer identified the artifact as a deck,
+  pass `--deck`. This authoritative signal prevents a deck whose DOM does not
+  satisfy the conservative auto-detection heuristic from degrading to a
+  first-slide-only ordinary-page screenshot.
 - The output path MUST be inside the project directory — that is what makes it
   sync back and appear in the user's file list.
 - Name the image after the page's human title when known, not the raw

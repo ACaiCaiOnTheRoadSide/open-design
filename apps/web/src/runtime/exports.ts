@@ -1008,12 +1008,13 @@ export async function exportProjectAsPptx(opts: {
 // `<section data-screen-label="...">` children toggled via `data-deck-active`)
 // and can carry no literal `class="slide"`, so metadata-only checks can miss
 // them. Older html-ppt templates use `.slide` together with deck-specific
-// structure such as `data-title` or a `.deck` wrapper. Deliberately DO NOT treat
+// structure such as `data-title`, a `.deck` wrapper, or a `.deck-stage` stage.
+// Deliberately DO NOT treat
 // a plain `.slide` class as proof of a deck: ordinary pages often use that token
 // for carousels/testimonials and still need full-page/scroll-stitch capture.
 function sourceLooksLikeStructuredDeck(source: string): boolean {
   return (
-    /<deck-stage[\s/>]|class\s*=\s*['"](?:[^'"]*\s)?(?:deck-slide|ppt-slide)(?:\s|['"])/i.test(
+    /<deck-stage[\s/>]|class\s*=\s*['"](?:[^'"]*\s)?(?:deck-stage|deck-slide|ppt-slide)(?:\s|['"])/i.test(
       source,
     ) ||
     /<[^>]*\bclass\s*=\s*['"](?:[^'"]*\s)?slide(?:\s|['"])[^>]*\bdata-title\s*=|<[^>]*\bdata-title\s*=[^>]*\bclass\s*=\s*['"](?:[^'"]*\s)?slide(?:\s|['"])/i.test(

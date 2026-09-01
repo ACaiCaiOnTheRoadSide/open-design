@@ -11,7 +11,7 @@
 // show-slide/restack paging semantics are the same as the html-to-pptx skill's
 // render-pptx.mjs (both port apps/desktop/src/main/deck-capture.ts).
 //
-// usage: node render-image.mjs [--format png|jpeg|webp|pdf] [--quality 1-100] <input.html> [output]
+// usage: node render-image.mjs [--deck] [--format png|jpeg|webp|pdf] [--quality 1-100] <input.html> [output]
 // env:   OD_IMAGE_SCALE   device scale factor for capture (default 1; 2 = crisper, slower)
 //        OD_IMAGE_WIDTH   viewport width for ordinary pages (default 1440)
 //        OD_PPTX_CHROMIUM browser binary (written into env.sh by setup-env.sh —
@@ -63,9 +63,12 @@ const argv = process.argv.slice(2);
 const positional = [];
 let format = 'png';
 let quality = 92;
+let forceDeck = false;
 for (let i = 0; i < argv.length; i++) {
   const arg = argv[i];
-  if (arg === '--format') {
+  if (arg === '--deck') {
+    forceDeck = true;
+  } else if (arg === '--format') {
     const value = String(argv[++i] ?? '').toLowerCase();
     format = value === 'jpg' ? 'jpeg' : value;
   } else if (arg.startsWith('--format=')) {
@@ -82,7 +85,7 @@ for (let i = 0; i < argv.length; i++) {
 const spec = FORMATS[format];
 const [inputArg, outputArg] = positional;
 if (!inputArg || !spec || !(Number.isFinite(quality) && quality >= 1 && quality <= 100)) {
-  console.error('usage: node render-image.mjs [--format png|jpeg|webp|pdf] [--quality 1-100] <input.html> [output]');
+  console.error('usage: node render-image.mjs [--deck] [--format png|jpeg|webp|pdf] [--quality 1-100] <input.html> [output]');
   process.exit(2);
 }
 // Accept a served URL too (see SKILL.md troubleshooting: pages whose relative
@@ -380,12 +383,12 @@ try {
   // whose DIRECT child is the slide (`.deck > .slide`, matching the web
   // signal's adjacency semantics — a deeper `.deck .wrapper .slide` is a page
   // there, so it must be a page here too). Runtime-managed decks
-  // (<deck-stage>, [data-screen-label]) and the explicit deck-slide/ppt-slide
-  // classes always count.
+  // (<deck-stage>, .deck-stage, [data-screen-label]) and the explicit
+  // deck-slide/ppt-slide classes always count.
   const deckInfo = await page.evaluate(
     ([selector, cloneAncestors]) => {
       const strong = document.querySelector(
-        'deck-stage, [data-screen-label], .deck-slide, .ppt-slide',
+        'deck-stage, .deck-stage, [data-screen-label], .deck-slide, .ppt-slide',
       );
       const titled = document.querySelector('.deck > .slide, .slide[data-title]');
       const count = Array.from(document.querySelectorAll(selector)).filter(
@@ -396,7 +399,12 @@ try {
     [SLIDE_SELECTOR, CLONE_ANCESTORS],
   );
 
-  if (!deckInfo.isDeck) {
+  const renderAsDeck = forceDeck || deckInfo.isDeck;
+  if (forceDeck && deckInfo.count === 0) {
+    throw new Error(`--deck was requested, but no slides matched ${SLIDE_SELECTOR}`);
+  }
+
+  if (!renderAsDeck) {
     // --- Ordinary page: one full-page screenshot (whole document height). ---
     await freezeAnimations(page);
     // Scroll prewarm (ports deck-capture.ts preparePageForCapture): step

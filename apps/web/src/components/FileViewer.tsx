@@ -14671,6 +14671,7 @@ function HtmlViewer({
             fileName: file.name,
             title: targetTitle,
             format: imageExportFormat,
+            deck: deckExportSignalForContext(context),
           });
           if (queued !== false) {
             fireImageExportResult('success', undefined, { countDownload: false, countDelivered: false });

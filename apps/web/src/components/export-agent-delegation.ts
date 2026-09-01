@@ -13,6 +13,7 @@ export interface ImageAgentExportRequest {
   fileName: string;
   title?: string;
   format: ImageExportFormat;
+  deck: boolean;
 }
 
 export interface PdfAgentExportRequest {
@@ -80,6 +81,9 @@ export function buildImageAgentExport(request: ImageAgentExportRequest): {
     skillIds: ['html-to-image'],
     prompt:
       `Export the existing HTML artifact ${quoted(request.fileName)} with the html-to-image skill as ${request.format}. ` +
+      (request.deck
+        ? 'The viewer has identified this artifact as a slide deck: invoke render-image.mjs with --deck so every slide is captured and stitched, even if DOM auto-detection is inconclusive. '
+        : 'Treat this artifact as an ordinary page unless the renderer detects explicit deck structure. ') +
       "Follow the skill exactly. Prepare Chromium only with the skill's bundled scripts/setup-env.sh; " +
       'do not improvise npm, apk, Playwright, or browser installation. ' +
       `Write the result inside the project directory with the exact safe filename ${quoted(outputName)}. ` +

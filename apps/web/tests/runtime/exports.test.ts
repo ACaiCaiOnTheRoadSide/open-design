@@ -95,6 +95,15 @@ describe('sourceLooksLikeExportableDeck (#4604 horizontal deck export)', () => {
     ).toBe(true);
   });
 
+  it('detects a class-based deck stage used by official slide templates', () => {
+    const src =
+      '<div class="deck-viewport"><main class="deck-stage" id="deckStage">' +
+      '<section class="slide active visible">A</section>' +
+      '<section class="slide">B</section>' +
+      '</main></div>';
+    expect(sourceLooksLikeExportableDeck(src)).toBe(true);
+  });
+
   it('detects explicit deck slide classes, but not plain .slide', () => {
     expect(sourceLooksLikeExportableDeck('<div class="slide">x</div>')).toBe(false);
     expect(sourceLooksLikeExportableDeck('<section class="slide">x</section>')).toBe(false);
