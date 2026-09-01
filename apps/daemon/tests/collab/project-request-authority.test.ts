@@ -85,7 +85,7 @@ describe('createAuthorizeProjectRequest', () => {
     expect(warn).toHaveBeenLastCalledWith(
       '[project-authority] unbound owner denied',
       JSON.stringify({
-        requestId: 'request-a',
+        requestIdPresent: true,
         projectId: 'project-a',
         mode: 'read',
         capability: null,

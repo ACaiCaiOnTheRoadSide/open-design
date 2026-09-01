@@ -271,9 +271,8 @@ export function createAuthorizeProjectRequest(deps: {
         || owner.userId !== principal.userId
       ) {
         const rawRequestId = req.get?.('x-request-id') ?? req.headers?.['x-request-id'];
-        const requestId = typeof rawRequestId === 'string' ? rawRequestId.slice(0, 128) : null;
         console.warn('[project-authority] unbound owner denied', JSON.stringify({
-          requestId,
+          requestIdPresent: typeof rawRequestId === 'string' && rawRequestId.length > 0,
           projectId,
           mode: options.mode,
           capability: options.mode === 'write' ? options.capability : null,
