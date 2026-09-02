@@ -4410,7 +4410,7 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 }
 [data-theme='dark'] .home-hero__title-logo {
   --home-logo-ink: #d9dee6;
-  --home-logo-paint: url(#aidesign-crater-pattern);
+  --home-logo-paint: var(--home-logo-ink);
   --home-logo-lunar-light: #f4f6f7;
   --home-logo-lunar-shadow: #6f7985;
   --home-logo-lunar-rim: #c5ccd3;
@@ -4423,7 +4423,7 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) .home-hero__title-logo {
     --home-logo-ink: #d9dee6;
-    --home-logo-paint: url(#aidesign-crater-pattern);
+    --home-logo-paint: var(--home-logo-ink);
     --home-logo-lunar-light: #f4f6f7;
     --home-logo-lunar-shadow: #6f7985;
     --home-logo-lunar-rim: #c5ccd3;
