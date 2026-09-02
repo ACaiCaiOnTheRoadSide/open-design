@@ -37,10 +37,10 @@ describe('applyAppearanceToDocument', () => {
     document.documentElement.style.removeProperty('--accent-hover');
   });
 
-  it('applies the forced light theme and accent variables to the root element', () => {
-    applyAppearanceToDocument({ accentColor: '#4F46E5' });
+  it('applies the selected theme and accent variables to the root element', () => {
+    applyAppearanceToDocument({ theme: 'dark', accentColor: '#4F46E5' });
 
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#4f46e5');
     expect(document.documentElement.style.getPropertyValue('--accent-hover')).toContain('#4f46e5');
   });
@@ -58,10 +58,10 @@ describe('applyAppearanceToDocument', () => {
     document.documentElement.style.removeProperty('--bg-app');
   });
 
-  it('applies accent variables while forcing a stale dark theme back to light', () => {
+  it('applies light mode over an existing dark theme', () => {
     document.documentElement.setAttribute('data-theme', 'dark');
 
-    applyAppearanceToDocument({ accentColor: '#10B981' });
+    applyAppearanceToDocument({ theme: 'light', accentColor: '#10B981' });
 
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#10b981');
@@ -84,12 +84,12 @@ describe('applyAppearanceToDocument', () => {
     expect(document.documentElement.style.getPropertyValue('--accent-hover')).toContain('#ef4444');
   });
 
-  it('falls back to the default accent when no valid accent is configured', () => {
+  it('falls back to the theme-specific CSS accent when no custom accent is configured', () => {
     document.documentElement.style.setProperty('--accent', '#4f46e5');
 
-    applyAppearanceToDocument({ accentColor: 'not-a-color' });
+    applyAppearanceToDocument({ theme: 'dark', accentColor: 'not-a-color' });
 
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    expect(document.documentElement.style.getPropertyValue('--accent')).toBe(DEFAULT_ACCENT_COLOR);
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('');
   });
 });

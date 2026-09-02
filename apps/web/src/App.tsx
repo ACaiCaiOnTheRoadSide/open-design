@@ -44,6 +44,8 @@ import {
 import { Toast } from './components/Toast';
 import { FeedbackQuickButton } from './components/FeedbackQuickButton';
 import { ThemeQuickMenu } from './components/ThemeQuickMenu';
+import { ThemeModeToggle } from './components/ThemeModeToggle';
+import { LunarSceneBackground } from './components/LunarSceneBackground';
 import { LanguageMenu } from './components/LanguageMenu';
 import { ConfirmDialogHost } from './components/confirm-dialog-host';
 import { CenteredLoader } from './components/Loading';
@@ -1766,14 +1768,10 @@ function AppInner() {
     agents,
   ]);
 
-  // Stamp the app appearance onto the <html> element so CSS variables pick it
-  // up. The theme itself is a constant (light-only), but the accent still comes
-  // from config, and the stamp must be re-applied whenever that changes.
-  // useLayoutEffect (vs useEffect) fires before the browser paints, so no
-  // 1-frame flash. Safe here because the component tree is ssr:false.
+  // useLayoutEffect (vs useEffect) applies appearance before the browser paints.
   useLayoutEffect(() => {
-    applyAppearanceToDocument({ accentColor: config.accentColor });
-  }, [config.accentColor]);
+    applyAppearanceToDocument({ theme: config.theme, accentColor: config.accentColor });
+  }, [config.theme, config.accentColor]);
 
   // Tell the daemon what the user is currently looking at, so the MCP
   // server can surface it as `get_active_context` to a coding agent in
@@ -5175,6 +5173,7 @@ function AppInner() {
   }
   return (
     <>
+      <LunarSceneBackground theme={config.theme} />
       <div
         className={`workspace-shell workspace-shell--${clientType}`}
         data-client-type={clientType}
@@ -5239,6 +5238,7 @@ function AppInner() {
       {route.kind === 'home' && route.view === 'home' ? (
         <div className="quick-entry-cluster">
           <LanguageMenu compact placement="down" align="end" />
+          <ThemeModeToggle theme={config.theme} onChange={handleQuickThemeChange} />
           <ThemeQuickMenu
             config={config}
             onThemeChange={handleQuickThemeChange}

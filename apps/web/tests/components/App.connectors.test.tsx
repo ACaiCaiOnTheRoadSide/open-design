@@ -268,7 +268,7 @@ describe('App connectors settings flows', () => {
     vi.clearAllMocks();
   });
 
-  it('persists and applies a quick accent change while keeping the hosted app light-only', async () => {
+  it('persists and applies a quick accent change without changing the selected theme', async () => {
     mockedLoadConfig.mockReturnValue({ ...baseConfig, theme: 'light', accentColor: '#353535' });
     render(<App />);
 
@@ -286,6 +286,20 @@ describe('App connectors settings flows', () => {
     });
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#f04142');
+  });
+
+  it('persists and applies the top-right dark-mode toggle', async () => {
+    mockedLoadConfig.mockReturnValue({ ...baseConfig, theme: 'light', accentColor: '#353535' });
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId('theme-mode-toggle'));
+
+    await waitFor(() => {
+      expect(mockedSaveConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ theme: 'dark', accentColor: '#353535' }),
+      );
+    });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
   });
 
   it('hydrates a daemon-saved Composio key into settings when local state does not have a pending edit', async () => {

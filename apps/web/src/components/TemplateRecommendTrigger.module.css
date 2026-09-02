@@ -30,6 +30,18 @@
   opacity: 0.55;
 }
 
+/* Neutral accent palettes can make --accent and --accent-tint resolve to the
+   same dark tone. Keep the label and sparkle legible against that fill. */
+:global([data-theme='dark']) .trigger.trigger {
+  color: var(--text-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(html:not([data-theme])) .trigger.trigger {
+    color: var(--text-strong);
+  }
+}
+
 /* 对话 staged 行的 22px 紧凑规格 */
 .compact.compact {
   gap: 4px;

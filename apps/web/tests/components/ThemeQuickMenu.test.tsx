@@ -44,7 +44,7 @@ describe('ThemeQuickMenu', () => {
     expect(screen.queryByTestId('theme-quick-menu')).toBeNull();
   });
 
-  it('keeps accent controls reachable under the light-only policy', () => {
+  it('can show only accent controls when mode switching has a separate button', () => {
     render(
       <ThemeQuickMenu
         config={{ theme: 'light', accentColor: '#353535' }}

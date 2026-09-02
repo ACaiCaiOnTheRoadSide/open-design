@@ -25,6 +25,7 @@
     radial-gradient(48% 42% at 82% 94%, var(--wash-peach) 0%, transparent 64%),
     radial-gradient(56% 48% at 14% 102%, var(--wash-mist) 0%, transparent 70%),
     linear-gradient(var(--wash-base), var(--wash-base));
+  --dark-lunar-wash: linear-gradient(180deg, #070a0f, #020305);
 
   /* Veils: translucent stand-ins for the solid backgrounds of the page
      containers between body and the content surfaces. One token per
@@ -54,6 +55,7 @@
    something to show without tinting the workspace. Veil tokens derive from
    --bg/--bg-panel and flip with the theme on their own. */
 [data-theme='dark'] {
+  --app-wash: var(--dark-lunar-wash);
   --wash-base: #202020;
   --wash-blue: rgba(96, 126, 178, 0.14);
   --wash-pink: rgba(168, 110, 142, 0.1);
@@ -62,6 +64,7 @@
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) {
+    --app-wash: var(--dark-lunar-wash);
     --wash-base: #202020;
     --wash-blue: rgba(96, 126, 178, 0.14);
     --wash-pink: rgba(168, 110, 142, 0.1);
@@ -80,6 +83,32 @@ body::before {
   z-index: -1;
   pointer-events: none;
   background: var(--app-wash);
+  background-position: center top;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+/* The dark scene matches design-prompt's textured WebGL globe. The app shell
+   forms the content layer above it; the canvas itself never receives input. */
+.app-lunar-atmosphere,
+.app-lunar-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.app-lunar-atmosphere {
+  opacity: 1;
+  mix-blend-mode: normal;
+}
+.app-lunar-fallback {
+  background: #020305 url('/backgrounds/lunar-globe-fallback.jpg') top left / cover no-repeat;
+}
+.workspace-shell {
+  position: relative;
+  z-index: 1;
 }
 
 /* Windows desktop windows are opaque, so blend the existing neutral surfaces

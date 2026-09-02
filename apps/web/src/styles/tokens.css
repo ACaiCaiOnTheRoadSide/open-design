@@ -148,11 +148,13 @@
   --border-selected: #a3a3a3;
   --border-soft: #494949;
 
+  /* Keep secondary copy distinct without letting small labels disappear into
+     dark panels. Even the faint tier clears 4.5:1 against --bg-panel. */
   --text: #ededed;
   --text-strong: #fafafa;
   --text-muted: #bdbdbd;
-  --text-soft: #848484;
-  --text-faint: #5c5c5c;
+  --text-soft: #a8a8a2;
+  --text-faint: #9e9e98;
 
   --accent: #ededed;
   --accent-contrast: #202020;
@@ -209,11 +211,13 @@
     --border-selected: #a3a3a3;
     --border-soft: #494949;
 
+    /* Match the explicit dark theme so system mode keeps the same readable
+       secondary hierarchy on dark surfaces. */
     --text: #ededed;
     --text-strong: #fafafa;
     --text-muted: #bdbdbd;
-    --text-soft: #848484;
-    --text-faint: #5c5c5c;
+    --text-soft: #a8a8a2;
+    --text-faint: #9e9e98;
 
     --accent: #ededed;
     --accent-contrast: #202020;

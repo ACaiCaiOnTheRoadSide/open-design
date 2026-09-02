@@ -9,7 +9,7 @@ interface Props {
   config: Pick<AppConfig, 'theme' | 'accentColor'>;
   onThemeChange: (theme: AppTheme) => void;
   onAccentColorChange: (color: string) => void;
-  /** Light-only products keep the useful accent picker reachable without advertising unsupported modes. */
+  /** Hide mode controls when a separate one-click theme toggle is displayed. */
   showThemeModes?: boolean;
 }
 

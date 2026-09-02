@@ -2594,6 +2594,7 @@ a.avatar-item:visited {
   box-shadow: var(--shadow-lg, 0 14px 36px rgba(0, 0, 0, 0.14));
 }
 
+.theme-mode-toggle,
 .theme-quick-menu__trigger {
   display: inline-flex;
   align-items: center;
@@ -2608,6 +2609,8 @@ a.avatar-item:visited {
   cursor: pointer;
 }
 
+.theme-mode-toggle:hover,
+.theme-mode-toggle:focus-visible,
 .theme-quick-menu__trigger:hover,
 .theme-quick-menu__trigger.is-active {
   background: var(--bg-subtle);

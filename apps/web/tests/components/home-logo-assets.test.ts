@@ -6,6 +6,7 @@ const read = (relative: string) =>
 
 const homeHeroSource = read('../../src/components/HomeHero.tsx');
 const aidesignWordmarkSource = read('../../src/components/AIDesignWordmark.tsx');
+const homeHeroCss = read('../../src/styles/home/home-hero.css');
 const entryNavRailSource = read('../../src/components/EntryNavRail.tsx');
 const logoSvg = read('../../public/logo.svg');
 const brandIconSvg = read('../../public/brand-icon.svg');
@@ -33,6 +34,14 @@ describe('Home logo assets', () => {
     expect(brandIconSvg).toContain('currentColor');
   });
 
+  it('centers the desktop title and composer on the viewport', () => {
+    expect(homeHeroCss).toMatch(
+      /@media \(min-width: 1281px\) \{[\s\S]*?\.home-view \{[\s\S]*?transform: none;/,
+    );
+    expect(homeHeroCss).toContain('width: min(820px, calc(100vw - 620px));');
+    expect(homeHeroCss).toContain('left: calc(50% - 710px);');
+  });
+
   it('renders the AIDesign wordmark on the Home hero', () => {
     expect(heroLogotypeSvg).toContain('<title id="title">AIDesign</title>');
     expect(heroLogotypeSvg).toContain('#F1BC45');
@@ -42,8 +51,33 @@ describe('Home logo assets', () => {
     expect(homeHeroSource).toContain('<AIDesignWordmark />');
     expect(homeHeroSource).not.toContain('aidesignWordmark.src');
     expect(aidesignWordmarkSource).toContain('viewBox="0 36 640 266"');
-    expect(aidesignWordmarkSource).toContain('fill="#F1BC45"');
-    expect(aidesignWordmarkSource).toContain('fill="#F3C6D8"');
+    expect(aidesignWordmarkSource).toContain('var(--home-logo-ink, #3156C8)');
+    expect(aidesignWordmarkSource).toContain('id="aidesign-crater-pattern"');
+    expect(aidesignWordmarkSource).toContain('url(#aidesign-crater-bowl)');
+    expect(aidesignWordmarkSource).toContain('var(--home-logo-paint, var(--home-logo-ink, #3156C8))');
+    expect(aidesignWordmarkSource).toContain('var(--home-logo-star-primary, #F1BC45)');
+    expect(aidesignWordmarkSource).toContain('var(--home-logo-star-secondary, #F3C6D8)');
+    expect(homeHeroCss).toMatch(
+      /\[data-theme='dark'\] \.home-hero__title-logo\s*{[\s\S]*?--home-logo-ink: #d9dee6;/,
+    );
+    expect(homeHeroCss).toMatch(
+      /html:not\(\[data-theme\]\) \.home-hero__title-logo\s*{[\s\S]*?--home-logo-ink: #d9dee6;/,
+    );
+    expect(homeHeroCss).toMatch(
+      /\[data-theme='dark'\] \.home-hero__title-logo\s*{[\s\S]*?--home-logo-paint: url\(#aidesign-crater-pattern\);/,
+    );
+    expect(homeHeroCss).toMatch(
+      /html:not\(\[data-theme\]\) \.home-hero__title-logo\s*{[\s\S]*?--home-logo-paint: url\(#aidesign-crater-pattern\);/,
+    );
+    expect(homeHeroCss).toContain('--home-logo-paint: var(--home-logo-ink);');
+    expect(aidesignWordmarkSource).toContain('home-hero__title-star--primary');
+    expect(aidesignWordmarkSource).toContain('home-hero__title-star--secondary');
+    expect(homeHeroCss).toMatch(
+      /\[data-theme='dark'\] \.home-hero__title-logo\s*{[\s\S]*?--home-logo-star-primary: #ffd76a;[\s\S]*?--home-logo-star-secondary: #f6b93b;/,
+    );
+    expect(homeHeroCss).toContain('animation: home-logo-star-twinkle 2.8s ease-in-out infinite;');
+    expect(homeHeroCss).toContain('drop-shadow(0 0 18px rgba(255, 174, 28, 0.56))');
+    expect(homeHeroCss).toContain('drop-shadow(0 0 15px rgba(244, 153, 19, 0.5))');
     expect(homeHeroSource).toContain('home-hero__logo-particle');
     expect(homeHeroSource).toContain('home-hero__logo-bird');
     expect(homeHeroSource).not.toContain("t('homeHero.subtitlePrefix')");

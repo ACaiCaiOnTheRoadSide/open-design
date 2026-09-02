@@ -12,6 +12,8 @@ const CURATED_PROTOTYPE_PLUGIN_IDS = [
   'example-social-carousel',
   'example-blog-post',
   'example-doc-kami-parchment',
+  'example-motionsites-fastshot-hero',
+  'example-motionsites-mainframe-hero',
 ] as const;
 
 // Wireframe scenario: lo-fi / sketch explorations across distinct styles —
