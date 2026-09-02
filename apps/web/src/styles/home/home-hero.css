@@ -5415,9 +5415,8 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 
   .home-hero__template-sidebar {
     position: absolute;
-    /* Match the composer's measured fractional baseline at the desktop layout;
-       rounding this to 7px leaves the two glass panel tops visibly stepped. */
-    top: calc(var(--home-hero-composer-top) + 7.4375px);
+    /* Share the composer's top offset so both glass panels form one baseline. */
+    top: var(--home-hero-composer-top);
     left: -440px;
     z-index: 3;
     display: flex;
@@ -5974,18 +5973,20 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   }
 }
 
-/* Reserve only enough room for the transparent brand/action row rendered by
-   App; unlike the removed tab strip, this does not paint a separate panel. */
+/* Reserve room for the lowered wordmark without recreating a top panel. The
+   shared offset also keeps the template library flush with the composer. */
 .home-hero,
 .home-view > .home-hero,
 .home-view--centered .home-hero {
-  padding-top: 96px;
+  --home-hero-composer-top: 112px;
+  padding-top: var(--home-hero-composer-top);
 }
 
 @media (max-width: 600px) {
   .home-hero,
   .home-view > .home-hero,
   .home-view--centered .home-hero {
-    padding-top: 82px;
+    --home-hero-composer-top: 100px;
+    padding-top: var(--home-hero-composer-top);
   }
 }

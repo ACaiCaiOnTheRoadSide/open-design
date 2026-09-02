@@ -85,15 +85,20 @@ describe('Home logo assets', () => {
     expect(entryNavRailSource).not.toContain('src="/app-icon.svg"');
   });
 
-  it('places the Home wordmark and quick actions in one header row', () => {
+  it('keeps Home branding below the top-edge actions without a chrome strip', () => {
     expect(appSource).toContain("' workspace-shell--home'");
     expect(shellCss).toMatch(
       /\.workspace-shell--home\s*{[\s\S]*?--workspace-tabs-chrome-height: 0px;[\s\S]*?grid-template-rows: 0 minmax\(0, 1fr\);/,
     );
     expect(appSource).toContain('className="home-brand-row"');
     expect(shellCss).toMatch(
-      /\.home-brand-row\s*{[\s\S]*?position: fixed;[\s\S]*?justify-content: space-between;[\s\S]*?height: 76px;/,
+      /\.home-brand-row\s*{[\s\S]*?position: fixed;[\s\S]*?top: 72px;[\s\S]*?height: 104px;/,
     );
-    expect(shellCss).toContain('width: clamp(150px, 24vw, 220px);');
+    expect(shellCss).toMatch(
+      /\.quick-entry-cluster\s*{[\s\S]*?position: fixed;[\s\S]*?top: 12px;[\s\S]*?right: 16px;/,
+    );
+    expect(shellCss).toContain('width: clamp(220px, 22vw, 280px);');
+    expect(homeHeroCss).toContain('top: var(--home-hero-composer-top);');
+    expect(homeHeroCss).toContain('--home-hero-composer-top: 112px;');
   });
 });

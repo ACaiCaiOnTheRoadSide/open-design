@@ -2553,29 +2553,37 @@ a.avatar-item:visited {
   outline: none;
 }
 
-/* Home brand and hosted quick actions share one transparent row over the
-   immersive scene instead of occupying a separate chrome strip. */
+/* Home branding floats below the window controls while quick actions stay
+   near the top edge; neither paints a separate chrome strip. */
 .home-brand-row {
   position: fixed;
-  inset: 0 0 auto;
+  top: 72px;
+  right: 0;
+  left: 0;
   z-index: 300;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 76px;
-  padding: 4px 24px;
+  justify-content: flex-end;
+  height: 104px;
+  padding: 0 24px;
   pointer-events: none;
 }
 .home-brand-row__title {
-  width: clamp(150px, 24vw, 220px);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: clamp(220px, 22vw, 280px);
   margin: 0;
   pointer-events: none;
+  transform: translate(-50%, -50%);
 }
 .home-brand-row__title .home-hero__title-mark {
   width: 100%;
 }
 .quick-entry-cluster {
-  position: relative;
+  position: fixed;
+  top: 12px;
+  right: 16px;
   z-index: 1;
   display: flex;
   align-items: center;
@@ -2586,11 +2594,18 @@ a.avatar-item:visited {
 
 @media (max-width: 600px) {
   .home-brand-row {
-    height: 64px;
-    padding: 2px 12px;
+    top: 40px;
+    height: 88px;
+    padding: 0 12px;
+  }
+  .quick-entry-cluster {
+    top: 8px;
+    right: 12px;
   }
   .home-brand-row__title {
-    width: 150px;
+    left: 12px;
+    width: 180px;
+    transform: translateY(-50%);
   }
 }
 
