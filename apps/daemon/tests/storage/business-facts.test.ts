@@ -119,12 +119,13 @@ describe('BusinessFactsStore', () => {
     await store.upsertMessage({
       id: 'msg', conversationId: 'c', projectId: 'p', runStatus: 'succeeded', createdAt: 1, updatedAt: 2,
     }, undefined, [{
-      eventKey, runId: 'run-1', name: 'image_generate', result: 'success',
+      eventKey, runId: 'run-1', name: 'mcp__image-service__generate', result: 'failed',
       startedAt: 10, completedAt: 40,
     }]);
     expect(sql.at(-1)).toContain('INSERT INTO tool_call_facts');
     expect(values.at(-1)?.slice(0, 3)).toEqual([eventKey, 'run-1', 'u']);
-    expect(values.at(-1)?.at(11)).toBe(30);
+    expect(values.at(-1)?.slice(8, 12)).toEqual(['mcp', 'image-service', 'generate', 'failed']);
+    expect(values.at(-1)?.at(14)).toBe(30);
   });
 
   it('increments a project outcome only when its event key is first inserted', async () => {

@@ -271,6 +271,7 @@ describe('postgres migrations', () => {
       '015_backfill_appstats_run_results.sql',
       '016_tool_call_facts.sql',
       '017_recover_legacy_project_owners.sql',
+      '018_tool_call_dimensions.sql',
     ]);
     for (const filename of sqlFiles) {
       const sql = await readFile(path.join(directory, filename), 'utf8');
@@ -303,6 +304,7 @@ describe('postgres migrations', () => {
       '015_backfill_appstats_run_results.sql',
       '016_tool_call_facts.sql',
       '017_recover_legacy_project_owners.sql',
+      '018_tool_call_dimensions.sql',
     ]);
     const projectScopeSql = fake.calls.find(({ sql }) => sql.includes('ADD COLUMN IF NOT EXISTS project_id'))?.sql;
     expect(projectScopeSql).toContain('memory_entries_project_id_check');

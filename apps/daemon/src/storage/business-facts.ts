@@ -48,9 +48,25 @@ export interface ToolCallFact {
   eventKey: string;
   runId: string;
   name: string;
+  toolType?: 'builtin' | 'mcp';
+  mcpServerName?: string;
+  mcpToolName?: string;
   result: 'success' | 'failed' | 'unknown';
   startedAt: number;
   completedAt: number;
+}
+
+export function toolCallDimensions(name: string): Pick<ToolCallFact, 'toolType' | 'mcpServerName' | 'mcpToolName'> {
+  if (!name.startsWith('mcp__')) {
+    return { toolType: 'builtin', mcpServerName: '', mcpToolName: '' };
+  }
+  const qualifiedName = name.slice('mcp__'.length);
+  const separator = qualifiedName.indexOf('__');
+  return {
+    toolType: 'mcp',
+    mcpServerName: separator >= 0 ? qualifiedName.slice(0, separator) || 'unknown' : 'unknown',
+    mcpToolName: separator >= 0 ? qualifiedName.slice(separator + 2) || 'unknown' : qualifiedName || 'unknown',
+  };
 }
 
 export interface BusinessFactsStore {
@@ -298,20 +314,30 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
           );
         }
         for (const call of toolCalls) {
+          const dimensions = {
+            ...toolCallDimensions(call.name),
+            ...(call.toolType ? { toolType: call.toolType } : {}),
+            ...(call.mcpServerName !== undefined ? { mcpServerName: call.mcpServerName } : {}),
+            ...(call.mcpToolName !== undefined ? { mcpToolName: call.mcpToolName } : {}),
+          };
           await client.query(
             `INSERT INTO tool_call_facts
                (event_key, run_id, user_id, tenant_id, project_id, conversation_id,
-                message_id, tool_name, result, started_at, completed_at, duration_ms)
-             SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+                message_id, tool_name, tool_type, mcp_server_name, mcp_tool_name,
+                result, started_at, completed_at, duration_ms)
+             SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
              WHERE EXISTS (
                SELECT 1 FROM messages m JOIN conversations c ON c.id = m.conversation_id
                 WHERE m.id = $7 AND c.id = $6 AND c.project_id = $5 AND (
-                  EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id AND p.tenant_id = $13)
-                  OR EXISTS (SELECT 1 FROM deleted_projects p WHERE p.id = c.project_id AND p.tenant_id = $13)
+                  EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id AND p.tenant_id = $16)
+                  OR EXISTS (SELECT 1 FROM deleted_projects p WHERE p.id = c.project_id AND p.tenant_id = $16)
                 )
              )
              ON CONFLICT (event_key) DO UPDATE SET
                tool_name = CASE WHEN EXCLUDED.tool_name = 'other' THEN tool_call_facts.tool_name ELSE EXCLUDED.tool_name END,
+               tool_type = CASE WHEN EXCLUDED.tool_name = 'other' THEN tool_call_facts.tool_type ELSE EXCLUDED.tool_type END,
+               mcp_server_name = CASE WHEN EXCLUDED.tool_name = 'other' THEN tool_call_facts.mcp_server_name ELSE EXCLUDED.mcp_server_name END,
+               mcp_tool_name = CASE WHEN EXCLUDED.tool_name = 'other' THEN tool_call_facts.mcp_tool_name ELSE EXCLUDED.mcp_tool_name END,
                result = CASE WHEN EXCLUDED.result = 'unknown' THEN tool_call_facts.result ELSE EXCLUDED.result END,
                started_at = LEAST(tool_call_facts.started_at, EXCLUDED.started_at),
                completed_at = GREATEST(tool_call_facts.completed_at, EXCLUDED.completed_at),
@@ -321,7 +347,8 @@ export function createBusinessFactsStore(options?: Partial<BusinessFactsStoreOpt
                AND tool_call_facts.tenant_id = EXCLUDED.tenant_id`,
             [
               call.eventKey, call.runId, actor.userId, actor.tenantId, fact.projectId,
-              fact.conversationId, fact.id, call.name, call.result, call.startedAt,
+              fact.conversationId, fact.id, call.name, dimensions.toolType,
+              dimensions.mcpServerName, dimensions.mcpToolName, call.result, call.startedAt,
               call.completedAt, Math.max(0, call.completedAt - call.startedAt), actor.tenantId,
             ],
           );

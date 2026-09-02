@@ -104,5 +104,16 @@ describe('business facts PostgreSQL migration contract', () => {
     expect(sql).toContain("CHECK (result IN ('success', 'failed', 'unknown'))");
     expect(sql).toContain('duration_ms bigint NOT NULL');
     expect(sql).not.toMatch(/\b(input|output|prompt|content)\s+text\b/);
+
+    const dimensionsSql = await readFile(
+      path.join(resolvePgMigrationsDirectory(), '018_tool_call_dimensions.sql'),
+      'utf8',
+    );
+    expect(dimensionsSql).toContain("CHECK (tool_type IN ('builtin', 'mcp'))");
+    expect(dimensionsSql).toContain('mcp_server_name text NOT NULL');
+    expect(dimensionsSql).toContain('mcp_tool_name text NOT NULL');
+    expect(dimensionsSql).toContain('BEFORE INSERT OR UPDATE OF tool_name');
+    expect(dimensionsSql).toContain('EXECUTE FUNCTION set_tool_call_dimensions()');
+    expect(dimensionsSql).not.toMatch(/\b(input|output|prompt|content)\s+text\b/);
   });
 });
