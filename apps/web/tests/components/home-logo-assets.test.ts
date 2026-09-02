@@ -6,7 +6,9 @@ const read = (relative: string) =>
 
 const homeHeroSource = read('../../src/components/HomeHero.tsx');
 const aidesignWordmarkSource = read('../../src/components/AIDesignWordmark.tsx');
+const appSource = read('../../src/App.tsx');
 const homeHeroCss = read('../../src/styles/home/home-hero.css');
+const shellCss = read('../../src/styles/shell.css');
 const entryNavRailSource = read('../../src/components/EntryNavRail.tsx');
 const logoSvg = read('../../public/logo.svg');
 const brandIconSvg = read('../../public/brand-icon.svg');
@@ -33,17 +35,19 @@ describe('Home logo assets', () => {
     expect(brandIconSvg).toContain('currentColor');
   });
 
-  it('centers the desktop title and composer on the viewport', () => {
-    expect(homeHeroCss).toMatch(
-      /@media \(min-width: 1281px\) \{[\s\S]*?\.home-view \{[\s\S]*?transform: none;/,
+  it('centers the full desktop template-and-composer group', () => {
+    expect(homeHeroCss).toContain(
+      'transform: translateX(clamp(220px, calc(50vw - 462px), 342px));',
     );
-    expect(homeHeroCss).toContain('width: min(820px, calc(100vw - 620px));');
-    expect(homeHeroCss).toContain('left: calc(50% - 710px);');
+    expect(homeHeroCss).toContain('transform: translateX(-220px);');
+    expect(homeHeroCss).toContain('left: -440px;');
+    expect(homeHeroCss).toContain('width: 400px;');
   });
 
   it('renders the complete OhMyDesign wordmark on the Home hero', () => {
-    expect(homeHeroSource).toContain("import { AIDesignWordmark } from './AIDesignWordmark'");
-    expect(homeHeroSource).toContain('<AIDesignWordmark />');
+    expect(appSource).toContain("import { AIDesignWordmark } from './components/AIDesignWordmark'");
+    expect(appSource).toContain('<AIDesignWordmark />');
+    expect(homeHeroSource).not.toContain('<AIDesignWordmark />');
     expect(homeHeroSource).not.toContain('aidesignWordmark.src');
     expect(aidesignWordmarkSource).toContain('<title id="ohmydesign-wordmark-title">OhMyDesign</title>');
     expect(aidesignWordmarkSource).toContain('viewBox="20 140 472 200"');
@@ -68,8 +72,8 @@ describe('Home logo assets', () => {
     expect(homeHeroCss).toContain('animation: home-logo-star-twinkle 2.8s ease-in-out infinite;');
     expect(homeHeroCss).toContain('drop-shadow(0 0 18px rgba(255, 174, 28, 0.56))');
     expect(homeHeroCss).toContain('drop-shadow(0 0 15px rgba(244, 153, 19, 0.5))');
-    expect(homeHeroSource).toContain('home-hero__logo-particle');
-    expect(homeHeroSource).toContain('home-hero__logo-bird');
+    expect(appSource).toContain('home-hero__logo-particle');
+    expect(appSource).toContain('home-hero__logo-bird');
     expect(homeHeroSource).not.toContain("t('homeHero.subtitlePrefix')");
     expect(homeHeroSource).not.toContain('src="/app-icon.svg"');
 
@@ -79,5 +83,17 @@ describe('Home logo assets', () => {
     // brand mark at all; what still matters is that it never falls back to the
     // retired raster app icon.
     expect(entryNavRailSource).not.toContain('src="/app-icon.svg"');
+  });
+
+  it('places the Home wordmark and quick actions in one header row', () => {
+    expect(appSource).toContain("' workspace-shell--home'");
+    expect(shellCss).toMatch(
+      /\.workspace-shell--home\s*{[\s\S]*?--workspace-tabs-chrome-height: 0px;[\s\S]*?grid-template-rows: 0 minmax\(0, 1fr\);/,
+    );
+    expect(appSource).toContain('className="home-brand-row"');
+    expect(shellCss).toMatch(
+      /\.home-brand-row\s*{[\s\S]*?position: fixed;[\s\S]*?justify-content: space-between;[\s\S]*?height: 76px;/,
+    );
+    expect(shellCss).toContain('width: clamp(150px, 24vw, 220px);');
   });
 });

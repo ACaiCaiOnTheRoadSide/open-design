@@ -5406,18 +5406,11 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 @media (min-width: 1281px) {
   .home-view {
     width: min(1120px, calc(100% - 440px));
-    transform: none;
+    transform: translateX(clamp(220px, calc(50vw - 462px), 342px));
   }
 
   .home-hero__title-block {
-    align-self: center;
-    transform: none;
-  }
-
-  .home-hero__composer-card,
-  .home-view > .recent-projects {
-    width: min(820px, calc(100vw - 620px));
-    align-self: center;
+    transform: translateX(-220px);
   }
 
   .home-hero__template-sidebar {
@@ -5425,11 +5418,11 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
     /* Match the composer's measured fractional baseline at the desktop layout;
        rounding this to 7px leaves the two glass panel tops visibly stepped. */
     top: calc(var(--home-hero-composer-top) + 7.4375px);
-    left: calc(50% - 710px);
+    left: -440px;
     z-index: 3;
     display: flex;
     box-sizing: border-box;
-    width: 280px;
+    width: 400px;
     height: min(583px, calc(100vh - 241px));
     min-height: 420px;
     flex-direction: column;
@@ -5546,8 +5539,8 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   }
 
   .home-hero__template-sidebar .home-hero__plugin-presets-wrap {
-    --home-plugin-preset-preview-h: 88px;
-    --home-plugin-preset-card-h: 120px;
+    --home-plugin-preset-preview-h: 120px;
+    --home-plugin-preset-card-h: 154px;
   }
 
   .home-hero__template-sidebar .home-hero__template-catalogs {
@@ -5595,11 +5588,11 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__plugin-presets,
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__plugin-presets-loading,
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__fallback-presets {
-    --home-plugin-preset-preview-h: 88px;
-    --home-plugin-preset-card-h: 120px;
+    --home-plugin-preset-preview-h: 120px;
+    --home-plugin-preset-card-h: 154px;
     grid-template-columns: minmax(0, 1fr);
-    grid-auto-rows: 120px;
-    gap: 7px;
+    grid-auto-rows: 154px;
+    gap: 8px;
     padding: 0 6px 16px 2px;
     height: calc(100% - 18px);
     min-height: 0;
@@ -5630,16 +5623,16 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__fallback-preset,
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__plugin-preset-cell:is(.is-before-gallery-focus, .is-after-gallery-focus, .is-gallery-focus),
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__fallback-preset:is(.is-before-gallery-focus, .is-after-gallery-focus, .is-gallery-focus) {
-    min-height: 120px;
-    height: 120px;
-    flex: 0 0 120px;
+    min-height: 154px;
+    height: 154px;
+    flex: 0 0 154px;
   }
 
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__plugin-preset,
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__plugin-preset-loading,
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__fallback-preset {
-    height: 120px;
-    grid-template-columns: 132px minmax(0, 1fr);
+    height: 154px;
+    grid-template-columns: 200px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
     gap: 10px;
     padding: 8px;
@@ -5674,8 +5667,8 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__plugin-preset-preview,
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__plugin-preset-loading-preview,
   .home-hero__template-sidebar .home-hero__template-curve .home-hero__fallback-preset-preview {
-    width: 132px;
-    height: 88px;
+    width: 200px;
+    height: 120px;
     border-color: rgba(255, 255, 255, 0.68);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.5),
@@ -5823,12 +5816,6 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
     color: var(--text-strong);
     background: rgba(255, 255, 255, 0.44);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 5px 14px rgba(64, 59, 73, 0.13);
-  }
-}
-
-@media (min-width: 1501px) {
-  .home-view {
-    transform: translateX(368px);
   }
 }
 
@@ -5984,5 +5971,21 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   .home-hero__template-sidebar,
   .home-hero__template-expand {
     transition: none;
+  }
+}
+
+/* Reserve only enough room for the transparent brand/action row rendered by
+   App; unlike the removed tab strip, this does not paint a separate panel. */
+.home-hero,
+.home-view > .home-hero,
+.home-view--centered .home-hero {
+  padding-top: 96px;
+}
+
+@media (max-width: 600px) {
+  .home-hero,
+  .home-view > .home-hero,
+  .home-view--centered .home-hero {
+    padding-top: 82px;
   }
 }
