@@ -2,7 +2,7 @@ export function AIDesignWordmark() {
   return (
     <svg
       className="home-hero__title-logo"
-      viewBox="20 112 472 195"
+      viewBox="20 140 472 200"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       role="img"
@@ -10,27 +10,9 @@ export function AIDesignWordmark() {
     >
       <title id="ohmydesign-wordmark-title">OhMyDesign</title>
       <desc id="ohmydesign-wordmark-desc">
-        OhMyDesign artistic wordmark with an arc, two stars, and a lunar texture in dark mode.
+        OhMyDesign artistic wordmark with an arc and two stars.
       </desc>
       <defs>
-        <linearGradient id="ohmydesign-lunar-stone" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="var(--home-logo-lunar-light, #eef2f5)" />
-          <stop offset="0.5" stopColor="var(--home-logo-ink, #3156C8)" />
-          <stop offset="1" stopColor="var(--home-logo-lunar-shadow, #77818d)" />
-        </linearGradient>
-        <radialGradient id="ohmydesign-crater-bowl" cx="34%" cy="28%" r="72%">
-          <stop offset="0" stopColor="var(--home-logo-lunar-light, #eef2f5)" stopOpacity="0.88" />
-          <stop offset="0.34" stopColor="var(--home-logo-ink, #3156C8)" stopOpacity="0.72" />
-          <stop offset="0.72" stopColor="var(--home-logo-lunar-shadow, #77818d)" stopOpacity="0.92" />
-          <stop offset="1" stopColor="var(--home-logo-lunar-rim, #c8d0d8)" stopOpacity="0.9" />
-        </radialGradient>
-        <pattern id="ohmydesign-crater-pattern" width="72" height="54" patternUnits="userSpaceOnUse" patternTransform="rotate(-7)">
-          <rect width="72" height="54" fill="url(#ohmydesign-lunar-stone)" />
-          <circle cx="17" cy="16" r="11" fill="url(#ohmydesign-crater-bowl)" />
-          <circle cx="51" cy="37" r="8" fill="url(#ohmydesign-crater-bowl)" />
-          <circle cx="66" cy="7" r="4" fill="url(#ohmydesign-crater-bowl)" />
-          <circle cx="34" cy="49" r="3" fill="var(--home-logo-lunar-shadow, #77818d)" fillOpacity="0.55" />
-        </pattern>
         <g>
         <g id="ohmydesign-glyph-0">
         <path d="M 90.390625 -144.441406 C 85.558594 -144.441406 81.191406 -143.75 76.589844 -142.140625 C 50.371094 -132.941406 7.128906 -90.390625 7.128906 -41.859375 C 7.128906 -22.769531 14.71875 -5.519531 34.5 1.839844 C 39.558594 3.679688 44.390625 4.601562 49.910156 4.601562 C 76.359375 4.601562 99.589844 -19.089844 115.230469 -47.609375 C 123.96875 -63.710938 129.949219 -83.488281 129.949219 -100.511719 C 129.949219 -116.839844 123.96875 -130.871094 109.019531 -137.539062 C 105.109375 -141.679688 98.671875 -144.441406 90.390625 -144.441406 Z M 42.320312 -8.050781 C 33.578125 -8.050781 27.828125 -17.019531 27.828125 -33.121094 C 27.828125 -48.070312 32.890625 -67.851562 44.621094 -86.019531 C 65.550781 -117.988281 92.691406 -133.171875 102.808594 -129.488281 C 107.640625 -127.648438 109.941406 -120.289062 109.941406 -109.25 C 109.941406 -95.21875 105.339844 -75.898438 94.300781 -55.429688 C 77.96875 -25.53125 56.578125 -8.050781 42.320312 -8.050781 Z M 42.320312 -8.050781 "/>
@@ -70,7 +52,7 @@ export function AIDesignWordmark() {
         strokeWidth="10"
         strokeLinecap="round"
       />
-      <g transform="translate(30 192) scale(0.50 0.72)" fill="var(--home-logo-paint, var(--home-logo-ink, #3156C8))">
+      <g transform="translate(30 180) scale(0.50 0.58)" fill="var(--home-logo-paint, var(--home-logo-ink, #3156C8))">
       <use href="#ohmydesign-glyph-0" x="0" y="161"/>
       <use href="#ohmydesign-glyph-1" x="124" y="161"/>
       <use href="#ohmydesign-glyph-2" x="211" y="161"/>

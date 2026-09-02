@@ -4409,27 +4409,21 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   transition: filter 180ms var(--ease-out);
 }
 [data-theme='dark'] .home-hero__title-logo {
-  --home-logo-ink: #d9dee6;
-  --home-logo-paint: url(#ohmydesign-crater-pattern);
-  --home-logo-lunar-light: #f4f6f7;
-  --home-logo-lunar-shadow: #6f7985;
-  --home-logo-lunar-rim: #c5ccd3;
-  --home-logo-star-primary: #ffd76a;
-  --home-logo-star-secondary: #f6b93b;
-  --home-logo-dot: #aeb8c4;
+  --home-logo-ink: #f0eee8;
+  --home-logo-paint: var(--home-logo-ink);
+  --home-logo-star-primary: #e8b84a;
+  --home-logo-star-secondary: #ef8354;
+  --home-logo-dot: #f0eee8;
 
   filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.48));
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) .home-hero__title-logo {
-    --home-logo-ink: #d9dee6;
-    --home-logo-paint: url(#ohmydesign-crater-pattern);
-    --home-logo-lunar-light: #f4f6f7;
-    --home-logo-lunar-shadow: #6f7985;
-    --home-logo-lunar-rim: #c5ccd3;
-    --home-logo-star-primary: #ffd76a;
-    --home-logo-star-secondary: #f6b93b;
-    --home-logo-dot: #aeb8c4;
+    --home-logo-ink: #f0eee8;
+    --home-logo-paint: var(--home-logo-ink);
+    --home-logo-star-primary: #e8b84a;
+    --home-logo-star-secondary: #ef8354;
+    --home-logo-dot: #f0eee8;
 
     filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.48));
   }
