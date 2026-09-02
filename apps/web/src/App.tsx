@@ -43,6 +43,7 @@ import {
 } from './components/MemoryToast';
 import { Toast } from './components/Toast';
 import { FeedbackQuickButton } from './components/FeedbackQuickButton';
+import { AIDesignWordmark } from './components/AIDesignWordmark';
 import { ThemeQuickMenu } from './components/ThemeQuickMenu';
 import { ThemeModeToggle } from './components/ThemeModeToggle';
 import { LunarSceneBackground } from './components/LunarSceneBackground';
@@ -5174,8 +5175,48 @@ function AppInner() {
   return (
     <>
       <LunarSceneBackground theme={config.theme} />
+      {route.kind === 'home' && route.view === 'home' ? (
+        <div className="home-brand-row">
+          <h1 className="home-brand-row__title">
+            <span className="home-hero__title-mark">
+              <span
+                className="home-hero__logo-particle home-hero__logo-particle--one"
+                aria-hidden
+              />
+              <span
+                className="home-hero__logo-particle home-hero__logo-particle--two"
+                aria-hidden
+              />
+              <span
+                className="home-hero__logo-particle home-hero__logo-particle--three"
+                aria-hidden
+              />
+              <span className="home-hero__logo-bird" aria-hidden>
+                <svg viewBox="0 0 36 18" focusable="false">
+                  <path d="M2 12C8 5 13 5 18 11" />
+                  <path d="M18 11C23 4 29 4 34 9" />
+                </svg>
+              </span>
+              <AIDesignWordmark />
+            </span>
+          </h1>
+          <div className="quick-entry-cluster">
+            <LanguageMenu compact placement="down" align="end" />
+            <ThemeModeToggle theme={config.theme} onChange={handleQuickThemeChange} />
+            <ThemeQuickMenu
+              config={config}
+              onThemeChange={handleQuickThemeChange}
+              onAccentColorChange={handleQuickAccentColorChange}
+              showThemeModes={false}
+            />
+            <FeedbackQuickButton />
+          </div>
+        </div>
+      ) : null}
       <div
-        className={`workspace-shell workspace-shell--${clientType}`}
+        className={`workspace-shell workspace-shell--${clientType}${
+          route.kind === 'home' && route.view === 'home' ? ' workspace-shell--home' : ''
+        }`}
         data-client-type={clientType}
         data-host-platform={hostPlatform}
       >
@@ -5235,19 +5276,6 @@ function AppInner() {
           {appMain}
         </div>
       </div>
-      {route.kind === 'home' && route.view === 'home' ? (
-        <div className="quick-entry-cluster">
-          <LanguageMenu compact placement="down" align="end" />
-          <ThemeModeToggle theme={config.theme} onChange={handleQuickThemeChange} />
-          <ThemeQuickMenu
-            config={config}
-            onThemeChange={handleQuickThemeChange}
-            onAccentColorChange={handleQuickAccentColorChange}
-            showThemeModes={false}
-          />
-          <FeedbackQuickButton />
-        </div>
-      ) : null}
       <TooltipLayer />
       <UpdateDialog />
       <AnimatePresence>

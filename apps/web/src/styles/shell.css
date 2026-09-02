@@ -57,6 +57,20 @@
   min-height: 0;
 }
 
+/* Home folds the global tab strip into the brand row below. Project routes
+   keep the full 44px workspace chrome for navigation between open tabs. */
+.workspace-shell--home {
+  --workspace-tabs-chrome-height: 0px;
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+.workspace-shell--home > .workspace-tabs-chrome {
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .iframe-keep-alive-pool {
   display: none;
 }
@@ -2539,17 +2553,45 @@ a.avatar-item:visited {
   outline: none;
 }
 
-/* Hosted quick actions remain available when white-label policy hides the
-   upstream settings chrome. Reserve tab space for the fixed hit target. */
-.quick-entry-cluster {
+/* Home brand and hosted quick actions share one transparent row over the
+   immersive scene instead of occupying a separate chrome strip. */
+.home-brand-row {
   position: fixed;
-  top: 3px;
-  right: 8px;
+  inset: 0 0 auto;
   z-index: 300;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  height: 76px;
+  padding: 4px 24px;
+  pointer-events: none;
+}
+.home-brand-row__title {
+  width: clamp(150px, 24vw, 220px);
+  margin: 0;
+  pointer-events: none;
+}
+.home-brand-row__title .home-hero__title-mark {
+  width: 100%;
+}
+.quick-entry-cluster {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
   gap: 4px;
+  pointer-events: auto;
   -webkit-app-region: no-drag;
+}
+
+@media (max-width: 600px) {
+  .home-brand-row {
+    height: 64px;
+    padding: 2px 12px;
+  }
+  .home-brand-row__title {
+    width: 150px;
+  }
 }
 
 .workspace-shell[data-client-type] .workspace-tabs-chrome.app-chrome-header {

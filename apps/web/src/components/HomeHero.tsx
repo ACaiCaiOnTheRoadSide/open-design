@@ -35,7 +35,6 @@ import type {
   WorkspaceCollabContext,
   WorkspaceContextItem,
 } from '@open-design/contracts';
-import { AIDesignWordmark } from './AIDesignWordmark';
 import { DesignSystemPicker } from './DesignSystemPicker';
 import type { SkillSummary } from '../types';
 import { Icon, type IconName } from './Icon';
@@ -1434,32 +1433,6 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
             document.body,
           )
         : templateLibrary}
-
-      <div className="home-hero__title-block">
-        <h1 className="home-hero__title">
-          <span className="home-hero__title-mark">
-            <span
-              className="home-hero__logo-particle home-hero__logo-particle--one"
-              aria-hidden
-            />
-            <span
-              className="home-hero__logo-particle home-hero__logo-particle--two"
-              aria-hidden
-            />
-            <span
-              className="home-hero__logo-particle home-hero__logo-particle--three"
-              aria-hidden
-            />
-            <span className="home-hero__logo-bird" aria-hidden>
-              <svg viewBox="0 0 36 18" focusable="false">
-                <path d="M2 12C8 5 13 5 18 11" />
-                <path d="M18 11C23 4 29 4 34 9" />
-              </svg>
-            </span>
-            <AIDesignWordmark />
-          </span>
-        </h1>
-      </div>
 
       {/* #5517 wraps the input card + workdir row into one visible composer
           card so they read as a single surface. */}
