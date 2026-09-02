@@ -4388,7 +4388,7 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 .home-hero__title-mark {
   position: relative;
   display: block;
-  width: clamp(180px, 18vw, 220px);
+  width: clamp(240px, 24vw, 300px);
   max-width: 100%;
   isolation: isolate;
 }
@@ -4410,7 +4410,7 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 }
 [data-theme='dark'] .home-hero__title-logo {
   --home-logo-ink: #d9dee6;
-  --home-logo-paint: var(--home-logo-ink);
+  --home-logo-paint: url(#ohmydesign-crater-pattern);
   --home-logo-lunar-light: #f4f6f7;
   --home-logo-lunar-shadow: #6f7985;
   --home-logo-lunar-rim: #c5ccd3;
@@ -4423,7 +4423,7 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) .home-hero__title-logo {
     --home-logo-ink: #d9dee6;
-    --home-logo-paint: var(--home-logo-ink);
+    --home-logo-paint: url(#ohmydesign-crater-pattern);
     --home-logo-lunar-light: #f4f6f7;
     --home-logo-lunar-shadow: #6f7985;
     --home-logo-lunar-rim: #c5ccd3;
