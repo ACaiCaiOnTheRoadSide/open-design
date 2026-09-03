@@ -128,7 +128,7 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
     idempotency_key: expect.any(String),
     image: 'registry.test/ohmyagent:v1',
     cmd: expect.arrayContaining([
-      'bash', 'ohmyagent', '--output-format', 'json',
+      'bash', 'ohmyagent', '--stdio',
       '--model-config', expect.stringMatching(/^@\/workspace\/\.od\/tmp\/od-ohmyagent-model-.+\.json$/u),
     ]),
     env: expect.objectContaining({

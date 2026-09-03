@@ -687,6 +687,78 @@ describe('AssistantMessage tool status', () => {
     expect(modelStatus?.querySelector('.status-detail')?.textContent).toContain('claude-opus-4-7-high');
   });
 
+  it('renders subagent output in an independent identity card', () => {
+    const { container } = render(
+      <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
+        message={messageWithEvents([
+          {
+            kind: 'subagent', parentSessionId: 'main-1', parentToolCallId: 'agent-call-1',
+            sessionId: 'child-1', name: 'auditor', agentType: 'explore',
+            description: 'Audit the flow', state: 'running',
+            event: { kind: 'text', text: 'Child-only result' },
+          },
+          {
+            kind: 'subagent', parentSessionId: 'main-1', parentToolCallId: 'agent-call-1',
+            sessionId: 'child-1', state: 'completed',
+          },
+          { kind: 'text', text: 'Main response' },
+        ])}
+        streaming={false}
+        projectId="project-1"
+      />,
+    );
+
+    const card = screen.getByTestId('subagent-card-child-1');
+    expect(card.textContent).toContain('Audit the flow');
+    expect(card.textContent).toContain('explore');
+    expect(card.textContent).toContain('Child-only result');
+    expect(card.textContent).toContain('completed');
+    expect(container.querySelectorAll('[data-testid="subagent-card-child-1"]')).toHaveLength(1);
+    expect(container.querySelector('.assistant-flow')?.textContent).toContain('Main response');
+  });
+
+  it('shows child errors and treats child-only activity as working', () => {
+    const { container } = render(
+      <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
+        message={messageWithEvents([{
+          kind: 'subagent', parentSessionId: 'main-1', parentToolCallId: 'agent-call-1',
+          sessionId: 'child-1', state: 'error', event: { kind: 'error', message: 'child failed' },
+        }])}
+        streaming={true}
+        projectId="project-1"
+      />,
+    );
+
+    expect(screen.getByTestId('subagent-card-child-1').textContent).toContain('child failed');
+    expect(container.textContent).toContain('Working');
+    expect(container.textContent).not.toContain('Preparing');
+  });
+
+  it('does not render a stopped unresolved child tool as an error', () => {
+    const { container } = render(
+      <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
+        message={messageWithEvents([{
+          kind: 'subagent', parentSessionId: 'main-1', parentToolCallId: 'agent-call-1',
+          sessionId: 'child-1', state: 'stopped',
+          event: { kind: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: 'a.ts' } },
+        }])}
+        streaming={false}
+        projectId="project-1"
+      />,
+    );
+
+    const card = screen.getByTestId('subagent-card-child-1');
+    expect(card.textContent).toContain('stopped');
+    expect(card.querySelector('.op-status-error')).toBeNull();
+    expect(container.textContent).not.toContain('Error');
+  });
+
   it('renders URLs in JSON-like status details without trailing structural characters', () => {
     const { container } = render(
       <AssistantMessage

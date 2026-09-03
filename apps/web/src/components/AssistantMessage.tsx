@@ -575,6 +575,7 @@ function AssistantMessageImpl({
         ? ([{ kind: "text", text: message.content }] satisfies AgentEvent[])
         : [];
   const displayEvents = useMemo(() => dedupeToolUsesById(events), [events]);
+  const subagentCards = useMemo(() => collectSubagentCards(displayEvents), [displayEvents]);
   // ChatPane renders the canonical TodoWrite card above the composer, so the
   // per-message flow must not render the same task list again.
   const settledUseIds = useMemo(
@@ -872,7 +873,8 @@ function AssistantMessageImpl({
   const hasContent =
     contentBlocks.some((b) => b.kind !== "status") ||
     taskActivity !== null ||
-    turnFileOps.length > 0;
+    turnFileOps.length > 0 ||
+    subagentCards.length > 0;
   const preparing = streaming && !hasContent;
   const preparingStatus = preparing && events.some((e) => e.kind === "status" && e.label === "thinking")
     ? "thinking"
@@ -925,6 +927,16 @@ function AssistantMessageImpl({
             onThinkingLinkClick={thinkingLinkClick}
           />
         ) : null}
+        {subagentCards.map((card) => (
+          <SubagentCard
+            key={card.key}
+            card={card}
+            streaming={streaming}
+            projectFileNames={projectFileNames}
+            onRequestOpenFile={onRequestOpenFile}
+            onThinkingLinkClick={thinkingLinkClick}
+          />
+        ))}
         {contentBlocks.map((b, i) => {
           if (b.kind === "text")
             return (
@@ -4048,6 +4060,106 @@ function lastStateLabel(verbs: string[], t: (k: keyof Dict) => string): string {
   if (set.has(t("tool.error"))) return t("tool.error");
   if (set.has(t("assistant.verbRunning"))) return t("assistant.verbRunning");
   return verbs[verbs.length - 1] ?? "";
+}
+
+type SubagentEvent = Extract<AgentEvent, { kind: "subagent" }>;
+type SubagentCardModel = {
+  key: string;
+  parentToolCallId: string;
+  sessionId: string;
+  name?: string;
+  agentType?: string;
+  description?: string;
+  state: SubagentEvent["state"];
+  events: Exclude<SubagentEvent["event"], undefined>[];
+};
+
+function collectSubagentCards(events: AgentEvent[]): SubagentCardModel[] {
+  const cards = new Map<string, SubagentCardModel>();
+  for (const event of events) {
+    if (event.kind !== "subagent") continue;
+    const key = `${event.parentSessionId}:${event.parentToolCallId}:${event.sessionId}`;
+    let card = cards.get(key);
+    if (!card) {
+      card = {
+        key,
+        parentToolCallId: event.parentToolCallId,
+        sessionId: event.sessionId,
+        state: event.state,
+        events: [],
+      };
+      cards.set(key, card);
+    }
+    card.state = event.state;
+    card.name = event.name || card.name;
+    card.agentType = event.agentType || card.agentType;
+    card.description = event.description || card.description;
+    if (event.event) card.events.push(event.event);
+  }
+  return [...cards.values()];
+}
+
+function SubagentCard({
+  card,
+  streaming,
+  projectFileNames,
+  onRequestOpenFile,
+  onThinkingLinkClick,
+}: {
+  card: SubagentCardModel;
+  streaming: boolean;
+  projectFileNames?: Set<string>;
+  onRequestOpenFile?: (name: string) => void;
+  onThinkingLinkClick?: MarkdownLinkClickHandler;
+}) {
+  const title = card.description || card.name || card.agentType || "Subagent";
+  const errors = card.events.filter((event) => event.kind === "error");
+  const completedToolIds = new Set(card.events.flatMap((event) => event.kind === "tool_result" ? [event.toolUseId] : []));
+  const visibleEvents = card.events.filter((event): event is Exclude<SubagentCardModel["events"][number], { kind: "error" }> =>
+    event.kind !== "error" &&
+    !(card.state === "stopped" && event.kind === "tool_use" && !completedToolIds.has(event.id))
+  );
+  const blocks = stripEmptyThinkingBlocks(buildBlocks(visibleEvents));
+  const running = streaming && card.state === "running";
+  return (
+    <section
+      className={`subagent-card subagent-card--${card.state}`}
+      data-testid={`subagent-card-${card.sessionId}`}
+      aria-label={`${title}, ${card.state}`}
+    >
+      <header className="subagent-card__header">
+        <div className="subagent-card__identity">
+          <AgentIcon id="ohmyagent" size={18} />
+          <div>
+            <strong>{title}</strong>
+            <span>{card.agentType || card.name || "Subagent"}</span>
+          </div>
+        </div>
+        <span className={`subagent-card__state subagent-card__state--${card.state}`}>
+          {card.state}
+        </span>
+      </header>
+      <div className="subagent-card__parent" title={card.parentToolCallId}>
+        Spawned by this assistant turn
+      </div>
+      <div className="subagent-card__flow">
+        {blocks.map((block, index) => {
+          if (block.kind === "text") {
+            return <ProseBlock key={index} text={block.text} assistantMessageId={`subagent:${card.sessionId}`} isLastAssistant={false} streaming={running} showStreamCursor={running && index === blocks.length - 1} suppressDirectionForms={false} questionFormSubmitDisabled={true} projectFileNames={projectFileNames} onRequestOpenFile={onRequestOpenFile} />;
+          }
+          if (block.kind === "thinking") {
+            return <ThinkingBlock key={index} text={block.text} streaming={running && index === blocks.length - 1} onLinkClick={onThinkingLinkClick} />;
+          }
+          if (block.kind === "tool-group") {
+            return <ToolGroupCard key={index} items={block.items} runStreaming={running} runSucceeded={card.state === "completed"} projectFileNames={projectFileNames} onRequestOpenFile={onRequestOpenFile} />;
+          }
+          if (block.kind === "status") return <StatusPill key={index} label={block.label} detail={block.detail} />;
+          return null;
+        })}
+        {errors.map((error, index) => <StatusPill key={`error-${index}`} label="error" detail={error.message} />)}
+      </div>
+    </section>
+  );
 }
 
 type Block =

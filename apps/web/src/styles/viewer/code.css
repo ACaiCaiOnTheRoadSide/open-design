@@ -1359,6 +1359,29 @@
   font-style: italic;
 }
 
+/* Background subagent cards */
+.subagent-card {
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+}
+.subagent-card__header,
+.subagent-card__identity { display: flex; align-items: center; }
+.subagent-card__header { justify-content: space-between; gap: 12px; }
+.subagent-card__identity { gap: 8px; }
+.subagent-card__identity > div { display: grid; gap: 1px; }
+.subagent-card__identity strong { font-size: 13px; }
+.subagent-card__identity span,
+.subagent-card__parent { color: var(--text-muted); font-size: 11px; }
+.subagent-card__parent { margin: 5px 0 10px 26px; }
+.subagent-card__state { font-size: 11px; text-transform: capitalize; color: var(--text-muted); }
+.subagent-card__state--running { color: var(--accent); }
+.subagent-card__state--error { color: var(--red, #d94c4c); }
+.subagent-card__flow { display: grid; gap: 8px; }
+
 /* Thinking blocks */
 .thinking-block {
   background: none;

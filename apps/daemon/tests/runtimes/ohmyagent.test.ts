@@ -4,9 +4,9 @@ import { ohmyagentAgentDef } from '../../src/runtimes/defs/ohmyagent.js';
 const ctx = { cwd: '/workspace/project' };
 
 describe('OhMyAgent runtime args', () => {
-  it('uses headless stdin JSONL with bypass permissions and cwd', () => {
+  it('uses JSON-RPC stdio with bypass permissions and cwd', () => {
     expect(ohmyagentAgentDef.buildArgs('secret prompt', [], [], { model: 'gpt-5' }, ctx)).toEqual([
-      '--output-format', 'json',
+      '--stdio',
       '--permission-mode', 'bypassPermissions',
       '--cwd', '/workspace/project',
       '--model', 'gpt-5',
@@ -26,8 +26,8 @@ describe('OhMyAgent runtime args', () => {
     expect(args).toEqual(expect.arrayContaining([
       '--model-config', '@/tmp/model.json', '--mcp-config', '@/tmp/mcp.json',
     ]));
-    expect(ohmyagentAgentDef.resumesSessionViaCli).toBeUndefined();
-    expect(ohmyagentAgentDef.capturesSessionIdFromStream).toBeUndefined();
+    expect(ohmyagentAgentDef.resumesSessionViaCli).toBe(false);
+    expect(ohmyagentAgentDef.capturesSessionIdFromStream).toBe(false);
     expect(ohmyagentAgentDef.defaultModelEnvVar).toBe('OD_OHMYAGENT_MODEL');
   });
 });

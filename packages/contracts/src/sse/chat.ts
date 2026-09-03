@@ -114,6 +114,25 @@ export type DaemonAgentPayload =
   | { type: 'conversation_title'; title: string }
   | { type: 'thinking_delta'; delta: string }
   | { type: 'thinking_start' }
+  | {
+      type: 'subagent_event';
+      parentSessionId: string;
+      parentToolCallId: string;
+      sessionId: string;
+      name?: string;
+      agentType?: string;
+      description?: string;
+      seq?: number;
+      state: 'running' | 'completed' | 'error' | 'stopped';
+      event?:
+        | { type: 'status'; label: string; detail?: string }
+        | { type: 'text_delta'; delta: string }
+        | { type: 'thinking_delta'; delta: string }
+        | { type: 'error'; message: string }
+        | { type: 'tool_use'; id: string; name: string; input: unknown; startedAt?: number }
+        | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+        | { type: 'raw'; line: string };
+    }
   | LiveArtifactSsePayload
   | LiveArtifactRefreshSsePayload
   | PlainStreamArtifactSsePayload

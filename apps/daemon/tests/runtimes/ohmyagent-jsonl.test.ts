@@ -16,10 +16,10 @@ describe('OhMyAgent JSONL parser', () => {
       frame('model_delta', { text: 'sub' }, { session_id: 'sub', parent_session_id: 's1' }),
       frame('turn_done'),
     ].join('\n') + '\n');
-    expect(events.filter((event) => event.sessionId)).toEqual([
+    expect(events.filter((event) => event.type === 'status' && event.sessionId)).toEqual([
       expect.objectContaining({ type: 'status', sessionId: 's1' }),
     ]);
-    expect(events.filter((event) => event.type === 'text_delta').map((event) => event.delta)).toEqual(['hellosub']);
+    expect(events.filter((event) => event.type === 'text_delta').map((event) => event.delta)).toEqual(['hello']);
     expect(events.filter((event) => event.type === 'thinking_delta').map((event) => event.delta)).toEqual(['why']);
     expect(events.filter((event) => ['model_running', 'model_done'].includes(event.label))).toEqual([]);
   });
@@ -72,10 +72,36 @@ describe('OhMyAgent JSONL parser', () => {
     parser.feed(`${frame('send_user_message', { message: 'notice', status: 'proactive' })}\n`);
     parser.feed(`${frame('error', { error: 'retry', kind: 'transient_retry', attempt: '1', retry_in: '1s' })}\n`);
     parser.feed(`${frame('error', { error: 'fatal' })}\n`);
-    expect(events.filter((event) => event.type === 'raw')).toHaveLength(3);
+    expect(events.filter((event) => event.type === 'raw')).toHaveLength(2);
     expect(events).toContainEqual(expect.objectContaining({ type: 'text_delta', delta: 'notice' }));
     expect(events).toContainEqual(expect.objectContaining({ type: 'status', label: 'retrying' }));
     expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
+  });
+
+  it('routes child activity and completion into an isolated subagent stream', () => {
+    const events: any[] = [];
+    const parser = createOhMyAgentJsonlHandler((event) => events.push(event));
+    const parent = {
+      session_id: 'child-session',
+      parent_session_id: 's1',
+      parent_tool_call_id: 'agent-call-1',
+      parent_name: 'auditor',
+      parent_agent_type: 'explore',
+      parent_description: 'Audit the flow',
+      seq: 4,
+    };
+    parser.feed(`${frame('model_delta', { text: 'I will inspect.' }, parent)}\n`);
+    parser.feed(`${frame('tool_call', { id: 'read-1', name: 'Read', input: {} }, { ...parent, tool_call_id: 'read-1' })}\n`);
+    parser.feed(`${frame('tool_result', { content: 'ok' }, { ...parent, tool_call_id: 'read-1' })}\n`);
+    parser.feed(`${frame('error', { error: 'child failed' }, parent)}\n`);
+    parser.feed(`${frame('agent_result', { status: 'completed', agentId: 'agent-1', agentType: 'explore', sessionId: 'child-session', content: 'done' }, { tool_call_id: 'agent-call-1' })}\n`);
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([]);
+    expect(events.filter((event) => event.type === 'subagent_event')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ parentToolCallId: 'agent-call-1', sessionId: 'child-session', description: 'Audit the flow', state: 'running' }),
+      expect.objectContaining({ state: 'running', event: { type: 'thinking_delta', delta: 'I will inspect.' } }),
+      expect.objectContaining({ state: 'error', event: expect.objectContaining({ type: 'error', message: 'child failed' }) }),
+      expect.objectContaining({ parentToolCallId: 'agent-call-1', sessionId: 'child-session', state: 'completed' }),
+    ]));
   });
 
   it('preserves malformed JSON and parses a final unterminated line', () => {

@@ -64,6 +64,130 @@ export interface HuskboxTransportOptions {
   idempotencyKey?: () => string;
 }
 
+const OHMYAGENT_STDIO_DRIVER = String.raw`
+const fs = require('node:fs');
+const readline = require('node:readline');
+const { spawn } = require('node:child_process');
+const prompt = fs.readFileSync(process.argv[2], 'utf8');
+const child = spawn(process.argv[3], process.argv.slice(4), { stdio: ['pipe', 'pipe', 'pipe'] });
+child.stderr.pipe(process.stderr);
+let nextId = 1;
+let sessionId = '';
+let reclaimed = false;
+let reclaiming = false;
+let notificationTurn = false;
+let turnFailed = false;
+let retry = null;
+const pending = new Map();
+const RPC_TIMEOUT_MS = 30000;
+function send(method, params) {
+  const id = nextId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(method + ' timed out'));
+    }, RPC_TIMEOUT_MS);
+    pending.set(id, { resolve, reject, timer });
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n', (error) => {
+      if (!error) return;
+      clearTimeout(timer);
+      pending.delete(id);
+      reject(error);
+    });
+  });
+}
+function scheduleReclaim() {
+  if (!retry && !reclaimed) retry = setTimeout(() => { retry = null; void reclaim(); }, 3000);
+}
+async function reclaim() {
+  if (!sessionId || reclaimed || reclaiming) return;
+  reclaiming = true;
+  try {
+    const result = await send('session/reclaim', { session_id: sessionId });
+    if (result.status === 'reclaimed') {
+      reclaimed = true;
+      if (retry) clearTimeout(retry);
+      child.stdin.end();
+    } else scheduleReclaim();
+  } catch (error) {
+    process.stderr.write('[od-oma-stdio] reclaim failed: ' + error.message + '\n');
+    child.kill('SIGTERM');
+  } finally { reclaiming = false; }
+}
+readline.createInterface({ input: child.stdout }).on('line', (line) => {
+  let message;
+  try { message = JSON.parse(line); }
+  catch {
+    process.stdout.write(JSON.stringify({ type: 'error', data: { error: 'Invalid OhMyAgent JSON-RPC frame' } }) + '\n');
+    return;
+  }
+  if (typeof message.id === 'number') {
+    const waiter = pending.get(message.id);
+    if (!waiter) return;
+    pending.delete(message.id);
+    clearTimeout(waiter.timer);
+    if (message.error) waiter.reject(new Error(message.error.message || 'JSON-RPC request failed'));
+    else waiter.resolve(message.result || {});
+    return;
+  }
+  if (message.method === 'system/ready') {
+    const capabilities = message.params && message.params.capabilities || [];
+    if (!capabilities.includes('sessionSafeReclaim')) {
+      process.stderr.write('[od-oma-stdio] sessionSafeReclaim is required\n');
+      child.kill('SIGTERM');
+      return;
+    }
+    void send('session/create', { cwd: process.cwd(), permission_mode: 'bypassPermissions', execution_mode: 'autonomous', interactive: true })
+      .then((created) => {
+        sessionId = created.session_id;
+        return send('session/sendMessage', { session_id: sessionId, message: prompt });
+      })
+      .catch((error) => { process.stderr.write('[od-oma-stdio] startup failed: ' + error.message + '\n'); child.kill('SIGTERM'); });
+    return;
+  }
+  if (message.method === 'turn/started') {
+    notificationTurn = message.params && message.params.source === 'notification';
+    return;
+  }
+  if (message.method === 'event/stream') {
+    const event = message.params || {};
+    if (!notificationTurn || event.parent_session_id || event.type === 'task_notification' || event.type === 'send_user_message') {
+      process.stdout.write(JSON.stringify(event) + '\n');
+    }
+    return;
+  }
+  if (message.method === 'turn/stopped' && message.params && message.params.session_id === sessionId) {
+    notificationTurn = false;
+    if (message.params.stop_reason === 'error') {
+      turnFailed = true;
+      process.stdout.write(JSON.stringify({
+        type: 'error',
+        session_id: sessionId,
+        data: { error: message.params.error || 'OhMyAgent turn failed' },
+      }) + '\n');
+    }
+    void reclaim();
+  }
+});
+child.stdin.on('error', (error) => {
+  turnFailed = true;
+  process.stderr.write('[od-oma-stdio] stdin failed: ' + error.message + '\n');
+  child.kill('SIGTERM');
+});
+child.on('exit', (code, signal) => {
+  for (const waiter of pending.values()) {
+    clearTimeout(waiter.timer);
+    waiter.reject(new Error('OhMyAgent exited before JSON-RPC completed'));
+  }
+  pending.clear();
+  if (!reclaimed) process.stderr.write('[od-oma-stdio] process exited before safe reclaim\n');
+  process.exitCode = reclaimed && code === 0 && !turnFailed ? 0 : (code || (signal ? 143 : 1));
+});
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+`;
+
+const OHMYAGENT_STDIO_DRIVER_B64 = Buffer.from(OHMYAGENT_STDIO_DRIVER, 'utf8').toString('base64');
+
 export const HUSKBOX_BOOTSTRAP_SCRIPT = `set -u
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$OHMYAGENT_CONFIG_DIR" "$TMPDIR" "$OD_DATA_DIR/projects"
 # Runtime config files must be materialized inside the sandbox: daemon-local
@@ -106,7 +230,17 @@ mkdir -p "\${OD_AGENT_CWD:-$OD_DATA_DIR}"
 cd "\${OD_AGENT_CWD:-$OD_DATA_DIR}" || exit 125
 if [ -n "\${OD_STDIN_LEN:-}" ]; then
   head -c "$OD_STDIN_LEN" > "$TMPDIR/prompt.bin"
-  "$@" < "$TMPDIR/prompt.bin"
+  case "$1" in
+    ohmyagent|*/ohmyagent)
+      if printf '%s\n' "$@" | grep -qx -- '--stdio'; then
+        printf '%s' '${OHMYAGENT_STDIO_DRIVER_B64}' | base64 -d > "$TMPDIR/oma-stdio.cjs" || exit 125
+        "$OD_NODE_BIN" "$TMPDIR/oma-stdio.cjs" "$TMPDIR/prompt.bin" "$@"
+      else
+        "$@" < "$TMPDIR/prompt.bin"
+      fi
+      ;;
+    *) "$@" < "$TMPDIR/prompt.bin" ;;
+  esac
 else
   "$@"
 fi
@@ -281,6 +415,7 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
           cmd: ['bash', '-c', HUSKBOX_BOOTSTRAP_SCRIPT, 'bash', this.spec.command, ...sandboxCommandArgs(this.spec, env)],
           env,
           ...(stdin ? { stdin } : {}),
+          timeout_seconds: this.config.executionTimeoutSeconds ?? 3_600,
         };
         const outcome = await this.attempt(request, attempt, projectId);
         if (outcome) return this.finish(outcome);

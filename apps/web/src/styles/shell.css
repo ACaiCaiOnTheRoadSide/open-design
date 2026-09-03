@@ -2580,6 +2580,9 @@ a.avatar-item:visited {
 .home-brand-row__title .home-hero__title-mark {
   width: 100%;
 }
+body:has(.home-hero__template-sidebar.is-expanded) .home-brand-row__title {
+  display: none;
+}
 .quick-entry-cluster {
   position: fixed;
   top: 12px;

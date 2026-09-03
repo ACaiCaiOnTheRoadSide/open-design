@@ -37,6 +37,8 @@ import {
 import { attachAcpSession } from './agent-protocol/index.js';
 import { attachPiRpcSession } from './agent-protocol/index.js';
 import { attachDshProfileSession } from './agent-protocol/index.js';
+import { attachOhMyAgentStdioSession } from './runtimes/ohmyagent-stdio.js';
+import { createOhMyAgentJsonlHandler } from './runtimes/ohmyagent-jsonl.js';
 import { createClaudeStreamHandler } from './runtimes/claude-stream.js';
 import { diagnoseClaudeCliFailure } from './claude-diagnostics.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
@@ -2200,6 +2202,44 @@ function attachAgentStreamHandlers(
         });
       },
     });
+  } else if (def.streamFormat === 'ohmyagent-jsonl') {
+    const handler = createOhMyAgentJsonlHandler((event) => {
+      if (event.type === 'error') send('error', { message: event.message });
+      else send('agent', event);
+    });
+    child.once('close', () => handler.flush());
+    acpSession = attachOhMyAgentStdioSession({
+      execution: {
+        stdin: child.stdin,
+        stdout: child.stdout!,
+        result: new Promise((resolve) => {
+          child.once('error', (error) => resolve({ exitCode: null, signal: null, error }));
+          child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
+        }),
+        writeStdin: (chunk, encoding) => {
+          if (!child.stdin) throw new Error('OhMyAgent stdin is unavailable');
+          return typeof chunk === 'string'
+            ? child.stdin.write(chunk, encoding ?? 'utf8')
+            : child.stdin.write(chunk);
+        },
+        endStdin: (chunk, encoding) => {
+          if (!child.stdin || child.stdin.destroyed) return;
+          if (chunk === undefined) child.stdin.end();
+          else if (typeof chunk === 'string') child.stdin.end(chunk, encoding ?? 'utf8');
+          else child.stdin.end(chunk);
+        },
+      },
+      prompt,
+      cwd,
+      model: model ?? null,
+      onEvent: (event) => {
+        if (event.type === 'error') {
+          send('error', { message: String(event.message || 'OhMyAgent stream error') });
+        } else {
+          handler.handle(JSON.stringify(event));
+        }
+      },
+    });
   } else if (def.streamFormat === 'json-event-stream') {
     const handler = createJsonEventStreamHandler(
       def.eventParser || def.id,
@@ -3000,7 +3040,8 @@ async function testAgentConnectionInternal(
       def.promptViaStdin &&
       child.stdin &&
       def.streamFormat !== 'pi-rpc' &&
-      def.streamFormat !== 'dsh-profile-jsonl'
+      def.streamFormat !== 'dsh-profile-jsonl' &&
+      def.streamFormat !== 'ohmyagent-jsonl'
     ) {
       child.stdin.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code !== 'EPIPE') {

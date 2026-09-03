@@ -869,6 +869,7 @@ function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>
     case 'thinking':
       return event.text.trim().length > 0;
     case 'tool_use':
+    case 'subagent':
     case 'live_artifact':
     case 'live_artifact_refresh':
     case 'plugin_candidate':

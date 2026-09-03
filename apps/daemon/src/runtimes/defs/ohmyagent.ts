@@ -1,12 +1,8 @@
 import { DEFAULT_MODEL_OPTION } from './shared.js';
 import type { RuntimeAgentDef } from '../types.js';
 
-/**
- * OhMyAgent headless JSONL contract, verified against cmd/ohmyagent/root.go:
- * a non-terminal stdin selects headless mode; --output-format json installs
- * JSONLinesSink. Every OpenDesign turn starts a fresh engine session; the
- * rendered OpenDesign transcript is the only cross-turn conversation state.
- */
+/** Every OpenDesign turn owns one stdio session and reclaims it only after all
+ * background activity and notification turns have drained. */
 export const ohmyagentAgentDef = {
   id: 'ohmyagent',
   name: 'OhMyAgent',
@@ -17,7 +13,7 @@ export const ohmyagentAgentDef = {
     const cwd = runtimeContext.cwd?.trim();
     if (!cwd) throw new Error('ohmyagent requires runtimeContext.cwd');
     const args = [
-      '--output-format', 'json',
+      '--stdio',
       '--permission-mode', 'bypassPermissions',
       '--cwd', cwd,
     ];
@@ -32,6 +28,8 @@ export const ohmyagentAgentDef = {
   },
   promptViaStdin: true,
   streamFormat: 'ohmyagent-jsonl',
+  resumesSessionViaCli: false,
+  capturesSessionIdFromStream: false,
   defaultModelEnvVar: 'OD_OHMYAGENT_MODEL',
   externalMcpInjection: 'ohmyagent-config-file',
 } satisfies RuntimeAgentDef;

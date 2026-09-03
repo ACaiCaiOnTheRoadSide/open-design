@@ -785,6 +785,15 @@ export interface ChatCommentAttachment {
   source?: 'saved-comment' | 'board-batch';
 }
 
+export type PersistedSubagentChildEvent =
+  | { kind: 'status'; label: string; detail?: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'tool_use'; id: string; name: string; input: unknown; startedAt?: number }
+  | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean }
+  | { kind: 'raw'; line: string };
+
 export type PersistedAgentEvent =
   // `code` carries the structured API error code for `label: 'error'`
   // status events (e.g. AGENT_AUTH_REQUIRED, RATE_LIMITED). Clients use it to
@@ -803,6 +812,18 @@ export type PersistedAgentEvent =
   | { kind: 'text'; text: string }
   | { kind: 'conversation_title'; title: string }
   | { kind: 'thinking'; text: string }
+  | {
+      kind: 'subagent';
+      parentSessionId: string;
+      parentToolCallId: string;
+      sessionId: string;
+      name?: string;
+      agentType?: string;
+      description?: string;
+      seq?: number;
+      state: 'running' | 'completed' | 'error' | 'stopped';
+      event?: PersistedSubagentChildEvent;
+    }
   | {
       kind: 'live_artifact';
       action: 'created' | 'updated' | 'deleted';

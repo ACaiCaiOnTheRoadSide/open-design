@@ -453,6 +453,7 @@ import { narrowProjectCritiqueOverride } from './critique/spawn-inputs.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
 import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
 import { createOhMyAgentJsonlHandler } from './runtimes/ohmyagent-jsonl.js';
+import { attachOhMyAgentStdioSession } from './runtimes/ohmyagent-stdio.js';
 import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
@@ -13213,7 +13214,8 @@ export async function startServer({
         def.promptViaStdin &&
         execution &&
         def.streamFormat !== 'pi-rpc' &&
-        def.streamFormat !== 'dsh-profile-jsonl'
+        def.streamFormat !== 'dsh-profile-jsonl' &&
+        def.streamFormat !== 'ohmyagent-jsonl'
       ) {
         // EPIPE from a fast-exiting CLI (bad auth, missing model, exit on
         // launch) would otherwise surface as an unhandled stream error and
@@ -14021,8 +14023,31 @@ export async function startServer({
     } else if (def.streamFormat === 'ohmyagent-jsonl') {
       trackingSubstantiveOutput = true;
       const handler = createOhMyAgentJsonlHandler(sendAgentEvent);
-      execution.stdout.on('data', (chunk) => handler.feed(String(chunk)));
-      void execution.result.then(() => handler.flush());
+      if (!execution.stdin) {
+        // Huskbox receives the prompt up front, so its in-sandbox driver owns
+        // the JSON-RPC conversation and relays only event/stream payloads.
+        execution.stdout.on('data', (chunk) => handler.feed(String(chunk)));
+        void execution.result.then(() => handler.flush());
+        execution.endStdin(composed);
+      } else try {
+        acpSession = attachOhMyAgentStdioSession({
+          execution,
+          prompt: composed,
+          cwd: effectiveCwd,
+          model: safeModel,
+          onReady: () => noteCliReadyAt(),
+          onSession: () => noteSessionInitDoneAt(),
+          onEvent: (event) => {
+            if (event.type === 'error') sendAgentEvent(event);
+            else handler.handle(JSON.stringify(event));
+          },
+        });
+        void execution.result.then(() => handler.flush());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendAgentEvent({ type: 'error', message });
+        void execution.cancel({ graceMs: inactivityKillGraceMs, forceWaitMs: inactivityKillGraceMs });
+      }
     } else if (def.streamFormat === 'qoder-stream-json') {
       trackingSubstantiveOutput = true;
       const qoder = createQoderStreamHandler(sendAgentEvent);

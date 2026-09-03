@@ -9,7 +9,10 @@ export interface HuskboxExecutionConfig {
   retryMaxAttempts: number;
   retryBaseMs: number;
   requestTimeoutMs: number;
+  executionTimeoutSeconds?: number;
 }
+
+export const DEFAULT_HUSKBOX_IMAGE = 'acaicai123/ai-design-ohmyagent:f4348e7';
 
 function positiveInteger(raw: string | undefined, fallback: number): number {
   const value = Number(raw);
@@ -27,7 +30,7 @@ export function huskboxExecutionConfigFromEnv(env: NodeJS.ProcessEnv = process.e
   return {
     baseUrl: parsed.toString().replace(/\/$/u, ''),
     ...(env.OD_HUSKBOX_API_KEY?.trim() ? { apiKey: env.OD_HUSKBOX_API_KEY.trim() } : {}),
-    ...(env.OD_HUSKBOX_IMAGE?.trim() ? { image: env.OD_HUSKBOX_IMAGE.trim() } : {}),
+    image: env.OD_HUSKBOX_IMAGE?.trim() || DEFAULT_HUSKBOX_IMAGE,
     sandboxMount: env.OD_HUSKBOX_SANDBOX_MOUNT?.trim() || '/workspace',
     daemonMount: env.OD_HUSKBOX_DAEMON_MOUNT?.trim() || '/data',
     ...(env.OD_HUSKBOX_DAEMON_PUBLIC_URL?.trim() ? { daemonPublicUrl: env.OD_HUSKBOX_DAEMON_PUBLIC_URL.trim().replace(/\/$/u, '') } : {}),
@@ -35,6 +38,7 @@ export function huskboxExecutionConfigFromEnv(env: NodeJS.ProcessEnv = process.e
     retryMaxAttempts: positiveInteger(env.OD_HUSKBOX_RETRY_MAX_ATTEMPTS, 4),
     retryBaseMs: positiveInteger(env.OD_HUSKBOX_RETRY_BASE_MS, 2_000),
     requestTimeoutMs: positiveInteger(env.OD_HUSKBOX_REQUEST_TIMEOUT_MS, 10_000),
+    executionTimeoutSeconds: positiveInteger(env.OD_HUSKBOX_EXECUTION_TIMEOUT_SECONDS, 3_600),
   };
 }
 

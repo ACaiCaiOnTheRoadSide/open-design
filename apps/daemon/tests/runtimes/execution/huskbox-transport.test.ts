@@ -13,7 +13,7 @@ const config: HuskboxExecutionConfig = {
   baseUrl: 'https://huskbox.test', apiKey: 'secret-key', image: 'registry.test/ohmyagent:latest',
   sandboxMount: '/workspace', daemonMount: '/data',
   daemonPublicUrl: 'https://daemon.test', backendPublicUrl: 'https://backend.test',
-  retryMaxAttempts: 3, retryBaseMs: 1, requestTimeoutMs: 20,
+  retryMaxAttempts: 3, retryBaseMs: 1, requestTimeoutMs: 20, executionTimeoutSeconds: 42,
 };
 
 function sse(...events: Array<[string, unknown]>): Response {
@@ -35,7 +35,7 @@ function execute(fetcher: typeof fetch, stdin: 'pipe' | 'ignore' = 'ignore', opt
 }
 
 describe('HuskboxExecutionTransport', () => {
-  it('does not require or forward tenant config and leaves image empty for the platform default', () => {
+  it('does not require tenant config and uses the pinned OhMyAgent image by default', () => {
     const parsed = huskboxExecutionConfigFromEnv({
       OD_HUSKBOX_BASE_URL: 'https://huskbox.test/',
       OD_HUSKBOX_API_KEY: ' secret ',
@@ -44,7 +44,7 @@ describe('HuskboxExecutionTransport', () => {
     });
     expect(parsed).toMatchObject({ baseUrl: 'https://huskbox.test', apiKey: 'secret' });
     expect(parsed).not.toHaveProperty('tenantId');
-    expect(parsed).not.toHaveProperty('image');
+    expect(parsed.image).toBe('acaicai123/ai-design-ohmyagent:f4348e7');
   });
 
   it('sends the OpenAPI snake_case request without a tenant header and streams output', async () => {
@@ -73,6 +73,7 @@ describe('HuskboxExecutionTransport', () => {
     expect(requestBody.env.ARBITRARY_SECRET).toBeUndefined();
     expect(requestBody).toHaveProperty('idempotency_key');
     expect(requestBody).toHaveProperty('image', 'registry.test/ohmyagent:latest');
+    expect(requestBody).toHaveProperty('timeout_seconds', 42);
     expect(requestBody).not.toHaveProperty('idempotencyKey');
   });
 

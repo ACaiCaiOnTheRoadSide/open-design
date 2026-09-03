@@ -407,6 +407,36 @@ export function daemonAgentPayloadToPersistedAgentEvent(data: unknown): Persiste
     return { kind: 'thinking', text: data.delta };
   }
   if (type === 'thinking_start') return { kind: 'status', label: 'thinking' };
+  if (
+    type === 'subagent_event' &&
+    typeof data.parentSessionId === 'string' &&
+    typeof data.parentToolCallId === 'string' &&
+    typeof data.sessionId === 'string'
+  ) {
+    const state = data.state === 'completed' || data.state === 'error' || data.state === 'stopped'
+      ? data.state
+      : 'running';
+    const childEvent = isRecord(data.event) ? data.event : null;
+    const child = childEvent?.type === 'error' && typeof childEvent.message === 'string'
+      ? { kind: 'error' as const, message: childEvent.message }
+      : daemonAgentPayloadToPersistedAgentEvent(data.event);
+    const persistedChild = child && (
+      child.kind === 'status' || child.kind === 'text' || child.kind === 'thinking' ||
+      child.kind === 'error' || child.kind === 'tool_use' || child.kind === 'tool_result' || child.kind === 'raw'
+    ) ? child : null;
+    return {
+      kind: 'subagent',
+      parentSessionId: data.parentSessionId,
+      parentToolCallId: data.parentToolCallId,
+      sessionId: data.sessionId,
+      state,
+      ...(typeof data.name === 'string' && data.name ? { name: data.name } : {}),
+      ...(typeof data.agentType === 'string' && data.agentType ? { agentType: data.agentType } : {}),
+      ...(typeof data.description === 'string' && data.description ? { description: data.description } : {}),
+      ...(typeof data.seq === 'number' ? { seq: data.seq } : {}),
+      ...(persistedChild ? { event: persistedChild } : {}),
+    };
+  }
   if (type === 'live_artifact') {
     return {
       kind: 'live_artifact',

@@ -1672,6 +1672,27 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   if (t === 'thinking_start') {
     return { kind: 'status', label: 'thinking' };
   }
+  if (t === 'subagent_event') {
+    const child = data.event?.type === 'error'
+      ? { kind: 'error' as const, message: data.event.message }
+      : data.event ? translateAgentEvent(data.event as DaemonAgentPayload) : null;
+    const persistedChild = child && (
+      child.kind === 'status' || child.kind === 'text' || child.kind === 'thinking' ||
+      child.kind === 'error' || child.kind === 'tool_use' || child.kind === 'tool_result' || child.kind === 'raw'
+    ) ? child : undefined;
+    return {
+      kind: 'subagent',
+      parentSessionId: data.parentSessionId,
+      parentToolCallId: data.parentToolCallId,
+      sessionId: data.sessionId,
+      state: data.state,
+      name: data.name,
+      agentType: data.agentType,
+      description: data.description,
+      seq: data.seq,
+      event: persistedChild,
+    };
+  }
   if (t === 'live_artifact') {
     return {
       kind: 'live_artifact',

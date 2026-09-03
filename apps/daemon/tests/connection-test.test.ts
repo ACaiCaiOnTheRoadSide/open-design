@@ -3127,6 +3127,41 @@ setTimeout(() => {
     );
   });
 
+  it('uses an OhMyAgent JSON-RPC stdio session for connection tests', async () => {
+    await withFakeAgent(
+      'ohmyagent',
+      `
+if (process.argv.includes('--version')) {
+  console.log('1.0.0');
+  process.exit(0);
+}
+const readline = require('node:readline');
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+send({ jsonrpc: '2.0', method: 'system/ready', params: { capabilities: ['sessionSafeReclaim'] } });
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const request = JSON.parse(line);
+  if (request.method === 'session/create') {
+    send({ jsonrpc: '2.0', id: request.id, result: { session_id: 'connection-session' } });
+  } else if (request.method === 'session/sendMessage') {
+    send({ jsonrpc: '2.0', id: request.id, result: { status: 'ok' } });
+    send({ jsonrpc: '2.0', method: 'event/stream', params: { type: 'model_delta', session_id: 'connection-session', data: { text: 'ok' } } });
+    send({ jsonrpc: '2.0', method: 'event/stream', params: { type: 'turn_done', session_id: 'connection-session', data: {} } });
+    send({ jsonrpc: '2.0', method: 'turn/stopped', params: { session_id: 'connection-session', stop_reason: 'complete' } });
+  } else if (request.method === 'session/reclaim') {
+    send({ jsonrpc: '2.0', id: request.id, result: { status: 'reclaimed' } });
+  }
+});
+`,
+      async () => {
+        await expect(testAgentConnection({ agentId: 'ohmyagent' })).resolves.toMatchObject({
+          ok: true,
+          kind: 'success',
+          agentName: 'OhMyAgent',
+        });
+      },
+    );
+  });
+
   it('classifies split agent model-error text after buffering the full response', async () => {
     await withFakeCodex(
       `
