@@ -2,7 +2,7 @@
 name: html-to-image
 description: |
   Export an HTML page from the current project to a downloadable full-page
-  image (png/jpeg/webp) or PDF using headless Chromium — for web/sandbox runtimes
+  image (png/jpeg/webp) using headless Chromium — for web/sandbox runtimes
   where the built-in desktop image export is unavailable. An ordinary page
   becomes ONE full-page screenshot (the whole scrollable document, never just
   the visible viewport); a slide deck becomes one long image with every slide
@@ -16,8 +16,6 @@ triggers:
   - "html 转图片"
   - "整页截图"
   - "html-to-image"
-  - "导出 pdf"
-  - "export pdf"
 od:
   mode: utility
   scenario: engineering
@@ -38,7 +36,7 @@ What it produces — ALWAYS the whole artifact, never a partial view:
   `.ppt-slide`, or `.slide` with deck structure): every slide captured
   pixel-perfect and stitched vertically into one long image.
 
-Formats: `png` (default), `jpeg`, `webp`, `pdf` — pass the one the user chose. PDF exports an ordinary page completely (paginated when necessary) and preserves each deck slide as its own PDF page.
+Formats: `png` (default), `jpeg`, `webp` — pass the one the user chose. Use the separate `html-to-pdf` skill for PDF so Chromium preserves real selectable text instead of assembling slide screenshots.
 
 **Follow the steps below exactly. Do NOT improvise your own conversion OR
 your own environment setup.** No hand-drawn replacement SVGs, no partial
@@ -117,13 +115,12 @@ against the workspace `node_modules`.
 
 ```bash
 . ${TMPDIR:-/tmp}/od-pptx-export/env.sh && NODE_OPTIONS=--max-old-space-size=256 \
-node ${TMPDIR:-/tmp}/od-pptx-export/render-image.mjs [--deck] --format <png|jpeg|webp|pdf> \
-  "<project-dir>/<page>.html" "<project-dir>/<page-title>-整页图.<png|jpg|webp|pdf>"
+node ${TMPDIR:-/tmp}/od-pptx-export/render-image.mjs [--deck] --format <png|jpeg|webp> \
+  "<project-dir>/<page>.html" "<project-dir>/<page-title>-整页图.<png|jpg|webp>"
 ```
 
 - Pass `--format` with exactly the format the user chose (default `png` when
   unspecified). `--quality 1-100` tunes jpeg/webp compression (default 92).
-  For PDF use a `.pdf` output name (the `-整页图` marker is optional).
 - When the export request says the viewer identified the artifact as a deck,
   pass `--deck`. This authoritative signal prevents a deck whose DOM does not
   satisfy the conservative auto-detection heuristic from degrading to a
@@ -195,7 +192,7 @@ node ${TMPDIR:-/tmp}/od-pptx-export/render-image.mjs [--deck] --format <png|jpeg
   automatically when set. If fonts still fall back, finish the export and
   tell the user the page's webfonts were unreachable from the sandbox, so
   system fonts were substituted — do not treat this as a failure.
-- **PDF export**: PDF is not subject to the single-image side/area limit. For decks the script emits one slide per PDF page; ordinary long pages are paginated by Chromium.
+- **PDF requested**: switch to the separate `html-to-pdf` skill; do not use this image renderer as a PDF fallback.
 - **Exit code 7 (`output image would exceed encoder limits`)**: read the
   error message — it names which limit was hit. If it names WebP's 16383px
   format limit, the artifact CAN still export as png/jpeg: tell the user webp

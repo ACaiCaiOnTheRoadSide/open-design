@@ -103,16 +103,17 @@ export function buildPdfAgentExport(request: PdfAgentExportRequest): {
   const outputName = `${base}.pdf`;
   return {
     outputName,
-    skillIds: ['html-to-image'],
+    skillIds: ['html-to-pdf'],
     prompt:
-      `Export the existing HTML artifact ${quoted(request.fileName)} with the html-to-image skill as PDF. ` +
+      `Export the existing HTML artifact ${quoted(request.fileName)} with the html-to-pdf skill. ` +
       "Follow the skill exactly. Prepare Chromium only with the skill's bundled scripts/setup-env.sh; " +
-      'do not improvise npm, apk, Playwright, or browser installation. ' +
+      'invoke render-pdf.mjs, not render-image.mjs, and do not use Electron or the user browser print dialog. ' +
+      'Do not improvise npm, apk, Playwright, or browser installation. ' +
       `Write the result inside the project directory with the exact safe filename ${quoted(outputName)}. ` +
       (request.deck
-        ? 'Preserve every slide as its own PDF page. '
-        : 'Preserve the complete scrollable page, not only the visible viewport. ') +
-      'Report the exact output filename and page count only after the file exists and is non-empty. ' +
-      'On failure, report the actual error and do not claim success or create a substitute artifact.',
+        ? 'The viewer identified a deck: pass --deck and preserve every slide as its own text-preserving PDF page. '
+        : 'Preserve the complete scrollable page with real selectable PDF text, not a viewport screenshot. ') +
+      'Report the exact output filename and page count only after the file exists, is non-empty, and has a valid PDF header. ' +
+      'On failure, report the actual error and do not silently create a screenshot PDF substitute.',
   };
 }

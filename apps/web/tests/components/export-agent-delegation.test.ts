@@ -52,11 +52,15 @@ describe('agent export delegation', () => {
     expect(image.prompt).toContain('every slide is captured and stitched');
   });
 
-  it('delegates PDF through the renderer skill with deck pagination', () => {
+  it('delegates PDF through sandbox Chromium with selectable text and deck pagination', () => {
     const pdf = buildPdfAgentExport({ fileName: 'deck.html', title: 'Quarterly', deck: true });
 
-    expect(pdf.skillIds).toEqual(['html-to-image']);
+    expect(pdf.skillIds).toEqual(['html-to-pdf']);
     expect(pdf.outputName).toBe('Quarterly.pdf');
-    expect(pdf.prompt).toContain('every slide as its own PDF page');
+    expect(pdf.prompt).toContain('render-pdf.mjs');
+    expect(pdf.prompt).toContain('pass --deck');
+    expect(pdf.prompt).toContain('text-preserving PDF page');
+    expect(pdf.prompt).not.toContain('html-to-image skill');
+    expect(pdf.prompt).toContain('do not use Electron');
   });
 });

@@ -105,6 +105,7 @@ const residualAllowedExactPaths = new Set([
   // installs their isolated Playwright dependencies under $TMPDIR.
   "skills/html-to-pptx/scripts/render-pptx.mjs",
   "skills/html-to-image/scripts/render-image.mjs",
+  "skills/html-to-pdf/scripts/render-pdf.mjs",
   // CI-only plugin-preview renderer. Kept .mjs and run directly by Node so its
   // runtime deps (puppeteer-core + a headless Chrome + ffmpeg) are provided by
   // the CI environment and never pulled into the daemon/web TS build or bundle.
@@ -1348,9 +1349,10 @@ async function checkSharedExportSkillSetup(): Promise<boolean> {
   const paths = [
     "skills/html-to-pptx/scripts/setup-env.sh",
     "skills/html-to-image/scripts/setup-env.sh",
+    "skills/html-to-pdf/scripts/setup-env.sh",
   ];
   const copies = await Promise.all(paths.map((relative) => readFile(path.join(repoRoot, relative), "utf8")));
-  if (copies[0] !== copies[1]) {
+  if (copies.some((copy) => copy !== copies[0])) {
     console.error(`Shared export setup scripts differ: ${paths.join(", ")}`);
     return false;
   }

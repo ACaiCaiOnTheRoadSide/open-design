@@ -1,11 +1,11 @@
-# setup-env.sh — one-shot environment prep shared by the html-to-pptx and
-# html-to-image skills.
+# setup-env.sh — one-shot environment prep shared by the html-to-pptx,
+# html-to-image, and html-to-pdf skills.
 #
 #   sh <skill-root>/scripts/setup-env.sh
 #
-# This file ships in BOTH skills and must stay BYTE-IDENTICAL between them
+# This file ships in all three skills and must stay BYTE-IDENTICAL between them
 # (scripts/guard.ts enforces this): each skill stages self-contained into the
-# sandbox, but both copies drive the SAME shared workspace
+# sandbox, but all copies drive the SAME shared workspace
 # (${TMPDIR:-/tmp}/od-pptx-export) so the expensive Chromium acquisition (~320MB on musl
 # sandboxes) happens once per session no matter which skill runs first. That
 # sharing is also why pptxgenjs is installed even for image-only sessions:
