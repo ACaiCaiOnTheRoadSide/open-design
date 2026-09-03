@@ -12333,27 +12333,15 @@ export async function startServer({
     const promptFile = await preparePromptFileForAgent(def, composed, run.id);
     const ohmyagentConfigDir = selectedExecutionTransportKind === 'huskbox'
       ? `${huskboxExecutionConfigFromEnv().sandboxMount.replace(/\/$/u, '')}/.od/tmp`
-      : os.tmpdir();
-    const ohmyagentModelConfigPath = ohmyagentModelConfig
+      : undefined;
+    const ohmyagentModelConfigPath = ohmyagentConfigDir && ohmyagentModelConfig
       ? path.join(ohmyagentConfigDir, `od-ohmyagent-model-${run.id}.json`)
       : undefined;
-    const ohmyagentMcpConfigPath = ohmyagentMcpConfig
+    const ohmyagentMcpConfigPath = ohmyagentConfigDir && ohmyagentMcpConfig
       ? path.join(ohmyagentConfigDir, `od-ohmyagent-mcp-${run.id}.json`)
       : undefined;
-    const ohmyagentLocalConfigPaths: string[] = [];
-    if (selectedExecutionTransportKind === 'local') {
-      for (const [target, value] of [
-        [ohmyagentModelConfigPath, ohmyagentModelConfig?.config],
-        [ohmyagentMcpConfigPath, ohmyagentMcpConfig],
-      ] as const) {
-        if (!target || !value) continue;
-        await fs.promises.writeFile(target, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 });
-        ohmyagentLocalConfigPaths.push(target);
-      }
-    }
     const cleanupPromptFile = () => {
       if (promptFile) promptFile.cleanup().catch(() => {});
-      for (const target of ohmyagentLocalConfigPaths) fs.promises.unlink(target).catch(() => {});
     };
 
     // Codex CLI parses config.toml before processing any -c overrides. An
@@ -14040,6 +14028,8 @@ export async function startServer({
           prompt: composed,
           cwd: effectiveCwd,
           model: safeModel,
+          modelConfig: ohmyagentModelConfig?.config,
+          mcpConfig: ohmyagentMcpConfig,
           onReady: () => noteCliReadyAt(),
           onSession: () => noteSessionInitDoneAt(),
           onEvent: (event) => {

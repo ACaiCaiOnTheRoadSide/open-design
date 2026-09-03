@@ -8,6 +8,8 @@ export interface OhMyAgentStdioOptions {
   prompt: string;
   cwd: string;
   model?: string | null;
+  modelConfig?: JsonRecord | null;
+  mcpConfig?: JsonRecord | null;
   onEvent: (event: JsonRecord) => void;
   onReady?: () => void;
   onSession?: (sessionId: string) => void;
@@ -148,6 +150,8 @@ export function attachOhMyAgentStdioSession(options: OhMyAgentStdioOptions) {
         execution_mode: 'autonomous',
         interactive: true,
         ...(options.model && options.model !== 'default' ? { model: options.model } : {}),
+        ...(options.modelConfig ? { model_config: options.modelConfig } : {}),
+        ...(options.mcpConfig ? { mcp_config: options.mcpConfig } : {}),
       }).then((result) => {
         sessionId = String(result.session_id || '');
         if (!sessionId) throw new Error('OhMyAgent session/create returned no session_id');

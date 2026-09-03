@@ -129,7 +129,6 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
     image: 'registry.test/ohmyagent:v1',
     cmd: expect.arrayContaining([
       'bash', 'ohmyagent', '--stdio',
-      '--model-config', expect.stringMatching(/^@\/workspace\/\.od\/tmp\/od-ohmyagent-model-.+\.json$/u),
     ]),
     env: expect.objectContaining({
       OD_DATA_DIR: '/workspace',
@@ -142,6 +141,8 @@ it('[P0] runs OhMyAgent through the daemon, real Huskbox HTTP/SSE, JSONL parser,
   expect(request.body).not.toHaveProperty('inputWorkspaceURL');
   expect(request.body.cmd).not.toEqual(expect.stringContaining('Return the integration answer.'));
   expect(request.body.cmd).not.toContain('--model');
+  expect(request.body.cmd).not.toContain('--model-config');
+  expect(request.body.cmd).not.toContain('--mcp-config');
   const remoteEnv = request.body.env as Record<string, string>;
   const modelConfig = JSON.parse(Buffer.from(
     remoteEnv.OD_OHMYAGENT_MODEL_CONFIG_B64!, 'base64',

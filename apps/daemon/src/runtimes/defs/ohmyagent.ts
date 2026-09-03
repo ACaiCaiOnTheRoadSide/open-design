@@ -18,12 +18,6 @@ export const ohmyagentAgentDef = {
       '--cwd', cwd,
     ];
     if (options.model && options.model !== 'default') args.push('--model', options.model);
-    if (runtimeContext.ohmyagentModelConfigPath) {
-      args.push('--model-config', `@${runtimeContext.ohmyagentModelConfigPath}`);
-    }
-    if (runtimeContext.ohmyagentMcpConfigPath) {
-      args.push('--mcp-config', `@${runtimeContext.ohmyagentMcpConfigPath}`);
-    }
     return args;
   },
   promptViaStdin: true,

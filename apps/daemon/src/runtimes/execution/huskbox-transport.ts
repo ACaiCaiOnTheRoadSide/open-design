@@ -69,6 +69,13 @@ const fs = require('node:fs');
 const readline = require('node:readline');
 const { spawn } = require('node:child_process');
 const prompt = fs.readFileSync(process.argv[2], 'utf8');
+function readRuntimeConfig(envName) {
+  const configPath = process.env[envName];
+  delete process.env[envName];
+  return configPath ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : undefined;
+}
+const modelConfig = readRuntimeConfig('OD_OHMYAGENT_MODEL_CONFIG_PATH');
+const mcpConfig = readRuntimeConfig('OD_OHMYAGENT_MCP_CONFIG_PATH');
 const child = spawn(process.argv[3], process.argv.slice(4), { stdio: ['pipe', 'pipe', 'pipe'] });
 child.stderr.pipe(process.stderr);
 let nextId = 1;
@@ -137,7 +144,10 @@ readline.createInterface({ input: child.stdout }).on('line', (line) => {
       child.kill('SIGTERM');
       return;
     }
-    void send('session/create', { cwd: process.cwd(), permission_mode: 'bypassPermissions', execution_mode: 'autonomous', interactive: true })
+    const createParams = { cwd: process.cwd(), permission_mode: 'bypassPermissions', execution_mode: 'autonomous', interactive: true };
+    if (modelConfig) createParams.model_config = modelConfig;
+    if (mcpConfig) createParams.mcp_config = mcpConfig;
+    void send('session/create', createParams)
       .then((created) => {
         sessionId = created.session_id;
         return send('session/sendMessage', { session_id: sessionId, message: prompt });
@@ -197,13 +207,13 @@ if [ -n "\${OD_OHMYAGENT_MODEL_CONFIG_B64:-}" ]; then
   mkdir -p "\${OD_OHMYAGENT_MODEL_CONFIG_PATH%/*}"
   printf '%s' "$OD_OHMYAGENT_MODEL_CONFIG_B64" | base64 -d > "$OD_OHMYAGENT_MODEL_CONFIG_PATH" || exit 125
   chmod 600 "$OD_OHMYAGENT_MODEL_CONFIG_PATH"
-  unset OD_OHMYAGENT_MODEL_CONFIG_B64 OD_OHMYAGENT_MODEL_CONFIG_PATH
+  unset OD_OHMYAGENT_MODEL_CONFIG_B64
 fi
 if [ -n "\${OD_OHMYAGENT_MCP_CONFIG_B64:-}" ]; then
   mkdir -p "\${OD_OHMYAGENT_MCP_CONFIG_PATH%/*}"
   printf '%s' "$OD_OHMYAGENT_MCP_CONFIG_B64" | base64 -d > "$OD_OHMYAGENT_MCP_CONFIG_PATH" || exit 125
   chmod 600 "$OD_OHMYAGENT_MCP_CONFIG_PATH"
-  unset OD_OHMYAGENT_MCP_CONFIG_B64 OD_OHMYAGENT_MCP_CONFIG_PATH
+  unset OD_OHMYAGENT_MCP_CONFIG_B64
 fi
 if [ -n "\${OD_INSTALL_URL:-}" ]; then
   mkdir -p "\${OD_BIN%/*}"

@@ -15,7 +15,7 @@ describe('OhMyAgent runtime args', () => {
     expect(ohmyagentAgentDef.bin).toBe('ohmyagent');
   });
 
-  it('starts fresh even when a prior session id is present and references config files', () => {
+  it('starts fresh without passing session configs as stdio CLI flags', () => {
     const args = ohmyagentAgentDef.buildArgs('', [], [], {}, {
       ...ctx,
       resumeSessionId: 'stale-oma-session',
@@ -23,9 +23,8 @@ describe('OhMyAgent runtime args', () => {
       ohmyagentMcpConfigPath: '/tmp/mcp.json',
     });
     expect(args).not.toContain('--resume');
-    expect(args).toEqual(expect.arrayContaining([
-      '--model-config', '@/tmp/model.json', '--mcp-config', '@/tmp/mcp.json',
-    ]));
+    expect(args).not.toContain('--model-config');
+    expect(args).not.toContain('--mcp-config');
     expect(ohmyagentAgentDef.resumesSessionViaCli).toBe(false);
     expect(ohmyagentAgentDef.capturesSessionIdFromStream).toBe(false);
     expect(ohmyagentAgentDef.defaultModelEnvVar).toBe('OD_OHMYAGENT_MODEL');

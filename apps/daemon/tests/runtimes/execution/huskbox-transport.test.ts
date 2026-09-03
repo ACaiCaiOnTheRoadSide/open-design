@@ -102,6 +102,13 @@ describe('HuskboxExecutionTransport', () => {
     ]);
     expect(body.stdin).toBe('prompt');
     expect(HUSKBOX_BOOTSTRAP_SCRIPT).toContain('OD_OHMYAGENT_MODEL_CONFIG_B64');
+    expect(HUSKBOX_BOOTSTRAP_SCRIPT).toContain('OD_OHMYAGENT_MODEL_CONFIG_PATH');
+    const driverB64 = HUSKBOX_BOOTSTRAP_SCRIPT.match(
+      /printf '%s' '([^']+)' \| base64 -d > "\$TMPDIR\/oma-stdio\.cjs"/u,
+    )?.[1];
+    expect(Buffer.from(driverB64!, 'base64').toString('utf8')).toContain(
+      'createParams.model_config = modelConfig',
+    );
   });
 
   it('buffers remote stdin until endStdin', async () => {

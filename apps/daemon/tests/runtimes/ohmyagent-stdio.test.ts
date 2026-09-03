@@ -21,13 +21,23 @@ describe('OhMyAgent stdio session', () => {
       execution,
       prompt: 'do work',
       cwd: '/workspace',
+      modelConfig: { type: 'openai-chat', model: 'test-model' },
+      mcpConfig: { servers: [] },
       reclaimRetryMs: 5,
       onEvent: (event) => events.push(event),
     });
 
     stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'system/ready', params: { capabilities: ['sessionSafeReclaim'] } })}\n`);
     await tick();
-    expect(writes[0]).toMatchObject({ method: 'session/create', params: { cwd: '/workspace', execution_mode: 'autonomous' } });
+    expect(writes[0]).toMatchObject({
+      method: 'session/create',
+      params: {
+        cwd: '/workspace',
+        execution_mode: 'autonomous',
+        model_config: { type: 'openai-chat', model: 'test-model' },
+        mcp_config: { servers: [] },
+      },
+    });
 
     stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: writes[0].id, result: { session_id: 'main-1' } })}\n`);
     await tick();
