@@ -5288,6 +5288,14 @@ export interface Dict {
   'templateRec.switchPrompt': string;
   'templateRec.title': string;
   'templateRec.use': string;
+  'fileViewer.publish': string;
+  'fileViewer.publishTooltip': string;
+  'fileViewer.publishConfirmTitle': string;
+  'fileViewer.publishNotice': string;
+  'fileViewer.publishConfirm': string;
+  'fileViewer.publishAgentQueued': string;
+  'fileViewer.publishBusy': string;
+  'fileViewer.publishFailed': string;
   'fileViewer.exportToMonkeycode': string;
   'fileViewer.exportToMonkeycodeCancel': string;
   'fileViewer.exportToMonkeycodeCopyFailed': string;

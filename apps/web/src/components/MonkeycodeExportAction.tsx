@@ -14,10 +14,18 @@ interface Props {
   projectId: string;
   filePath: string;
   onStarted?: () => void;
+  variant?: 'export' | 'handoff';
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 /** Isolated export-menu action so FileViewer only needs a one-row insertion. */
-export function MonkeycodeExportAction({ projectId, filePath, onStarted }: Props) {
+export function MonkeycodeExportAction({
+  projectId,
+  filePath,
+  onStarted,
+  variant = 'export',
+  onDialogOpenChange,
+}: Props) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -37,6 +45,7 @@ export function MonkeycodeExportAction({ projectId, filePath, onStarted }: Props
         t('fileViewer.exportToMonkeycodePromptDevelop'),
       ].join('\n'));
       setDialogOpen(true);
+      onDialogOpenChange?.(true);
     } catch {
       setToast(t('fileViewer.exportToMonkeycodeOpenFailed'));
     } finally {
@@ -50,6 +59,7 @@ export function MonkeycodeExportAction({ projectId, filePath, onStarted }: Props
     const popup = window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
     setDialogOpen(false);
+    onDialogOpenChange?.(false);
     await ensureSiteConfig();
     const copied = await copyToClipboard(editedPrompt);
     const taskUrl = buildMonkeycodeTaskUrl(editedPrompt);
@@ -73,21 +83,30 @@ export function MonkeycodeExportAction({ projectId, filePath, onStarted }: Props
     <>
       <button
         type="button"
-        className="share-menu-item"
-        role="menuitem"
+        className={variant === 'handoff'
+          ? 'handoff-menu-item handoff-target-card handoff-cli-card'
+          : 'share-menu-item'}
+        role={variant === 'export' ? 'menuitem' : undefined}
+        data-testid="monkeycode-handoff-action"
         disabled={busy}
         aria-busy={busy}
         onClick={() => { void prepare(); }}
       >
-        <span className="share-menu-icon">
+        <span className={variant === 'handoff' ? undefined : 'share-menu-icon'}>
           <RemixIcon name={busy ? 'loader-4-line' : 'code-box-line'} size={15} className={busy ? 'icon-spin' : undefined} />
         </span>
-        <span>{busy ? t('fileViewer.exportToMonkeycodeLoading') : t('fileViewer.exportToMonkeycode')}</span>
+        <span className={variant === 'handoff' ? 'handoff-target-copy' : undefined}>
+          <span>{busy ? t('fileViewer.exportToMonkeycodeLoading') : t('fileViewer.exportToMonkeycode')}</span>
+          {variant === 'handoff' ? <span className="handoff-target-meta">MonkeyCode</span> : null}
+        </span>
       </button>
       <MonkeycodeExportDialog
         open={dialogOpen}
         prompt={prompt}
-        onCancel={() => setDialogOpen(false)}
+        onCancel={() => {
+          setDialogOpen(false);
+          onDialogOpenChange?.(false);
+        }}
         onConfirm={(value) => { void confirm(value); }}
       />
       {toast ? <Toast message={toast} tone="error" onDismiss={() => setToast(null)} /> : null}

@@ -2585,6 +2585,7 @@ export function ProjectView({
   // route -> active-conversation sync tell a genuine external navigation
   // apart from the URL merely lagging a local conversation switch.
   const lastSyncedConversationIdRef = useRef<string | null>(null);
+  const pendingFormSkillIdsRef = useRef<string[]>([]);
   // Live mirror of the currently-viewed project id. Used to bail out of
   // the conversation-created async refresh (#1361) if the user switches
   // projects while the refetch is in flight — the existing project-load
@@ -9958,6 +9959,22 @@ export function ProjectView({
     return started !== false;
   }, [currentConversationActionDisabled, handleSend]);
 
+  const handlePublishViaAgent = useCallback(async () => {
+    if (currentConversationActionDisabled) return false;
+    pendingFormSkillIdsRef.current = ['publish-website'];
+    const clientId = `od-${project.id}`;
+    const prompt =
+      'Publish this project to the showcase wall using the publish-website skill. ' +
+      `The client_id for this project is "${clientId}" — use that exact value, do not run hostname. ` +
+      'Follow the skill pipeline exactly. The whole project directory is the site root. ' +
+      'When publishing succeeds, give me the site_url on its own line as a plain clickable link and ' +
+      'tell me it needs moderator review before it goes live. If it fails, report the error verbatim — ' +
+      'never fabricate a URL or claim a publish that did not happen.';
+    const started = await handleSend(prompt, [], [], { skillIds: ['publish-website'] });
+    if (started === false) pendingFormSkillIdsRef.current = [];
+    return started !== false;
+  }, [currentConversationActionDisabled, handleSend, project.id]);
+
   const handleBrowserUsePrompt = useCallback((text: string) => {
     setWorkspaceFocused(false);
     setComposerDraftSignal({
@@ -11198,8 +11215,11 @@ export function ProjectView({
                       : {}),
                   });
                 }
+                const pendingSkillIds = pendingFormSkillIdsRef.current;
+                pendingFormSkillIdsRef.current = [];
                 return handleSend(text, attachments, [], {
                   entryFrom: 'question_answer',
+                  ...(pendingSkillIds.length > 0 ? { skillIds: pendingSkillIds } : {}),
                   ...(context ? { context } : {}),
                   ...(questionTaskAnalytics
                     ? { taskAnalytics: questionTaskAnalytics }
@@ -11422,6 +11442,7 @@ export function ProjectView({
           onExportPptxViaAgent={handleExportPptxViaAgent}
           onExportImageViaAgent={handleExportImageViaAgent}
           onExportPdfViaAgent={handleExportPdfViaAgent}
+          onPublishViaAgent={handlePublishViaAgent}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
           focusMode={workspaceFocused}

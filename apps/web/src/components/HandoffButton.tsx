@@ -22,6 +22,7 @@ import { Icon } from './Icon';
 import { EditorIcon } from './EditorIcon';
 import { AgentIcon } from './AgentIcon';
 import { useProjectCollabContext } from '../collab/collab-context';
+import { MonkeycodeExportAction } from './MonkeycodeExportAction';
 
 const PREFERRED_EDITOR_KEY = 'open-design:preferred-editor';
 const PREFERRED_FRAMEWORK_KEY = 'open-design:handoff-framework';
@@ -124,6 +125,7 @@ interface Props {
   // existing shell.openPath bridge in case the daemon catalogue is empty
   // (highly unlikely on macOS / Win / Linux but harmless to support).
   onRequestRevealInFinder?: () => void;
+  monkeycodeFilePath?: string;
 }
 
 function readPreferred(): HostEditorId | null {
@@ -339,6 +341,7 @@ export function HandoffButton({
   artifactKind,
   embedded = false,
   onRequestRevealInFinder,
+  monkeycodeFilePath,
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
@@ -371,6 +374,7 @@ export function HandoffButton({
   const [frameworkId, setFrameworkId] = useState(readPreferredFramework);
   const [activeTab, setActiveTab] = useState<HandoffTab>('editor');
   const [error, setError] = useState<string | null>(null);
+  const [monkeycodeDialogOpen, setMonkeycodeDialogOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const copiedTimerRef = useRef<number | null>(null);
 
@@ -405,6 +409,7 @@ export function HandoffButton({
     }
     if (!open) return;
     function onPointer(e: MouseEvent) {
+      if (monkeycodeDialogOpen) return;
       if (wrapRef.current?.contains(e.target as Node)) return;
       setOpen(false);
     }
@@ -417,7 +422,7 @@ export function HandoffButton({
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open, embedded]);
+  }, [open, embedded, monkeycodeDialogOpen]);
 
   useEffect(() => {
     return () => {
@@ -579,7 +584,7 @@ export function HandoffButton({
   // No available editors — render a Finder/Explorer/File-Manager single-button
   // fallback so the surface is never blank, including the true zero-editor
   // response where the daemon reports `editors: []`.
-  if (available.length === 0) {
+  if (available.length === 0 && !monkeycodeFilePath) {
     const fallbackLabel = platform === 'win32' ? 'Explorer' : platform === 'linux' ? 'File Manager' : 'Finder';
     const fallbackId: HostEditorId =
       platform === 'win32' ? 'explorer' : platform === 'linux' ? 'file-manager' : 'finder';
@@ -713,6 +718,16 @@ export function HandoffButton({
       )}
       {open ? (
         <div className="handoff-menu" role="dialog" aria-label={t('handoff.optionsAria')} data-testid="handoff-menu">
+          {monkeycodeFilePath ? (
+            <div className="handoff-target-group">
+              <MonkeycodeExportAction
+                projectId={projectId}
+                filePath={monkeycodeFilePath}
+                variant="handoff"
+                onDialogOpenChange={setMonkeycodeDialogOpen}
+              />
+            </div>
+          ) : null}
           <div className="handoff-menu-tabs" role="tablist" aria-label={t('handoff.optionsAria')}>
             <button
               type="button"

@@ -267,6 +267,7 @@ interface Props {
   onExportPptxViaAgent?: (request: PptxAgentExportRequest) => Promise<boolean> | boolean;
   onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
   onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
+  onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
   onPluginFolderAgentAction?: (
     relativePath: string,
     action: PluginFolderAgentAction,
@@ -1324,6 +1325,7 @@ export function FileWorkspace({
   onExportPptxViaAgent,
   onExportImageViaAgent,
   onExportPdfViaAgent,
+  onPublishViaAgent,
   onPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
@@ -3387,6 +3389,7 @@ export function FileWorkspace({
       onExportPptxViaAgent={onExportPptxViaAgent}
       onExportImageViaAgent={onExportImageViaAgent}
       onExportPdfViaAgent={onExportPdfViaAgent}
+      onPublishViaAgent={onPublishViaAgent}
       onBrandExtractionStopRequest={
         file.name === 'brand.html' ? onBrandExtractionStopRequest : undefined
       }

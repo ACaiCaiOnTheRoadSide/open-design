@@ -228,7 +228,7 @@ import { Icon } from './Icon';
 import { RemixIcon } from './RemixIcon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
 import { HandoffButton } from './HandoffButton';
-import { MonkeycodeExportAction } from './MonkeycodeExportAction';
+import { ShowcasePublishAction } from './ShowcasePublishAction';
 import { SocialShareGrid } from './SocialShareGrid';
 import { Toast } from './Toast';
 import {
@@ -1795,6 +1795,7 @@ interface Props {
   onExportPptxViaAgent?: (request: PptxAgentExportRequest) => Promise<boolean> | boolean;
   onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
   onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
+  onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
   onFileSaved?: () => Promise<void> | void;
   onBrandExtractionStopRequest?: () => void;
   // Open `openName` as a tab (focusing it) and close `closeName` in one
@@ -1893,6 +1894,7 @@ export const FileViewer = memo(function FileViewer({
   onExportPptxViaAgent,
   onExportImageViaAgent,
   onExportPdfViaAgent,
+  onPublishViaAgent,
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
@@ -1985,6 +1987,7 @@ export const FileViewer = memo(function FileViewer({
         onExportPptxViaAgent={onExportPptxViaAgent}
         onExportImageViaAgent={onExportImageViaAgent}
         onExportPdfViaAgent={onExportPdfViaAgent}
+        onPublishViaAgent={onPublishViaAgent}
         onFileSaved={onFileSaved}
         onBrandExtractionStopRequest={onBrandExtractionStopRequest}
         onOpenFileReplacing={onOpenFileReplacing}
@@ -7152,12 +7155,6 @@ function ReactComponentViewer({
                     ) : null}
                     {unifiedActionTab === 'export' ? (
                       <div className="chrome-unified-panel">
-                        {viewerOnly ? null : (
-                          <MonkeycodeExportAction
-                            projectId={projectId}
-                            filePath={file.name}
-                          />
-                        )}
                         <button
                           type="button"
                           className="share-menu-item"
@@ -7219,6 +7216,7 @@ function ReactComponentViewer({
                   artifactKind={handoffArtifactKind}
                   metricsConsent={metricsConsent}
                   installationId={installationId}
+                  monkeycodeFilePath={file.name}
                 />
               )}
             </>
@@ -7393,6 +7391,7 @@ function HtmlViewer({
   onExportPptxViaAgent,
   onExportImageViaAgent,
   onExportPdfViaAgent,
+  onPublishViaAgent,
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
@@ -7431,6 +7430,7 @@ function HtmlViewer({
   onExportPptxViaAgent?: (request: PptxAgentExportRequest) => Promise<boolean> | boolean;
   onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
   onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
+  onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
   onFileSaved?: () => Promise<void> | void;
   onBrandExtractionStopRequest?: () => void;
   onOpenFileReplacing?: (openName: string, closeName: string) => void;
@@ -16309,12 +16309,6 @@ function HtmlViewer({
                     ) : null}
                     {unifiedActionTab === 'export' && rawCanDownload ? (
                       <div className="chrome-unified-panel">
-                        {viewerOnly ? null : (
-                          <MonkeycodeExportAction
-                            projectId={projectId}
-                            filePath={file.name}
-                          />
-                        )}
                   <button
                     type="button"
                     className="share-menu-item"
@@ -16459,6 +16453,9 @@ function HtmlViewer({
                   </div>
                 ) : null}
               </div>
+              {canShare && onPublishViaAgent ? (
+                <ShowcasePublishAction disabled={streaming} onPublish={onPublishViaAgent} />
+              ) : null}
               {viewerOnly ? null : (
                 <HandoffButton
                   projectId={projectId}
@@ -16469,6 +16466,7 @@ function HtmlViewer({
                   artifactKind={handoffArtifactKind}
                   metricsConsent={metricsConsent}
                   installationId={installationId}
+                  monkeycodeFilePath={file.name}
                 />
               )}
             </div>
