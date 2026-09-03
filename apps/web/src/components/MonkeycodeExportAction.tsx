@@ -14,8 +14,8 @@ interface Props {
   projectId: string;
   filePath: string;
   onStarted?: () => void;
-  variant?: 'export' | 'handoff';
-  onDialogOpenChange?: (open: boolean) => void;
+  variant?: 'export' | 'header';
+  disabled?: boolean;
 }
 
 /** Isolated export-menu action so FileViewer only needs a one-row insertion. */
@@ -24,7 +24,7 @@ export function MonkeycodeExportAction({
   filePath,
   onStarted,
   variant = 'export',
-  onDialogOpenChange,
+  disabled = false,
 }: Props) {
   const t = useT();
   const [busy, setBusy] = useState(false);
@@ -33,7 +33,7 @@ export function MonkeycodeExportAction({
   const [toast, setToast] = useState<string | null>(null);
 
   async function prepare() {
-    if (busy) return;
+    if (disabled || busy) return;
     setBusy(true);
     onStarted?.();
     try {
@@ -45,7 +45,6 @@ export function MonkeycodeExportAction({
         t('fileViewer.exportToMonkeycodePromptDevelop'),
       ].join('\n'));
       setDialogOpen(true);
-      onDialogOpenChange?.(true);
     } catch {
       setToast(t('fileViewer.exportToMonkeycodeOpenFailed'));
     } finally {
@@ -59,7 +58,6 @@ export function MonkeycodeExportAction({
     const popup = window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
     setDialogOpen(false);
-    onDialogOpenChange?.(false);
     await ensureSiteConfig();
     const copied = await copyToClipboard(editedPrompt);
     const taskUrl = buildMonkeycodeTaskUrl(editedPrompt);
@@ -83,29 +81,29 @@ export function MonkeycodeExportAction({
     <>
       <button
         type="button"
-        className={variant === 'handoff'
-          ? 'handoff-menu-item handoff-target-card handoff-cli-card'
+        className={variant === 'header'
+          ? 'chrome-action chrome-action-secondary chrome-action-with-label chrome-action-text-only od-tooltip'
           : 'share-menu-item'}
         role={variant === 'export' ? 'menuitem' : undefined}
-        data-testid="monkeycode-handoff-action"
-        disabled={busy}
+        data-testid={variant === 'header' ? 'chrome-monkeycode-button' : 'monkeycode-export-action'}
+        data-tooltip={variant === 'header' ? t('fileViewer.exportToMonkeycode') : undefined}
+        data-tooltip-placement={variant === 'header' ? 'bottom' : undefined}
+        disabled={disabled || busy}
         aria-busy={busy}
         onClick={() => { void prepare(); }}
       >
-        <span className={variant === 'handoff' ? undefined : 'share-menu-icon'}>
-          <RemixIcon name={busy ? 'loader-4-line' : 'code-box-line'} size={15} className={busy ? 'icon-spin' : undefined} />
-        </span>
-        <span className={variant === 'handoff' ? 'handoff-target-copy' : undefined}>
-          <span>{busy ? t('fileViewer.exportToMonkeycodeLoading') : t('fileViewer.exportToMonkeycode')}</span>
-          {variant === 'handoff' ? <span className="handoff-target-meta">MonkeyCode</span> : null}
-        </span>
+        {variant === 'export' ? (
+          <span className="share-menu-icon">
+            <RemixIcon name={busy ? 'loader-4-line' : 'code-box-line'} size={15} className={busy ? 'icon-spin' : undefined} />
+          </span>
+        ) : null}
+        <span>{busy ? t('fileViewer.exportToMonkeycodeLoading') : t('fileViewer.exportToMonkeycode')}</span>
       </button>
       <MonkeycodeExportDialog
         open={dialogOpen}
         prompt={prompt}
         onCancel={() => {
           setDialogOpen(false);
-          onDialogOpenChange?.(false);
         }}
         onConfirm={(value) => { void confirm(value); }}
       />

@@ -228,6 +228,7 @@ import { Icon } from './Icon';
 import { RemixIcon } from './RemixIcon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
 import { HandoffButton } from './HandoffButton';
+import { MonkeycodeExportAction } from './MonkeycodeExportAction';
 import { ShowcasePublishAction } from './ShowcasePublishAction';
 import { SocialShareGrid } from './SocialShareGrid';
 import { Toast } from './Toast';
@@ -7207,17 +7208,23 @@ function ReactComponentViewer({
                 ) : null}
               </div>
               {viewerOnly ? null : (
-                <HandoffButton
-                  projectId={projectId}
-                  projectName={projectName}
-                  projectDir={projectDir}
-                  agents={agents}
-                  artifactId={artifactId}
-                  artifactKind={handoffArtifactKind}
-                  metricsConsent={metricsConsent}
-                  installationId={installationId}
-                  monkeycodeFilePath={file.name}
-                />
+                <>
+                  <MonkeycodeExportAction
+                    projectId={projectId}
+                    filePath={file.name}
+                    variant="header"
+                  />
+                  <HandoffButton
+                    projectId={projectId}
+                    projectName={projectName}
+                    projectDir={projectDir}
+                    agents={agents}
+                    artifactId={artifactId}
+                    artifactKind={handoffArtifactKind}
+                    metricsConsent={metricsConsent}
+                    installationId={installationId}
+                  />
+                </>
               )}
             </>
           ) : null}
@@ -16457,17 +16464,24 @@ function HtmlViewer({
                 <ShowcasePublishAction disabled={streaming} onPublish={onPublishViaAgent} />
               ) : null}
               {viewerOnly ? null : (
-                <HandoffButton
-                  projectId={projectId}
-                  projectName={projectName}
-                  projectDir={projectDir}
-                  agents={agents}
-                  artifactId={artifactId}
-                  artifactKind={handoffArtifactKind}
-                  metricsConsent={metricsConsent}
-                  installationId={installationId}
-                  monkeycodeFilePath={file.name}
-                />
+                <>
+                  <MonkeycodeExportAction
+                    projectId={projectId}
+                    filePath={file.name}
+                    variant="header"
+                    disabled={streaming}
+                  />
+                  <HandoffButton
+                    projectId={projectId}
+                    projectName={projectName}
+                    projectDir={projectDir}
+                    agents={agents}
+                    artifactId={artifactId}
+                    artifactKind={handoffArtifactKind}
+                    metricsConsent={metricsConsent}
+                    installationId={installationId}
+                  />
+                </>
               )}
             </div>
           ) : null}

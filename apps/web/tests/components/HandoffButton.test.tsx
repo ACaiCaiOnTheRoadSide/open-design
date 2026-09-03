@@ -83,19 +83,6 @@ describe('HandoffButton i18n', () => {
     expect(cursorRow.getAttribute('aria-current')).toBeNull();
   });
 
-  it('places MonkeyCode in the handoff menu', async () => {
-    stubEditors([{ id: 'finder', label: 'Finder', available: true }]);
-    render(
-      <I18nProvider initial="zh-CN">
-        <HandoffButton projectId="project-1" monkeycodeFilePath="index.html" />
-      </I18nProvider>,
-    );
-
-    fireEvent.click(await screen.findByTestId('handoff-caret'));
-
-    expect(await screen.findByTestId('monkeycode-handoff-action')).toHaveTextContent('导入到 MonkeyCode 开发');
-  });
-
   it('localizes the unavailable editor section', async () => {
     stubEditors([
       { id: 'finder', label: 'Finder', available: true },
