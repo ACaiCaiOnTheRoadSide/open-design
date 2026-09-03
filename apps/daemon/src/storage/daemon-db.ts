@@ -73,7 +73,7 @@ export function resolveDaemonDbConfig(
       database: required(env, 'OD_PG_DATABASE'),
       user: required(env, 'OD_PG_USER'),
       sslMode,
-      poolMax: integer(env.OD_PG_POOL_MAX, 'OD_PG_POOL_MAX', 10, 10_000),
+      poolMax: integer(env.OD_PG_POOL_MAX, 'OD_PG_POOL_MAX', 5, 10_000),
       ...(schema ? { schema } : {}),
     },
   };

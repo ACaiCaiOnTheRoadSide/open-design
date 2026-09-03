@@ -13,6 +13,7 @@ import {
 } from '../../src/storage/pg-migrations.js';
 import {
   closePool,
+  getPool,
   query,
   runWithPgPoolCleanupOnFailure,
   setPoolForTests,
@@ -90,6 +91,33 @@ describe('verified request context', () => {
 });
 
 describe('PostgreSQL startup pool lifecycle', () => {
+  it('uses a bounded, identifiable pool with finite connection lifetimes', async () => {
+    let capturedConfig: import('pg').PoolConfig | undefined;
+    getPool({
+      OD_DAEMON_DB: 'postgres',
+      OD_PG_HOST: 'db',
+      OD_PG_DATABASE: 'od',
+      OD_PG_USER: 'daemon',
+      OD_PG_PASSWORD: 'secret',
+      OD_PG_SSL_MODE: 'disable',
+    }, (config) => {
+      capturedConfig = config;
+      return {
+        connect: async () => { throw new Error('not used'); },
+        query: async () => result(),
+        end: async () => undefined,
+      } as unknown as PgPoolLike;
+    });
+
+    expect(capturedConfig).toMatchObject({
+      max: 5,
+      application_name: 'open-design-daemon',
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 10_000,
+    });
+    expect(capturedConfig?.password).toBe('secret');
+  });
+
   it('closes the shared pool for any later initialization failure and preserves the original error', async () => {
     let endCalls = 0;
     const pool = {

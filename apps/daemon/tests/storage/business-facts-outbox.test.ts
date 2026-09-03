@@ -41,7 +41,7 @@ describe('business facts durable outbox', () => {
     await outbox.drain();
     expect(db.prepare('SELECT COUNT(*) AS count FROM business_fact_outbox').get()).toEqual({ count: 0 });
     expect(principals).toEqual(['tenant-a', 'tenant-a']);
-    outbox.stop();
+    await outbox.stop();
     db.close();
   });
 
@@ -68,7 +68,7 @@ describe('business facts durable outbox', () => {
     expect(calls).toEqual(['first']);
     expect(db.prepare('SELECT attempts FROM business_fact_outbox WHERE id = ?').get('message:second:2'))
       .toEqual({ attempts: 0 });
-    outbox.stop();
+    await outbox.stop();
     db.close();
   });
 
@@ -104,7 +104,7 @@ describe('business facts durable outbox', () => {
     await outbox.drain();
     expect(observed.at(-1)).toEqual(expectedUsage);
     expect(db.prepare('SELECT COUNT(*) AS count FROM business_fact_outbox').get()).toEqual({ count: 0 });
-    outbox.stop();
+    await outbox.stop();
     db.close();
   });
 
@@ -148,7 +148,7 @@ describe('business facts durable outbox', () => {
     releaseSecond.resolve();
     await draining;
     expect(db.prepare('SELECT COUNT(*) AS count FROM business_fact_outbox').get()).toEqual({ count: 0 });
-    outbox.stop();
+    await outbox.stop();
     db.close();
   });
 
@@ -181,7 +181,34 @@ describe('business facts durable outbox', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
     expect(calls).toEqual(['first', 'second']);
     expect(db.prepare('SELECT COUNT(*) AS count FROM business_fact_outbox').get()).toEqual({ count: 0 });
-    outbox.stop();
+    await outbox.stop();
+    db.close();
+  });
+
+  it('waits for an in-flight projection before stop resolves', async () => {
+    const db = setupDb();
+    const projectionStarted = deferred();
+    const releaseProjection = deferred();
+    const store = {
+      enabled: true,
+      async updateProjectProjection() {
+        projectionStarted.resolve();
+        await releaseProjection.promise;
+      },
+    } as unknown as BusinessFactsStore;
+    const outbox = createBusinessFactsOutbox(db, store, { intervalMs: 60_000 });
+
+    outbox.enqueueProjectUpdate({ id: 'p', name: 'project', createdAt: 1, updatedAt: 1 });
+    await projectionStarted.promise;
+    let stopped = false;
+    const stopping = outbox.stop().then(() => { stopped = true; });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    releaseProjection.resolve();
+    await stopping;
+    expect(db.prepare('SELECT COUNT(*) AS count FROM business_fact_outbox').get())
+      .toEqual({ count: 0 });
     db.close();
   });
 
@@ -213,7 +240,7 @@ describe('business facts durable outbox', () => {
     ]);
     expect(db.prepare('SELECT COUNT(*) AS count FROM business_fact_outbox').get())
       .toEqual({ count: 0 });
-    outbox.stop();
+    await outbox.stop();
     db.close();
   });
 });

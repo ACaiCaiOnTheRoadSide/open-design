@@ -715,6 +715,7 @@ import {
   mergeSyncedPreviewComment,
   normalizeConversationSessionMode,
   deleteRoutine as dbDeleteRoutine,
+  closeDatabase,
   openDatabase,
   reorderPreviewComment,
   repairTeamProjectCommentAnchorConversations,
@@ -15816,7 +15817,7 @@ export async function startServer({
           await attempt('memory history', () => drainMemoryHistoryWrites());
           stopMemoryHistoryOutbox();
           setBusinessProjectFactsSink(null);
-          businessFactsOutbox.stop();
+          await attempt('business facts', () => businessFactsOutbox.stop());
           if (daemonDbConfig.kind === 'postgres') {
             await attempt('PostgreSQL pool', () => closePool());
           }
@@ -15833,13 +15834,12 @@ export async function startServer({
     let server;
     const handleStartupListenError = (error: Error) => {
       cleanupDaemonBackgroundWork();
-      void runQueue.shutdown().finally(() => {
-        if (daemonDbConfig.kind === 'postgres') {
-          void closePool().then(() => reject(error), () => reject(error));
-        } else {
-          reject(error);
-        }
-      });
+      void (async () => {
+        await businessFactsOutbox.stop().catch(() => undefined);
+        await runQueue.shutdown().catch(() => undefined);
+        if (daemonDbConfig.kind === 'postgres') await closePool().catch(() => undefined);
+        reject(error);
+      })();
     };
     try {
       server = app.listen(port, host);
@@ -15920,7 +15920,7 @@ export async function startServer({
       void shutdownDaemonRuns().catch((error) => {
         console.error('[od] graceful shutdown failed', error);
         process.exitCode = 1;
-      });
+      }).finally(() => closeDatabase());
     });
     // `app.listen` throws synchronously when the port is already in use on
     // some Node versions, but emits an `error` event on others (and for
@@ -15929,6 +15929,7 @@ export async function startServer({
 
   });
   } catch (error) {
+    closeDatabase();
     if (daemonDbConfig.kind === 'postgres') throw redactPostgresStartupError(error);
     throw error;
   }

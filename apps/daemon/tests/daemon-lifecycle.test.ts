@@ -89,4 +89,10 @@ describe('POST /api/daemon/shutdown', () => {
     });
     expect([401, 403, 404]).toContain(resp.status);
   });
+
+  it('keeps SQLite available until the HTTP server closes', async () => {
+    await Promise.resolve(shutdown?.());
+    const resp = await fetch(`${baseUrl}/api/projects`);
+    expect(resp.status).toBe(200);
+  });
 });

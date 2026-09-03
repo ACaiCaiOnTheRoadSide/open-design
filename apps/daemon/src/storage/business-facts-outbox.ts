@@ -27,7 +27,7 @@ export interface BusinessFactsOutbox {
   enqueueProjectDiscard(projectId: string, principal?: VerifiedPrincipal): void;
   recordAgentRunResult(result: AgentRunResultFact, principal: VerifiedPrincipal): Promise<void>;
   drain(): Promise<void>;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 function verifiedPrincipal(explicit?: VerifiedPrincipal): VerifiedPrincipal {
@@ -201,9 +201,10 @@ export function createBusinessFactsOutbox(
       if (pending) throw new Error('Agent run result was queued for durable retry');
     },
     drain,
-    stop() {
+    async stop() {
       stopped = true;
       if (interval) clearInterval(interval);
+      await draining;
     },
   };
 }

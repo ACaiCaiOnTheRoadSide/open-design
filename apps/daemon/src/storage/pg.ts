@@ -32,6 +32,9 @@ export function getPool(
     user: pg.user,
     password: env.OD_PG_PASSWORD,
     max: pg.poolMax,
+    application_name: 'open-design-daemon',
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 10_000,
     ssl: pg.sslMode === 'disable'
       ? false
       : { rejectUnauthorized: pg.sslMode === 'verify-full' },
