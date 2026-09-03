@@ -45,8 +45,8 @@ export function MonkeycodeExportAction({
         t('fileViewer.exportToMonkeycodePromptDevelop'),
       ].join('\n'));
       setDialogOpen(true);
-    } catch {
-      setToast(t('fileViewer.exportToMonkeycodeOpenFailed'));
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : t('fileViewer.exportToMonkeycodeOpenFailed'));
     } finally {
       setBusy(false);
     }
