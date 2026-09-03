@@ -25,9 +25,9 @@ function persist(config: Partial<AppConfig>): void {
 describe('theme preference — persisted config', () => {
   beforeEach(() => store.clear());
 
-  it('defaults a fresh install to the system theme', () => {
-    expect(DEFAULT_CONFIG.theme).toBe('system');
-    expect(loadConfig().theme).toBe('system');
+  it('defaults a fresh install to the dark theme', () => {
+    expect(DEFAULT_CONFIG.theme).toBe('dark');
+    expect(loadConfig().theme).toBe('dark');
   });
 
   it('preserves a persisted dark theme and unrelated appearance settings', () => {
@@ -37,9 +37,9 @@ describe('theme preference — persisted config', () => {
     expect(config.accentColor).toBe('#4f46e5');
   });
 
-  it('falls back to system for an invalid persisted theme', () => {
+  it('falls back to dark for an invalid persisted theme', () => {
     persist({ theme: 'unsupported' as AppConfig['theme'] });
-    expect(loadConfig().theme).toBe('system');
+    expect(loadConfig().theme).toBe('dark');
   });
 });
 
@@ -72,6 +72,11 @@ describe('theme preference — pre-hydration script', () => {
   afterEach(() => {
     document.documentElement.removeAttribute('data-theme');
     store.clear();
+  });
+
+  it('paints dark before hydration when no preference is saved', () => {
+    runThemeInitScript();
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
   });
 
   it('paints a saved dark preference before hydration', () => {

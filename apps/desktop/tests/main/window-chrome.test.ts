@@ -25,6 +25,13 @@ function mainAppWindowOptions(): string {
 }
 
 describe("desktop BrowserWindow chrome options", () => {
+  test("uses the dark default for the native splash and its document", () => {
+    expect(runtimeSource).toContain('nativeTheme.themeSource = "dark";');
+    expect(runtimeSource).toContain('backgroundColor: "#202020"');
+    expect(runtimeSource).toContain('background: #202020;');
+    expect(runtimeSource).toContain('filter: invert(1);');
+  });
+
   test("hides Electron's native menu bar in the Windows/Linux app window", () => {
     expect(mainAppWindowOptions()).toContain("autoHideMenuBar: true");
   });

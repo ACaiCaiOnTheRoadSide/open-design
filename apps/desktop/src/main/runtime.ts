@@ -285,7 +285,7 @@ export function isRendererFailureHttpStatus(httpResponseCode: number): boolean {
 
 const PENDING_POLL_MS = 120;
 const RUNNING_POLL_MS = 2000;
-// Minimum time the light splash window stays on screen before we reveal the main
+// Minimum time the dark splash window stays on screen before we reveal the main
 // window. It is sized to outlast the ~1.7s clip so the brand animation always
 // plays through. The splash is shown immediately and in parallel with the
 // daemon/web boot (see the packaged entry), so this time overlaps startup rather
@@ -923,7 +923,7 @@ const MAC_WINDOW_CHROME_CSS = `
   }
 `;
 
-// Light-background startup splash shown while the web runtime boots. It plays
+// Dark-background startup splash shown while the web runtime boots. It plays
 // the brand intro clip once and then holds on its final settled logo frame until
 // the main window is ready. The clip is embedded as a base64 data URL so it
 // renders identically in dev and in packaged builds (see `splash-video.ts`).
@@ -938,7 +938,7 @@ function createPendingHtml(): string {
     <style>
       html,
       body {
-        background: #f2f4f5;
+        background: #202020;
         height: 100%;
         margin: 0;
         overflow: hidden;
@@ -949,11 +949,12 @@ function createPendingHtml(): string {
         justify-content: center;
       }
       video {
-        background: #f2f4f5;
+        background: #202020;
         height: auto;
         max-height: 100%;
         max-width: 100%;
         width: auto;
+        filter: invert(1);
       }
       .boot-stage {
         bottom: 56px;
@@ -1497,23 +1498,20 @@ export type SplashWindowHandle = {
 };
 
 /**
- * Pin Electron's native appearance to light.
+ * Pin Electron's native appearance to dark for the default startup theme.
  *
- * The app has one theme now, so `themeSource` is not a preference to sync — it
- * is a constant. Leaving it at Electron's `system` default lets a dark-mode OS
- * colour everything the web layer does not own: the macOS vibrancy glass
- * (`vibrancy: "under-window"`), native menus and dialogs, and the renderer's
- * own `prefers-color-scheme` before `data-theme` is stamped.
+ * The renderer synchronizes an explicit saved preference after it mounts. Until
+ * then, native chrome and the splash must match the app's dark default.
  *
  * Idempotent, so both the splash path and the `od:appearance:set-theme` handler
  * can call it.
  */
-export function pinNativeAppearanceToLight(): void {
-  nativeTheme.themeSource = "light";
+export function pinNativeAppearanceToDark(): void {
+  nativeTheme.themeSource = "dark";
 }
 
 /**
- * Create and immediately show the light brand-splash window. The packaged entry
+ * Create and immediately show the dark brand-splash window. The packaged entry
  * calls this BEFORE awaiting the daemon/web sidecars so the animation masks the
  * whole cold boot (no black no-window gap); the desktop runtime then adopts it
  * via `DesktopRuntimeOptions.splashWindow` + `splashStartedAt` and closes it
@@ -1521,17 +1519,13 @@ export function pinNativeAppearanceToLight(): void {
  * + matching size so the reveal swap reads as a single window, never a flash.
  */
 export function createSplashWindow(): SplashWindowHandle {
-  // OpenDesign ships light-only (the theme setting was removed), so pin the
-  // native appearance before the first window exists. Electron defaults
-  // `themeSource` to `system`, which paints the macOS vibrancy glass and the
-  // native chrome dark on a dark-mode Mac — visible on the splash and again in
-  // the gap before the renderer's `od:appearance:set-theme` lands.
-  pinNativeAppearanceToLight();
+  // Match the default web theme before the renderer can send a saved preference.
+  pinNativeAppearanceToDark();
   // Stamp creation time at the instant the window appears (see SplashWindowHandle).
   const startedAt = Date.now();
   const splash = new BrowserWindow({
     autoHideMenuBar: true,
-    backgroundColor: "#f2f4f5",
+    backgroundColor: "#202020",
     frame: false,
     height: 900,
     resizable: false,
@@ -2560,9 +2554,8 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     // (vibrancy: under-window) draws its glass in the SYSTEM appearance by
     // default, so a light app over a dark OS sat on dark glass and read as a
     // muddy gray (#94); forcing the native theme keeps the glass material in
-    // step with the app's tokens. The host protocol still carries all three
-    // values as generic infrastructure, but the app ships light-only, so this
-    // is the same value `pinNativeAppearanceToLight` already set at startup.
+    // step with the app's tokens. The host protocol carries all three values;
+    // this replaces the dark startup default with the user's saved preference.
     nativeTheme.themeSource = theme;
   });
 

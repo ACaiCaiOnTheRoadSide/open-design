@@ -46,7 +46,7 @@ function accentVars(accentColor: string): Record<(typeof ACCENT_VARS)[number], s
 export function resolveAppTheme(persisted?: AppTheme | null): AppTheme {
   return persisted === 'light' || persisted === 'dark' || persisted === 'system'
     ? persisted
-    : 'system';
+    : 'dark';
 }
 
 export function applyAppearanceToDocument({

@@ -75,7 +75,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skillId: null,
   designSystemId: null,
   onboardingCompleted: WHITE_LABEL_SAAS,
-  theme: 'system',
+  theme: 'dark',
   accentColor: DEFAULT_ACCENT_COLOR,
   mediaProviders: {},
   composio: {},
