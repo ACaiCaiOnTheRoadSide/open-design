@@ -296,6 +296,54 @@ async function captureFullPage(page, outPath, tmpDir) {
   });
 }
 
+// Capture an ordinary page at the scroll position where each viewport is
+// actually visible, then assemble those frames at their real document offsets.
+// A single `fullPage` screenshot renders everything from scrollY=0, which drops
+// content controlled by scroll handlers / view timelines after the prewarm has
+// returned to the top.
+async function capturePageByScrollSegments(page, outPath, tmpDir, totalWidth, totalHeight) {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error('page viewport is unavailable');
+  const maxScroll = Math.max(0, totalHeight - viewport.height);
+  const frames = [];
+  for (let y = 0; ; y += viewport.height) {
+    const target = Math.min(y, maxScroll);
+    const actualY = await page.evaluate(async (requested) => {
+      window.scrollTo({ left: 0, top: requested, behavior: 'instant' });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return Math.round(window.scrollY || document.documentElement.scrollTop || 0);
+    }, target);
+    const shot = path.join(tmpDir, `page-${frames.length + 1}.png`);
+    await page.screenshot({
+      type: 'png',
+      path: shot,
+      clip: { x: 0, y: 0, width: totalWidth, height: viewport.height },
+      captureBeyondViewport: true,
+    });
+    frames.push({ shot, y: actualY });
+    if (target >= maxScroll) break;
+  }
+
+  const stitchHtml = path.join(tmpDir, 'page-stitch.html');
+  fs.writeFileSync(
+    stitchHtml,
+    '<!doctype html><html><head><meta charset="utf-8"></head>' +
+      `<body style="margin:0;padding:0;width:${totalWidth}px;height:${totalHeight}px;overflow:hidden;background:#fff">` +
+      `<style>html,body{margin:0;padding:0;width:${totalWidth}px;min-height:${totalHeight}px}` +
+      `img{position:absolute;left:0;width:${totalWidth}px;height:${viewport.height}px}</style>` +
+      frames
+        .map(({ shot, y }) => `<img src="${path.basename(shot)}" alt="" style="top:${y}px">`)
+        .join('') +
+      '</body></html>',
+  );
+  await page.goto(pathToFileURL(stitchHtml).href, { waitUntil: 'load', timeout: 60_000 });
+  await page.evaluate(async () => {
+    await Promise.all(Array.from(document.images).map((img) => img.decode()));
+  });
+  await captureFullPage(page, outPath, tmpDir);
+}
+
 function guardOutputSize(w, h) {
   if (format === 'pdf') return;
   const dw = Math.round(w * scale);
@@ -410,7 +458,7 @@ try {
     // Scroll prewarm (ports deck-capture.ts preparePageForCapture): step
     // through the document once so scroll-event-driven JS (AOS-style libs)
     // and any remaining lazy loading trigger and settle, then return to the
-    // top — the full-page capture below renders the document at scroll 0.
+    // top before the live per-viewport capture below.
     // IO-gated reveals are already handled by the init-script stub above.
     await page.evaluate(async () => {
       const settle = () =>
@@ -430,8 +478,9 @@ try {
       w: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
       h: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
     }));
-    guardOutputSize(Math.max(pageWidth, size.w), size.h);
-    await captureFullPage(page, output, tmpDir);
+    const totalWidth = Math.max(pageWidth, size.w);
+    guardOutputSize(totalWidth, size.h);
+    await capturePageByScrollSegments(page, output, tmpDir, totalWidth, size.h);
     const end = Date.now();
     console.log(
       `ok: ${output} (page ${size.w}x${size.h}@${scale}x, ${format}) ` +
