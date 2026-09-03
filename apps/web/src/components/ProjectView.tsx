@@ -9970,7 +9970,10 @@ export function ProjectView({
       'When publishing succeeds, give me the site_url on its own line as a plain clickable link and ' +
       'tell me it needs moderator review before it goes live. If it fails, report the error verbatim — ' +
       'never fabricate a URL or claim a publish that did not happen.';
-    const started = await handleSend(prompt, [], [], { skillIds: ['publish-website'] });
+    const started = await handleSend(prompt, [], [], {
+      skillIds: ['publish-website'],
+      sessionMode: 'chat',
+    });
     if (started === false) pendingFormSkillIdsRef.current = [];
     return started !== false;
   }, [currentConversationActionDisabled, handleSend, project.id]);
