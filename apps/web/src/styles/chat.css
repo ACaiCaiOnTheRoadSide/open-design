@@ -532,7 +532,7 @@
 .msg.user .user-text {
   white-space: pre-wrap;
   color: var(--text);
-  background: #ededed;
+  background: var(--bg-subtle);
   border: none;
   border-radius: var(--radius-lg) var(--radius-none) var(--radius-lg) var(--radius-lg);
   padding: 8px 12px;

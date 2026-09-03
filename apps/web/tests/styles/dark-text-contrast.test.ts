@@ -70,4 +70,10 @@ describe('dark text hierarchy', () => {
     expect(cssBlock(chatCss, '\n.composer-input-placeholder'))
       .toContain('color: var(--text-faint);');
   });
+
+  it('keeps user message text and its background on the same theme', () => {
+    const userMessage = cssBlock(chatCss, '.msg.user .user-text');
+    expect(userMessage).toContain('color: var(--text);');
+    expect(userMessage).toContain('background: var(--bg-subtle);');
+  });
 });
