@@ -19,6 +19,7 @@ export function buildOhMyAgentMcpConfig(
         command,
         ...(server.args?.length ? { args: [...server.args] } : {}),
         ...(server.env && Object.keys(server.env).length ? { env: { ...server.env } } : {}),
+        ...(server.disabledTools?.length ? { disabled_tools: [...server.disabledTools] } : {}),
       });
       continue;
     }
@@ -36,6 +37,7 @@ export function buildOhMyAgentMcpConfig(
       transport: server.transport === 'http' ? 'streamable-http' : 'sse',
       url,
       ...(Object.keys(headers).length ? { headers } : {}),
+      ...(server.disabledTools?.length ? { disabled_tools: [...server.disabledTools] } : {}),
     });
   }
   return { servers: out };

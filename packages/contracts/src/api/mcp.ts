@@ -29,6 +29,9 @@ export interface McpServerConfig {
    * spawn so users can keep credentials around without them being wired into
    * every run. */
   enabled: boolean;
+  /** Raw tool names disabled for this MCP server. OhMyAgent removes these
+   * tools from the model-visible registry. */
+  disabledTools?: string[];
   /** HTTP/SSE only: whether OpenDesign should offer its managed OAuth flow.
    * `none` means no daemon-managed OAuth; credentials, if any, are supplied
    * by headers or by a trusted local server. */

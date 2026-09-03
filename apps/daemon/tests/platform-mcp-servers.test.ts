@@ -7,11 +7,13 @@ describe('global platform MCP', () => {
   it('requires verified audit context but shares one global result across tenants', async () => {
     const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ servers: [{
       id: 'platform-global', name: 'global', transport: 'http', url: 'https://platform.example/mcp', enabled: true,
+      disabled_tools: ['legacy_image', 'legacy_image'],
     }] }), { status: 200 }));
     const base = { now: () => 10, fetchImpl: fetchImpl as typeof fetch, target: { backendUrl: 'https://backend', apiToken: 'token' } };
     const a = await getPlatformMcpServers({ ...base, principal: { tenantId: 'tenant-a', userId: 'user-a' } });
     const b = await getPlatformMcpServers({ ...base, principal: { tenantId: 'tenant-b', userId: 'user-b' } });
     expect(a.map((item) => item.id)).toEqual(['platform-global']);
+    expect(a[0]?.disabledTools).toEqual(['legacy_image']);
     expect(b.map((item) => item.id)).toEqual(['platform-global']);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const headers = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers);

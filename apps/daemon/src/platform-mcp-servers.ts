@@ -52,6 +52,9 @@ export async function getPlatformMcpServers(deps?: PlatformMcpDeps): Promise<Mcp
         const item = raw as Record<string, unknown>;
         if (typeof item.id !== 'string' || !item.id || !validTransport(item.transport) || item.enabled === false) continue;
         const config: McpServerConfig = { id: item.id, transport: item.transport, enabled: true };
+        if (Array.isArray(item.disabled_tools) && item.disabled_tools.every((tool) => typeof tool === 'string')) {
+          config.disabledTools = [...new Set(item.disabled_tools as string[])];
+        }
         if (typeof item.name === 'string') config.label = item.name;
         if (item.transport === 'stdio') {
           if (typeof item.command !== 'string' || !item.command) continue;

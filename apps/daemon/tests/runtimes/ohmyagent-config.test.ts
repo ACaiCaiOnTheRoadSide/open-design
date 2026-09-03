@@ -99,12 +99,12 @@ describe('OhMyAgent secure runtime config conversion', () => {
 
   it('converts stdio and HTTP MCP servers to OhMyAgent servers array', () => {
     const config = buildOhMyAgentMcpConfig([
-      { id: 'local', enabled: true, transport: 'stdio', command: 'server', args: ['--x'], env: { TOKEN: 'env-secret' } },
-      { id: 'remote', enabled: true, transport: 'http', url: 'https://mcp.test', headers: { 'X-Key': 'header-secret' } },
+      { id: 'local', enabled: true, transport: 'stdio', command: 'server', args: ['--x'], env: { TOKEN: 'env-secret' }, disabledTools: ['legacy_image'] },
+      { id: 'remote', enabled: true, transport: 'http', url: 'https://mcp.test', headers: { 'X-Key': 'header-secret' }, disabledTools: ['admin_query'] },
     ]);
     expect(config).toEqual({ servers: [
-      { name: 'local', transport: 'stdio', command: 'server', args: ['--x'], env: { TOKEN: 'env-secret' } },
-      { name: 'remote', transport: 'streamable-http', url: 'https://mcp.test', headers: { 'X-Key': 'header-secret' } },
+      { name: 'local', transport: 'stdio', command: 'server', args: ['--x'], env: { TOKEN: 'env-secret' }, disabled_tools: ['legacy_image'] },
+      { name: 'remote', transport: 'streamable-http', url: 'https://mcp.test', headers: { 'X-Key': 'header-secret' }, disabled_tools: ['admin_query'] },
     ] });
     // Secrets belong to the protected config file/env channel, never command args.
     expect(JSON.stringify(config)).not.toContain('OPENCODE_CONFIG_CONTENT');

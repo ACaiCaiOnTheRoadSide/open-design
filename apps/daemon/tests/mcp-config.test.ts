@@ -47,6 +47,7 @@ describe('mcp-config storage', () => {
           command: 'npx',
           args: ['-y', '@modelcontextprotocol/server-github'],
           env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_xxx' },
+          disabledTools: ['legacy_image', 'legacy_image'],
         },
       ],
     });
@@ -56,6 +57,7 @@ describe('mcp-config storage', () => {
     const reread = await readMcpConfig(dataDir);
     expect(reread.servers[0]?.command).toBe('npx');
     expect(reread.servers[0]?.env?.GITHUB_PERSONAL_ACCESS_TOKEN).toBe('ghp_xxx');
+    expect(reread.servers[0]?.disabledTools).toEqual(['legacy_image']);
   });
 
   it('persists and re-reads a valid SSE server with headers', async () => {

@@ -36,6 +36,8 @@ export interface McpServerConfig {
   templateId?: string;
   transport: McpTransport;
   enabled: boolean;
+  /** Raw MCP tool names hidden from OhMyAgent for this server. */
+  disabledTools?: string[];
   authMode?: McpAuthMode;
   command?: string;
   args?: string[];
@@ -189,6 +191,16 @@ export function sanitizeMcpServer(raw: unknown): McpServerConfig | null {
   }
   if (typeof raw.templateId === 'string' && raw.templateId.trim()) {
     next.templateId = raw.templateId.trim();
+  }
+  if (Array.isArray(raw.disabledTools)) {
+    const disabledTools = [...new Set(raw.disabledTools.filter(
+      (tool): tool is string =>
+        typeof tool === 'string' &&
+        tool.length > 0 &&
+        tool.trim() === tool &&
+        Array.from(tool).length <= 256,
+    ))].slice(0, 512);
+    if (disabledTools.length > 0) next.disabledTools = disabledTools;
   }
 
   if (transport === 'stdio') {
