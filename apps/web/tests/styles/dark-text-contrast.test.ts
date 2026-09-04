@@ -100,6 +100,17 @@ describe('dark text hierarchy', () => {
     expect(userMessage).toContain('color: var(--user-message-text);');
     expect(userMessage).toContain('background: var(--user-message-bg);');
 
+    // routines.css loads after chat.css and its more specific selector wins the
+    // cascade, so it must preserve the same foreground/background token pair.
+    const effectiveSelector = '.app .msg.user .user-text';
+    const effectiveUserMessage = cssBlock(
+      routinesCss,
+      effectiveSelector,
+      routinesCss.lastIndexOf(effectiveSelector),
+    );
+    expect(effectiveUserMessage).toContain('color: var(--user-message-text);');
+    expect(effectiveUserMessage).toContain('background: var(--user-message-bg);');
+
     const themes = [
       cssBlock(tokensCss, ':root'),
       cssBlock(tokensCss, '[data-theme="dark"]'),

@@ -1743,8 +1743,8 @@
   padding: 8px 12px;
   border: 0;
   border-radius: var(--radius-lg) var(--radius-none) var(--radius-lg) var(--radius-lg);
-  background: #ededed;
-  color: var(--text);
+  background: var(--user-message-bg);
+  color: var(--user-message-text);
   line-height: 1.45;
   font-size: 13px;
   box-shadow: none;
