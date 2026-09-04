@@ -236,6 +236,40 @@ describe('media-config OpenAI auth-file fallback', () => {
     delete process.env.OD_NANOBANANA_API_KEY;
   });
 
+  it('prefers backend-managed stored credentials over stale container env', async () => {
+    process.env.OD_NANOBANANA_API_KEY = 'stale-env-key';
+    await writeStoredMediaConfig({
+      providers: {
+        nanobanana: {
+          apiKey: 'rotated-managed-key',
+          baseUrl: TEST_NANOBANANA_BASE_URL,
+          managed: true,
+        },
+      },
+    });
+
+    await expect(resolveProviderConfig(projectRoot, 'nanobanana')).resolves.toEqual({
+      apiKey: 'rotated-managed-key',
+      baseUrl: TEST_NANOBANANA_BASE_URL,
+    });
+    delete process.env.OD_NANOBANANA_API_KEY;
+  });
+
+  it('suppresses stale container env after a managed credential is deleted', async () => {
+    process.env.OD_NANOBANANA_API_KEY = 'stale-env-key';
+    await writeStoredMediaConfig({
+      providers: {
+        nanobanana: { apiKey: '', managed: true },
+      },
+    });
+
+    await expect(resolveProviderConfig(projectRoot, 'nanobanana')).resolves.toEqual({
+      apiKey: '',
+      baseUrl: '',
+    });
+    delete process.env.OD_NANOBANANA_API_KEY;
+  });
+
   it('preserves a stored apiKey when writeConfig updates only non-secret fields', async () => {
     await writeStoredMediaConfig({
       providers: {

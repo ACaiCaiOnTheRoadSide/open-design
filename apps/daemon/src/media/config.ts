@@ -2,9 +2,10 @@
 //
 // The frontend Settings dialog pushes API keys here via PUT
 // /api/media/config; the daemon persists them to .od/media-config.json
-// and reads them at generation time. Environment variables override the
-// stored values so power users can keep keys out of the workspace
-// folder altogether (`OD_OPENAI_API_KEY=… node daemon/cli.js`).
+// and reads them at generation time. Environment variables override ordinary
+// stored values so power users can keep keys out of the workspace folder;
+// backend-managed entries override stale container env injected before an
+// administrator rotated or deleted a platform-global key.
 //
 // Storage location (precedence high → low):
 //   1. OD_MEDIA_CONFIG_DIR=DIR   → <DIR>/media-config.json
@@ -44,7 +45,7 @@ import { resolveXAIBearer } from '../integrations/xai-credentials.js';
 import { isSandboxModeEnabled } from '../sandbox-mode.js';
 
 const PROVIDER_IDS = MEDIA_PROVIDERS.map((p) => p.id);
-type ProviderEntry = { apiKey?: string; baseUrl?: string; model?: string };
+type ProviderEntry = { apiKey?: string; baseUrl?: string; model?: string; managed?: boolean };
 type ProviderMap = Record<string, ProviderEntry>;
 type ModelAliasMap = Record<string, string>;
 type JsonRecord = Record<string, unknown>;
@@ -347,17 +348,19 @@ async function resolveXAIOAuthCredential(
 }
 
 /**
- * Resolve credentials for a provider. Env vars win, then stored config,
- * then provider-specific external credential stores. OpenAI only trusts
- * explicit API keys from Codex auth files; Codex/Hermes OAuth tokens are
- * not valid proof that the Images API can be called.
+ * Resolve credentials for a provider. Backend-managed stored entries win so
+ * platform-global rotations affect long-running daemons; otherwise env vars
+ * win, then stored config, then provider-specific external credential stores.
+ * OpenAI only trusts explicit API keys from Codex auth files; Codex/Hermes
+ * OAuth tokens are not valid proof that the Images API can be called.
  * Returns { apiKey, baseUrl } where either may be empty string.
  */
 export async function resolveProviderConfig(projectRoot: string, providerId: string): Promise<ProviderEntry> {
   const stored = await readStored(projectRoot);
   const entry = stored[providerId] || {};
   const envKey = readEnvKey(providerId);
-  const needsExternalCredential = !envKey && !entry.apiKey;
+  const isManaged = entry.managed === true;
+  const needsExternalCredential = !isManaged && !envKey && !entry.apiKey;
   const externalCredential = needsExternalCredential
     ? providerId === 'openai'
       ? await resolveOpenAIAuthFileCredential()
@@ -366,7 +369,7 @@ export async function resolveProviderConfig(projectRoot: string, providerId: str
         : null
     : null;
   return {
-    apiKey: envKey || entry.apiKey || externalCredential?.apiKey || '',
+    apiKey: isManaged ? entry.apiKey || '' : envKey || entry.apiKey || externalCredential?.apiKey || '',
     baseUrl: entry.baseUrl || '',
     ...(typeof entry.model === 'string' && entry.model.trim()
       ? { model: entry.model.trim() }
@@ -397,7 +400,8 @@ export async function readMaskedConfig(projectRoot: string): Promise<MaskedConfi
     const entry = stored[id] || {};
     const envKey = readEnvKey(id);
     const hasStoredKey = typeof entry.apiKey === 'string' && entry.apiKey.length > 0;
-    const needsExternalCredential = !envKey && !hasStoredKey;
+    const isManaged = entry.managed === true;
+    const needsExternalCredential = !isManaged && !envKey && !hasStoredKey;
     const externalCredential = needsExternalCredential
       ? id === 'openai'
         ? await resolveOpenAIAuthFileCredential()
@@ -406,8 +410,8 @@ export async function readMaskedConfig(projectRoot: string): Promise<MaskedConfi
           : null
       : null;
     providers[id] = {
-      configured: Boolean(envKey || hasStoredKey || externalCredential?.apiKey),
-      source: envKey ? 'env' : hasStoredKey ? 'stored' : externalCredential?.source || 'unset',
+      configured: isManaged ? hasStoredKey : Boolean(envKey || hasStoredKey || externalCredential?.apiKey),
+      source: isManaged ? 'managed' : envKey ? 'env' : hasStoredKey ? 'stored' : externalCredential?.source || 'unset',
       // Show last 4 chars only when stored locally; never echo env-var
       // or borrowed auth-file/OAuth secrets so power users don't
       // accidentally see them in the DOM.
@@ -460,11 +464,13 @@ export async function writeConfig(projectRoot: string, body: unknown) {
       typeof entry.model === 'string' && entry.model.trim()
         ? entry.model.trim()
         : '';
-    if (!apiKey && !baseUrl && !model) continue;
+    const managed = entry.managed === true;
+    if (!apiKey && !baseUrl && !model && !managed) continue;
     next[id] = {
       apiKey,
       baseUrl,
       ...(model ? { model } : {}),
+      ...(managed ? { managed: true } : {}),
     };
   }
   if (Object.keys(next).length === 0) {
