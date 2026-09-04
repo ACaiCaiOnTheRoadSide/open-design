@@ -1,10 +1,14 @@
 import { EventEmitter } from 'node:events';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
   createCappedArchiveMultipartBody,
   isArchiveTooLargeError,
   monitorArchiveUploadDisconnect,
+  writeArchiveMultipartFile,
 } from '../src/import-export-routes.js';
 
 describe('MonkeyCode archive multipart upload', () => {
@@ -69,15 +73,40 @@ describe('MonkeyCode archive multipart upload', () => {
     archive.destroy();
   });
 
+  it('writes a fixed-length multipart request body without buffering it in memory', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'od-monkeycode-upload-'));
+    const file = path.join(dir, 'archive.multipart');
+    try {
+      const size = await writeArchiveMultipartFile(
+        Readable.from([Buffer.from('zip-data')]),
+        'project-1',
+        'boundary',
+        file,
+      );
+      const body = await readFile(file);
+
+      expect(size).toBe(body.length);
+      expect(body.toString()).toBe(
+        '--boundary\r\nContent-Disposition: form-data; name="projectId"\r\n\r\nproject-1\r\n' +
+        '--boundary\r\nContent-Disposition: form-data; name="file"; filename="archive.zip"\r\n' +
+        'Content-Type: application/zip\r\n\r\nzip-data\r\n--boundary--\r\n',
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('aborts during accumulation when compressed bytes exceed the limit', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'od-monkeycode-upload-'));
+    const file = path.join(dir, 'archive.multipart');
     const archive = Readable.from([Buffer.alloc(6), Buffer.alloc(6), Buffer.alloc(6)]);
-    const body = createCappedArchiveMultipartBody(archive, 'project-1', 'boundary', 10);
-    let emittedBytes = 0;
-    await expect((async () => {
-      for await (const chunk of body) emittedBytes += Buffer.byteLength(chunk);
-    })()).rejects.toMatchObject({ code: 'ARCHIVE_TOO_LARGE' });
-    expect(archive.destroyed).toBe(true);
-    expect(emittedBytes).toBeLessThan(300);
+    try {
+      await expect(writeArchiveMultipartFile(archive, 'project-1', 'boundary', file, 10))
+        .rejects.toMatchObject({ code: 'ARCHIVE_TOO_LARGE' });
+      expect(archive.destroyed).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('recognizes the size error when fetch wraps the request stream failure', () => {

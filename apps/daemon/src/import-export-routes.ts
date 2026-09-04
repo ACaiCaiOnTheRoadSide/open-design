@@ -6,8 +6,10 @@ import {
 } from '@open-design/contracts';
 import nodePath from 'node:path';
 import os from 'node:os';
-import { readFile, rm } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { readFile, rm, stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { isBlocked as isBlockedSystemDir } from './linked-dirs.js';
 import type { RouteDeps } from './server-context.js';
 
@@ -93,6 +95,23 @@ export function createCappedArchiveMultipartBody(
     }
   }
   return Readable.from(parts());
+}
+
+export async function writeArchiveMultipartFile(
+  archive: Readable,
+  projectId: string,
+  boundary: string,
+  filePath: string,
+  maxArchiveBytes = MONKEYCODE_ARCHIVE_MAX_BYTES,
+): Promise<number> {
+  const multipart = createCappedArchiveMultipartBody(
+    archive,
+    projectId,
+    boundary,
+    maxArchiveBytes,
+  );
+  await pipeline(multipart, createWriteStream(filePath, { flags: 'wx', mode: 0o600 }));
+  return (await stat(filePath)).size;
 }
 import type {
   AuthorizedProjectToolRequest,
@@ -1390,6 +1409,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
     const outbound = new AbortController();
     let archive: Readable | undefined;
     let body: Readable | undefined;
+    let uploadTempDir: string | undefined;
     const removeDisconnectListeners = monitorArchiveUploadDisconnect(
       req,
       res,
@@ -1414,7 +1434,22 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         return;
       }
       const boundary = `open-design-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-      body = createCappedArchiveMultipartBody(archiveStream, req.params.id, boundary);
+      // Spool after both size checks so the upload has a fixed Content-Length
+      // without retaining an entire near-100 MiB archive in the shared daemon.
+      // Archive read failures also surface before fetch instead of being wrapped
+      // by undici as a generic `fetch failed`.
+      uploadTempDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), 'open-design-monkeycode-upload-'),
+      );
+      const uploadPath = path.join(uploadTempDir, 'archive.multipart');
+      const contentLength = await writeArchiveMultipartFile(
+        archiveStream,
+        req.params.id,
+        boundary,
+        uploadPath,
+      );
+      if (outbound.signal.aborted) return;
+      body = fs.createReadStream(uploadPath);
       const response = await fetch(
         `${backendUrl.replace(/\/$/, '')}/api/internal/archive/upload`,
         {
@@ -1422,6 +1457,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
           headers: {
             authorization: `Bearer ${daemonToken}`,
             'content-type': `multipart/form-data; boundary=${boundary}`,
+            'content-length': String(contentLength),
           },
           body,
           signal: outbound.signal,
@@ -1436,9 +1472,8 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
     } catch (error) {
       // Never write an error response to a socket whose peer has gone away.
       if (outbound.signal.aborted || req.aborted || res.destroyed) return;
-      // Node/undici wraps an async request-body failure in a TypeError whose
-      // `cause` is the stream error. Preserve the intended 413 response rather
-      // than turning an early size-limit abort into a generic 500.
+      // Preserve the intended 413 response for either the uncompressed-tree
+      // check or the compressed multipart accumulation check.
       const tooLarge = isArchiveTooLargeError(error);
       sendApiError(
         res,
@@ -1450,6 +1485,9 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       removeDisconnectListeners();
       if (body && !body.destroyed) body.destroy();
       if (archive && !archive.destroyed) archive.destroy();
+      if (uploadTempDir) {
+        await fs.promises.rm(uploadTempDir, { recursive: true, force: true }).catch(() => {});
+      }
     }
   });
 
