@@ -38,19 +38,3 @@ export function buildMonkeycodeTaskUrl(prompt: string): string | null {
   const url = `${tasksUrl}#od-task=${encoded}`;
   return url.length <= MONKEYCODE_TASK_URL_MAX ? url : null;
 }
-
-export async function uploadProjectArchiveToOss(projectId: string, filePath: string): Promise<string> {
-  const parts = filePath.split('/').filter(Boolean);
-  const root = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/archive/upload-oss${root ? `?root=${encodeURIComponent(root)}` : ''}`,
-    { method: 'POST' },
-  );
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 200);
-    throw new Error(`upload-oss failed (${response.status})${detail ? `: ${detail}` : ''}`);
-  }
-  const payload = await response.json() as { url?: string };
-  if (!payload.url) throw new Error('upload-oss response has no url');
-  return payload.url;
-}

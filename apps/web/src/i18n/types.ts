@@ -5302,7 +5302,6 @@ export interface Dict {
   'fileViewer.exportToMonkeycodeEditHint': string;
   'fileViewer.exportToMonkeycodeEditTitle': string;
   'fileViewer.exportToMonkeycodeGo': string;
-  'fileViewer.exportToMonkeycodeLoading': string;
   'fileViewer.exportToMonkeycodeOpenFailed': string;
   'fileViewer.exportToMonkeycodePopupBlocked': string;
   'fileViewer.exportToMonkeycodePromptDevelop': string;

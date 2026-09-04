@@ -18,18 +18,6 @@ describe('MonkeyCode handoff URL', () => {
     expect(url).not.toContain(encodeURIComponent('开发首页'));
   });
 
-  it('surfaces the archive upload response when the backend rejects it', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 503,
-      text: async () => '{"error":{"code":"NOT_CONFIGURED"}}',
-    }));
-    const handoff = await import('../../src/runtime/monkeycode');
-
-    await expect(handoff.uploadProjectArchiveToOss('project-1', 'index.html'))
-      .rejects.toThrow('upload-oss failed (503): {"error":{"code":"NOT_CONFIGURED"}}');
-  });
-
   it('rejects oversized task URLs instead of opening a truncated task', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     const handoff = await import('../../src/runtime/monkeycode');

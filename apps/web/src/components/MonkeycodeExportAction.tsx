@@ -4,8 +4,8 @@ import { copyToClipboard } from '../lib/copy-to-clipboard';
 import {
   buildMonkeycodeTaskUrl,
   ensureSiteConfig,
-  uploadProjectArchiveToOss,
 } from '../runtime/monkeycode';
+import { archiveRootFromFilePath, downloadProjectArchive } from '../runtime/exports';
 import { MonkeycodeExportDialog } from './MonkeycodeExportDialog';
 import { RemixIcon } from './RemixIcon';
 import { Toast } from './Toast';
@@ -37,11 +37,14 @@ export function MonkeycodeExportAction({
     setBusy(true);
     onStarted?.();
     try {
-      const archiveUrl = await uploadProjectArchiveToOss(projectId, filePath);
+      const downloaded = await downloadProjectArchive({
+        projectId,
+        fallbackTitle: filePath.split('/').filter(Boolean).pop() || projectId,
+        root: archiveRootFromFilePath(filePath),
+      });
+      if (!downloaded) throw new Error(t('fileViewer.exportFailed'));
       setPrompt([
         t('fileViewer.exportToMonkeycodePromptDownload'),
-        archiveUrl,
-        '',
         t('fileViewer.exportToMonkeycodePromptDevelop'),
       ].join('\n'));
       setDialogOpen(true);
@@ -97,7 +100,7 @@ export function MonkeycodeExportAction({
             <RemixIcon name={busy ? 'loader-4-line' : 'code-box-line'} size={15} className={busy ? 'icon-spin' : undefined} />
           </span>
         ) : null}
-        <span>{busy ? t('fileViewer.exportToMonkeycodeLoading') : t('fileViewer.exportToMonkeycode')}</span>
+        <span>{busy ? t('fileViewer.exportZip') : t('fileViewer.exportToMonkeycode')}</span>
       </button>
       <MonkeycodeExportDialog
         open={dialogOpen}
