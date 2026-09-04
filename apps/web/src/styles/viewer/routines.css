@@ -2381,6 +2381,31 @@
   background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
   border-color: transparent;
 }
+/* Keep the fixed composer on an opaque dark surface. Its translucent resting
+   fill can otherwise reveal a light workspace layer while the editor already
+   uses dark-theme foreground tokens, making typed text effectively disappear. */
+[data-theme="dark"] .chat-composer-fixed-layer .composer-input-wrap {
+  background: var(--bg-panel);
+}
+[data-theme="dark"] .chat-composer-fixed-layer .composer-input-editor .composer-editable {
+  color: var(--text);
+  caret-color: var(--text-strong);
+}
+[data-theme="dark"] .chat-composer-fixed-layer .composer-input-placeholder {
+  color: var(--text-faint);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .chat-composer-fixed-layer .composer-input-wrap {
+    background: var(--bg-panel);
+  }
+  html:not([data-theme]) .chat-composer-fixed-layer .composer-input-editor .composer-editable {
+    color: var(--text);
+    caret-color: var(--text-strong);
+  }
+  html:not([data-theme]) .chat-composer-fixed-layer .composer-input-placeholder {
+    color: var(--text-faint);
+  }
+}
 .chat-composer-fixed-layer .composer-input-editor,
 .chat-composer-fixed-layer .composer-input-editor [contenteditable='true'],
 .chat-composer-fixed-layer .composer-input-editor .composer-editable {

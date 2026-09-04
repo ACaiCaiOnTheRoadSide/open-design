@@ -13,6 +13,10 @@ const chatCss = readFileSync(
   new URL('../../src/styles/chat.css', import.meta.url),
   'utf8',
 );
+const routinesCss = readFileSync(
+  new URL('../../src/styles/viewer/routines.css', import.meta.url),
+  'utf8',
+);
 
 function cssBlock(source: string, selector: string, from = 0): string {
   const start = source.indexOf(selector, from);
@@ -69,6 +73,26 @@ describe('dark text hierarchy', () => {
       .toContain('color: var(--text-soft);');
     expect(cssBlock(chatCss, '\n.composer-input-placeholder'))
       .toContain('color: var(--text-faint);');
+  });
+
+  it('keeps the fixed composer input readable on an opaque dark surface', () => {
+    const darkInput = cssBlock(
+      routinesCss,
+      '[data-theme="dark"] .chat-composer-fixed-layer .composer-input-wrap',
+    );
+    const darkEditable = cssBlock(
+      routinesCss,
+      '[data-theme="dark"] .chat-composer-fixed-layer .composer-input-editor .composer-editable',
+    );
+    const darkPlaceholder = cssBlock(
+      routinesCss,
+      '[data-theme="dark"] .chat-composer-fixed-layer .composer-input-placeholder',
+    );
+
+    expect(darkInput).toContain('background: var(--bg-panel);');
+    expect(darkEditable).toContain('color: var(--text);');
+    expect(darkEditable).toContain('caret-color: var(--text-strong);');
+    expect(darkPlaceholder).toContain('color: var(--text-faint);');
   });
 
   it('keeps user message text and its background on the same theme', () => {
