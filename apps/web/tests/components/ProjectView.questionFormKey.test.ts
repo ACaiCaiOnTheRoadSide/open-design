@@ -3,9 +3,81 @@ import { describe, expect, it } from 'vitest';
 import {
   buildQuestionFormKey,
   mergeServerMessagesIntoConversation,
+  nativeQuestionContinuationSkillIds,
   normalizeConversationMessageOrder,
+  questionAnswerContinuationSkillIds,
 } from '../../src/components/ProjectView';
 import type { ChatMessage, ProjectFile } from '../../src/types';
+
+describe('questionAnswerContinuationSkillIds', () => {
+  it('keeps the originating skill active on later question-answer turns', () => {
+    expect(questionAnswerContinuationSkillIds([], ['publish-website'])).toEqual([
+      'publish-website',
+    ]);
+  });
+
+  it('merges the initial pending skill without duplicates', () => {
+    expect(
+      questionAnswerContinuationSkillIds(
+        ['publish-website'],
+        ['publish-website', 'another-skill'],
+      ),
+    ).toEqual(['publish-website', 'another-skill']);
+  });
+});
+
+describe('nativeQuestionContinuationSkillIds', () => {
+  it('inherits persisted skills when the latest assistant used native question', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        runContext: { skillIds: ['publish-website'] },
+        events: [
+          {
+            kind: 'tool_use',
+            id: 'tool-1',
+            name: 'functions.AskUserQuestion',
+            input: {},
+          },
+        ],
+      },
+    ];
+
+    expect(nativeQuestionContinuationSkillIds(messages)).toEqual(['publish-website']);
+  });
+
+  it('uses the pending skill for the first native question answer', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        events: [
+          { kind: 'tool_use', id: 'tool-1', name: 'question', input: {} },
+        ],
+      },
+    ];
+
+    expect(nativeQuestionContinuationSkillIds(messages, ['publish-website'])).toEqual([
+      'publish-website',
+    ]);
+  });
+
+  it('does not attach pending skills after a non-question assistant turn', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Done',
+        events: [{ kind: 'text', text: 'Done' }],
+      },
+    ];
+
+    expect(nativeQuestionContinuationSkillIds(messages, ['publish-website'])).toEqual([]);
+  });
+});
 
 describe('buildQuestionFormKey', () => {
   it('is stable across a streaming form-id change (no remount mid-answer)', () => {

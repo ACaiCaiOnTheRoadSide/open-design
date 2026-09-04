@@ -15,10 +15,14 @@ Publish a frontend-only project or a containerized project with a backend as an 
 
 `publish-website` is a **formal publishing channel for the public showcase**, not a preview tool for development and debugging. Every execution consumes administrator review resources and exposes the site publicly, so it **must** be triggered only when the user **explicitly requests it** in their **latest message**; without an explicit request, always use `deploy-website` for local deployment plus the platform's online preview instead.
 
-### Permitted Trigger Conditions (All Must Be Met)
+### Permitted Trigger Conditions
 
-1. In the **latest message**, the user explicitly gives a semantically equivalent instruction such as "publish / launch / publish-website / publish using the publish-website skill," and explicitly refers to this Skill
-2. The instruction was **not** induced by a suggestion or follow-up question from the Skill or model itself during the conversation (for example, the model must not ask "Would you like to publish?" and then trigger based on the answer)
+Start a new publishing pipeline only when both conditions below are met:
+
+1. In the **latest message**, the user explicitly gives a semantically equivalent instruction such as "publish / launch / publish-website / publish using the publish-website skill," and explicitly refers to this Skill.
+2. The instruction was **not** induced by a suggestion or follow-up question from the Skill or model itself during the conversation (for example, the model must not ask "Would you like to publish?" and then trigger based on the answer).
+
+There is one continuation exception: when the latest user turn is the host-returned answer to a `question` previously asked by this already-started pipeline, resume that same pipeline. Such an answer is **not** a new publish trigger and must not restart the Skill from Step 1.
 
 ### Strictly Prohibited Trigger Methods
 
@@ -27,7 +31,26 @@ Publish a frontend-only project or a containerized project with a backend as an 
 - **Do not** proactively ask "Would you like to publish again? / Would you like to sync the latest changes?" after a successful publication; doing so could induce the user to trigger formal publishing unintentionally
 - All **intermediate-version validation** during development should be performed through `deploy-website` local deployment plus the platform's online preview. This Skill is not responsible for displaying intermediate versions
 
+### Cross-turn Resume Contract (Hard Constraint)
+
+A native `question` answer arrives as a new user turn and may start a new agent run. Therefore, before executing any pipeline step on every run:
+
+1. Inspect the latest user turn and the available conversation transcript for answers to questions already asked by this `publish-website` pipeline.
+2. Restore every completed value and decision, including `client_id`, publishing target variables, compliance result, `kind`, static/backend confirmation, metadata, ticket choice, artifact state, and any explicit continuation/cancellation answer.
+3. Treat a host-rendered answered-question summary, a native tool answer/result, or an unambiguous plain-language reply to the immediately preceding question as authoritative. Match by the question/header meaning and selected option, not by one exact serialization format.
+4. Continue from the first incomplete step. **Never restart at Step 1 and never ask an answered question again.**
+5. If the latest answer cancels publishing, stop immediately. If it answers the current question, apply it and continue without asking for confirmation of that same answer.
+6. When another question is needed, ask only that next unanswered question. The following run must restore all earlier answers using this contract.
+
+Examples:
+
+- If the previous question was `Publishing Target` / `发布目标` and the answer is `Mainland China` / `中国大陆`, restore the domestic variables from Step 1c and continue to Step 1b.
+- If the answer is `Global` / `全球` / `国际 (monkeycode-ai.gallery)`, restore the international variables from Step 1c and continue to Step 1b. Do not ask whether two labels that both contain `monkeycode-ai.gallery` mean different API bases; they select the same international target defined by Step 1c.
+- If the previous question asked whether to continue the static/backend branch and the answer is `Continue publishing` / `继续发布`, enter that branch directly.
+
 ### Action When a "Repeated Trigger" Is Detected
+
+This section applies only after a pipeline has completed. It does not apply to a host-returned answer covered by the Cross-turn Resume Contract.
 
 When the model determines that "publish-website previously completed successfully in this session, and the user's latest message merely continues making adjustments without explicitly requesting another publication," it **must not** enter the pipeline and must instead:
 
@@ -78,9 +101,11 @@ hostname
 
 ## Step 1c - Choose the Publishing Target (Domestic / International Showcase)
 
-Before anything else, ask the user which showcase to publish to. This choice determines the API base domain used by every upload / status / recall call in this session, the showcase URL shown in the Step 2 warnings, and the package size limit. **Ask once per session; do not re-ask on subsequent publications in the same session.**
+Before anything else, determine whether this pipeline already has an answered publishing-target question in the latest user turn or conversation transcript. If it does, restore the variables from the table below and continue immediately; **do not call `question` again and do not ask the user to reconfirm the selected label or domain**.
 
-Use the `question` tool, wording the prompt, options, and any confirmation/notice in the **user's primary conversation language** (the language the user has been using to communicate in this session). If the user is speaking English, ask in English; if Chinese, ask in Chinese. Do not switch to a language the user is not using.
+Only when no target answer exists, ask which showcase to publish to. This choice determines the API base domain used by every upload / status / recall call in this session, the showcase URL shown in the Step 2 warnings, and the package size limit. **Ask once per session; do not re-ask after its answer returns or on subsequent publications in the same session.**
+
+When the target is still unanswered, use the `question` tool, wording the prompt, options, and any confirmation/notice in the **user's primary conversation language** (the language the user has been using to communicate in this session). If the user is speaking English, ask in English; if Chinese, ask in Chinese. Do not switch to a language the user is not using. Use exactly the two semantic choices below—one domestic and one international—and do not emit duplicate aliases for the same target.
 
 English:
 
@@ -159,7 +184,7 @@ Detection rules (in priority order):
    - `package.json` contains backend framework dependencies such as `express` / `fastify` / `koa` / `hapi` / `nest`
 2. Only `index.html` / static HTML files exist -> classify as `static`
 3. `package.json` exists without backend framework dependencies (pure frontend projects such as Vite / CRA / Next static export / Vue / Astro / Nuxt SSG) -> classify as `static`
-4. Detection is inconclusive -> ask the user whether to "publish as a pure frontend" or "publish as a containerized backend," **once only** as a fallback
+4. Detection is inconclusive -> first restore any answer already given to this fallback question; only if unanswered, ask whether to "publish as a pure frontend" or "publish as a containerized backend," **once only**
 
 After classification, route as follows:
 
@@ -175,7 +200,7 @@ After classifying the project as `static`, explicitly state the following platfo
 > 1. **Data can only be stored in the browser**: A pure frontend application has no server-side persistence layer. Available storage is limited to the current browser's `localStorage` / `sessionStorage` / `IndexedDB`. Data does not carry over when the user changes browsers or devices or clears the cache; data is not shared among users.
 > 2. **Publicly visible**: After publication, the application is publicly visible in the User Showcase (<SHOWCASE_URL>), and anyone can access it.
 
-Then use the `question` tool to request confirmation, with options "Continue publishing" / "Cancel."
+First restore any answer already given to this static-branch confirmation. If it was answered, do not repeat the warning or call `question` again. Otherwise use the `question` tool once, with options "Continue publishing" / "Cancel."
 
 - User selects "Continue publishing" -> enter Step 3
 - User selects "Cancel" -> terminate this publication
@@ -193,7 +218,7 @@ After classifying the project as `backend`, explicitly state the following platf
 > 3. **No persistent storage**: The file system is reset when the service is updated, restarts unexpectedly, or operations rebuilds the container. All runtime writes (SQLite, user uploads, logs, caches, and so on) are lost.
 > 4. **Publicly visible**: After publication, the application is publicly visible in the User Showcase (<SHOWCASE_URL>), and anyone can access it.
 
-Then use the `question` tool to request confirmation, with options "Continue publishing" / "Cancel."
+First restore any answer already given to this backend-branch confirmation. If it was answered, do not repeat the warning or call `question` again. Otherwise use the `question` tool once, with options "Continue publishing" / "Cancel."
 
 - User selects "Continue publishing" -> enter Step 3b
 - User selects "Cancel" -> terminate this publication
@@ -225,7 +250,7 @@ In priority order:
 1. `scripts.build` in `package.json` -> `<pkgMgr> run build`
 2. Known default framework artifact directories: Vite/CRA/Astro -> `dist`, Next.js static export -> `out`, react-scripts -> `build`
 3. README fallback: scan `README*` for commands containing `build` / `compile` / `dist` and extract them
-4. If all of the above fail -> **ask the user** to specify the build command; do not guess
+4. If all of the above fail -> restore a build command already supplied in answer to this question; only if absent, **ask the user once** to specify it; do not guess
 
 #### Expected Artifact Directory
 
@@ -592,7 +617,7 @@ If the expected artifact directory exists and **contains `index.html`**, use it 
 
 ## Step 5 - Generate and Confirm Application Metadata
 
-**Generate automatically first, then ask the user about each item**. Make a separate `question` tool call for each field; **do not** combine multiple fields into one question.
+**Generate automatically first, then resolve each field in order**. Before each field, restore an answer already present in the transcript and skip that question. Only for an unanswered field, make one separate `question` tool call; **do not** combine multiple fields into one question. After the answer returns, resume with the next unanswered field rather than restarting Step 5.
 
 ### 5a. Automatically Generate `site_name` and `site_description` Based on Application Content
 
@@ -700,10 +725,11 @@ If any requirement is not met, terminate immediately; **do not** upload a noncom
 
 ## Step 7 - Determine the `ticket` (the **Key**)
 
-Determine whether the current session already has a cached key (ticket):
+Determine whether the current session already has a cached key (ticket) or an answer already returned for Step 7a:
 
 - **A cached key exists** (an application was previously submitted successfully in this session) -> reuse it directly, **skip 7a**, and enter Step 8
-- **No cached key exists** (the first submission in this session) -> enter 7a and ask the user
+- **Step 7a was already answered in this pipeline** -> restore either the entered key or the decision to submit a new application, **skip the question**, and enter Step 8
+- **Neither exists** (the first submission in this session and Step 7a is unanswered) -> enter 7a and ask the user once
 
 ### 7a. Ask Whether to Reuse an Existing Application (Run Once on the First Submission)
 
@@ -950,7 +976,8 @@ The application is currently still in the <status> state and will only go offlin
 
 - **Execute this Skill only when the user's latest message explicitly requests publication**: after publishing once in the current session, if the user continues adjusting code/content without explicitly requesting "publish using publish-website" in the latest message, **do not** automatically run the publishing process again. Always use `/deploy-website` local deployment plus the platform's online preview for intermediate versions, and do not proactively ask whether the user wants to publish again
 - **Interaction language follows the user's conversation language**: all user-facing text in this Skill — `question` prompts, option labels, the Step 2 warnings, metadata confirmation, ticket questions, and the final success/failure wording — must be written in the **primary language the user is communicating in during this session** (English when the user writes in English, Chinese when in Chinese, and so on). Never force a fixed language on the user
-- **Step 1c, the publishing target selection, must be confirmed before any upload / status / recall call**: ask the user to choose the domestic showcase or the international showcase (once per session), and use the recorded `<API_BASE>` / `<SHOWCASE_URL>` / `<SITE_DOMAIN>` / `<MAX_PACKAGE_SIZE>` in every later step. **Never** hard-code a fixed showcase domain in requests
+- **Every new run must apply the Cross-turn Resume Contract before Step 1**: native `question` answers are returned in a new user turn/run; restore completed values and continue from the first incomplete step. Never restart the pipeline or repeat an answered question
+- **Step 1c, the publishing target selection, must be resolved before any upload / status / recall call**: first reuse an answer already returned in the latest turn or transcript; only if none exists ask the user to choose domestic or international. Use the recorded `<API_BASE>` / `<SHOWCASE_URL>` / `<SITE_DOMAIN>` / `<MAX_PACKAGE_SIZE>` in every later step. **Never** hard-code a fixed showcase domain in requests
 - **International 100 MB package limit**: when the Step 1c target is the international showcase, the entire publishing artifact (static `site_zip_file` or backend `site_image`) must be **<= 100 MB**; if it exceeds 100 MB, terminate the publication and do not upload
 - **Step 1b, the publishing content compliance precheck, must run first**: if either "software download/distribution (hosting apk/ipa/exe/dmg/msi/pkg or other installers)" or "direct publication of an open-source CMS / website panel (WordPress / Halo / Typecho / aaPanel / 1Panel / cPanel, and others)" matches, **terminate immediately** and do not enter kind classification or any subsequent step
 - **Before installing any software with a system package manager (apt/yum/dnf/apk/pacman), switch the system source to Tsinghua TUNA by default** (`mirrors.tuna.tsinghua.edu.cn`); do not wait for a timeout before switching

@@ -1433,6 +1433,44 @@ export function shouldDefaultCollapseChatForSharedNonOwner(collab: {
   return collab.enabled && collab.isSharedNonOwner;
 }
 
+export function questionAnswerContinuationSkillIds(
+  pendingSkillIds: readonly string[],
+  sourceSkillIds: readonly string[] = [],
+): string[] {
+  return Array.from(new Set([...pendingSkillIds, ...sourceSkillIds]));
+}
+
+export function nativeQuestionContinuationSkillIds(
+  messages: readonly ChatMessage[],
+  pendingSkillIds: readonly string[] = [],
+): string[] {
+  const sourceAssistant = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant');
+  const askedNativeQuestion = sourceAssistant?.events?.some((event) => {
+    if (event.kind !== 'tool_use') return false;
+    const normalized = event.name.split('.').pop()?.toLowerCase();
+    return normalized === 'question' || normalized === 'askuserquestion' || normalized === 'ask_user_question';
+  });
+  return askedNativeQuestion
+    ? questionAnswerContinuationSkillIds(
+        pendingSkillIds,
+        sourceAssistant?.runContext?.skillIds,
+      )
+    : [];
+}
+
+function contextWithSkillIds(
+  context: RunContextSelection | undefined,
+  skillIds: readonly string[],
+): RunContextSelection | undefined {
+  if (skillIds.length === 0) return context;
+  return {
+    ...(context ?? {}),
+    skillIds: questionAnswerContinuationSkillIds(context?.skillIds ?? [], skillIds),
+  };
+}
+
 // React key for the on-screen question form. Deliberately does NOT include the
 // form's parsed `id`: there is at most one (first) form per assistant message,
 // so `${conversation}:${message}` is already a stable, unique identity for the
@@ -8287,9 +8325,27 @@ export function ProjectView({
       commentAttachments: ChatCommentAttachment[],
       meta?: ChatSendMeta,
     ): Promise<ChatSendOutcome> => {
+      const continuationSkillIds = nativeQuestionContinuationSkillIds(
+        messages,
+        pendingFormSkillIdsRef.current,
+      );
+      if (continuationSkillIds.length > 0) {
+        pendingFormSkillIdsRef.current = [];
+        void handleSend(prompt, attachments, commentAttachments, {
+          ...(meta ?? {}),
+          entryFrom: meta?.entryFrom ?? 'question_answer',
+          skillIds: questionAnswerContinuationSkillIds(
+            meta?.skillIds ?? [],
+            continuationSkillIds,
+          ),
+          context: contextWithSkillIds(meta?.context, continuationSkillIds),
+        });
+        return;
+      }
+      pendingFormSkillIdsRef.current = [];
       void handleSend(prompt, attachments, commentAttachments, meta);
     },
-    [handleSend],
+    [handleSend, messages],
   );
 
   // Cancel every in-flight run for the current conversation (the user's own
@@ -9972,6 +10028,7 @@ export function ProjectView({
       'never fabricate a URL or claim a publish that did not happen.';
     const started = await handleSend(prompt, [], [], {
       skillIds: ['publish-website'],
+      context: { skillIds: ['publish-website'] },
       sessionMode: 'chat',
     });
     if (started === false) pendingFormSkillIdsRef.current = [];
@@ -11220,10 +11277,15 @@ export function ProjectView({
                 }
                 const pendingSkillIds = pendingFormSkillIdsRef.current;
                 pendingFormSkillIdsRef.current = [];
+                const continuationSkillIds = questionAnswerContinuationSkillIds(
+                  pendingSkillIds,
+                  sourceAssistant?.runContext?.skillIds,
+                );
+                const continuationContext = contextWithSkillIds(context, continuationSkillIds);
                 return handleSend(text, attachments, [], {
                   entryFrom: 'question_answer',
-                  ...(pendingSkillIds.length > 0 ? { skillIds: pendingSkillIds } : {}),
-                  ...(context ? { context } : {}),
+                  ...(continuationSkillIds.length > 0 ? { skillIds: continuationSkillIds } : {}),
+                  ...(continuationContext ? { context: continuationContext } : {}),
                   ...(questionTaskAnalytics
                     ? { taskAnalytics: questionTaskAnalytics }
                     : {}),
