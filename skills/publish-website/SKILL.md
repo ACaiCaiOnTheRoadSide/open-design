@@ -757,6 +757,8 @@ Submit all fields and the artifact to the showcase API in one multipart form POS
 
 ### 8a. Call the API
 
+This submission is an external showcase API call, not an OpenDesign CLI operation. Execute the `curl` multipart POST below directly. **Never call `od publish`, `od deploy`, `"$OD_NODE_BIN" "$OD_BIN" publish`, or any other command through `OD_BIN` for this step.** Those commands do not implement this pipeline and may be unavailable in the sandbox.
+
 **static branch** (choose either without ticket / with ticket):
 
 ```bash

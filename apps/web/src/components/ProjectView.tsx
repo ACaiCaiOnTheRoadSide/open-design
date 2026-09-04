@@ -1784,6 +1784,19 @@ export function reconcileProjectDetail(
   return authoritativeName ? { ...detail, name: authoritativeName } : detail;
 }
 
+export function buildShowcasePublishPrompt(clientId: string): string {
+  return (
+    'Publish this project to the showcase wall using the publish-website skill. ' +
+    `The client_id for this project is "${clientId}" — use that exact value, do not run hostname. ` +
+    'Follow the skill pipeline exactly. The whole project directory is the site root. ' +
+    'For the final submission, execute the curl multipart POST specified in Step 8 directly. ' +
+    'Do not call od publish, od deploy, or any command through OD_BIN for publishing. ' +
+    'When publishing succeeds, give me the site_url on its own line as a plain clickable link and ' +
+    'tell me it needs moderator review before it goes live. If it fails, report the error verbatim — ' +
+    'never fabricate a URL or claim a publish that did not happen.'
+  );
+}
+
 export function ProjectView({
   project,
   workspaceContextOverride,
@@ -10019,13 +10032,7 @@ export function ProjectView({
     if (currentConversationActionDisabled) return false;
     pendingFormSkillIdsRef.current = ['publish-website'];
     const clientId = `od-${project.id}`;
-    const prompt =
-      'Publish this project to the showcase wall using the publish-website skill. ' +
-      `The client_id for this project is "${clientId}" — use that exact value, do not run hostname. ` +
-      'Follow the skill pipeline exactly. The whole project directory is the site root. ' +
-      'When publishing succeeds, give me the site_url on its own line as a plain clickable link and ' +
-      'tell me it needs moderator review before it goes live. If it fails, report the error verbatim — ' +
-      'never fabricate a URL or claim a publish that did not happen.';
+    const prompt = buildShowcasePublishPrompt(clientId);
     const started = await handleSend(prompt, [], [], {
       skillIds: ['publish-website'],
       context: { skillIds: ['publish-website'] },

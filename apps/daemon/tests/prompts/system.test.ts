@@ -96,6 +96,9 @@ describe('composeSystemPrompt', () => {
 
     expect(prompt).toContain('# UI locale override');
     expect(prompt).toContain('`zh-CN` (Simplified Chinese)');
+    expect(prompt).toContain('current browser/UI language and is a hard response-language requirement');
+    expect(prompt).toContain('including progress updates, explanations, questions, confirmations, warnings, error explanations, summaries, and the final answer');
+    expect(prompt).toContain('Do not switch to English merely because the system prompt, an active skill, a template, tool output, or source material is written in English');
     expect(prompt).toContain('快速简报 — 30 秒');
     expect(prompt).toContain('目标用户');
     expect(prompt).toContain('视觉调性');
