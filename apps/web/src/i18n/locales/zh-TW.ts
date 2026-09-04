@@ -5557,7 +5557,7 @@ export const zhTW: Dict = {
   'fileViewer.publishBusy': 'AI 正在忙,等目前對話結束後再發佈。',
   'fileViewer.publishFailed': '發佈失敗,請重試。',
   'fileViewer.exportToMonkeycode': 'Export to MonkeyCode',
-  'fileViewer.exportToMonkeycodePromptDownload': '请将刚刚下载的设计产物 ZIP 包上传到当前任务。',
+  'fileViewer.exportToMonkeycodePromptDownload': '请下载以下设计产物 ZIP 包并用于当前任务：',
   'fileViewer.exportToMonkeycodePromptDevelop': '解压后，基于里面的 HTML/CSS/JS 设计文件进行开发，保持设计稿中的样式、布局和交互效果，将其转化为可部署的前端项目。',
   'fileViewer.exportToMonkeycodeEditTitle': '確認開發提示詞',
   'fileViewer.exportToMonkeycodeEditHint': '以下提示詞將隨連結帶到 MonkeyCode 並自動填入任務輸入框（同時複製到剪貼簿備用）；若開啟後任務框為空，請直接貼上。',

@@ -5550,7 +5550,7 @@ export const zhCN: Dict = {
   'fileViewer.publishBusy': 'AI 正在忙,等当前对话结束后再发布。',
   'fileViewer.publishFailed': '发布失败,请重试。',
   'fileViewer.exportToMonkeycode': '导入到 MonkeyCode 开发',
-  'fileViewer.exportToMonkeycodePromptDownload': '请将刚刚下载的设计产物 ZIP 包上传到当前任务。',
+  'fileViewer.exportToMonkeycodePromptDownload': '请下载以下设计产物 ZIP 包并用于当前任务：',
   'fileViewer.exportToMonkeycodePromptDevelop': '解压后，基于里面的 HTML/CSS/JS 设计文件进行开发，保持设计稿中的样式、布局和交互效果，将其转化为可部署的前端项目。',
   'fileViewer.exportToMonkeycodeEditTitle': '确认开发提示词',
   'fileViewer.exportToMonkeycodeEditHint': '以下提示词将随链接带到 MonkeyCode 并自动填入任务输入框（同时复制到剪贴板备用）；若打开后任务框为空，请直接粘贴。',

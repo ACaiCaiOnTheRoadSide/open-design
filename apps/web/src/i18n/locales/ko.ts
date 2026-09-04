@@ -5126,7 +5126,7 @@ export const ko: Dict = {
   'fileViewer.publishBusy': 'AI가 작업 중입니다. 현재 턴이 끝날 때까지 기다려 주세요.',
   'fileViewer.publishFailed': '게시에 실패했습니다. 다시 시도해 주세요.',
   'fileViewer.exportToMonkeycode': 'Export to MonkeyCode',
-  'fileViewer.exportToMonkeycodePromptDownload': '请将刚刚下载的设计产物 ZIP 包上传到当前任务。',
+  'fileViewer.exportToMonkeycodePromptDownload': '请下载以下设计产物 ZIP 包并用于当前任务：',
   'fileViewer.exportToMonkeycodePromptDevelop': '解压后，基于里面的 HTML/CSS/JS 设计文件进行开发，保持设计稿中的样式、布局和交互效果，将其转化为可部署的前端项目。',
   'fileViewer.exportToMonkeycodeEditTitle': '개발 프롬프트 확인',
   'fileViewer.exportToMonkeycodeEditHint': '이 프롬프트는 링크와 함께 MonkeyCode로 전달되어 작업 입력창에 자동으로 채워집니다(클립보드에도 복사됩니다). 열었을 때 입력창이 비어 있으면 그대로 붙여넣으세요.',

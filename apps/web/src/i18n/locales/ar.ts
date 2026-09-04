@@ -5126,7 +5126,7 @@ export const ar: Dict = {
   'fileViewer.publishBusy': 'الذكاء الاصطناعي مشغول — انتظر انتهاء الدور الحالي.',
   'fileViewer.publishFailed': 'فشل النشر. حاول مرة أخرى.',
   'fileViewer.exportToMonkeycode': 'Export to MonkeyCode',
-  'fileViewer.exportToMonkeycodePromptDownload': '请将刚刚下载的设计产物 ZIP 包上传到当前任务。',
+  'fileViewer.exportToMonkeycodePromptDownload': '请下载以下设计产物 ZIP 包并用于当前任务：',
   'fileViewer.exportToMonkeycodePromptDevelop': '解压后，基于里面的 HTML/CSS/JS 设计文件进行开发，保持设计稿中的样式、布局和交互效果，将其转化为可部署的前端项目。',
   'fileViewer.exportToMonkeycodeEditTitle': 'راجع موجّه التطوير',
   'fileViewer.exportToMonkeycodeEditHint': 'ينتقل هذا الموجّه مع الرابط ويُملأ تلقائيًا في حقل مهام MonkeyCode (ويُنسخ أيضًا إلى الحافظة). إذا كان الحقل فارغًا بعد الفتح، فالصقه مباشرة.',

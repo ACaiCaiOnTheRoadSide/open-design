@@ -5126,7 +5126,7 @@ export const th: Dict = {
   'fileViewer.publishBusy': 'AI กำลังทำงาน — โปรดรอให้รอบปัจจุบันเสร็จสิ้น',
   'fileViewer.publishFailed': 'เผยแพร่ไม่สำเร็จ โปรดลองอีกครั้ง',
   'fileViewer.exportToMonkeycode': 'Export to MonkeyCode',
-  'fileViewer.exportToMonkeycodePromptDownload': '请将刚刚下载的设计产物 ZIP 包上传到当前任务。',
+  'fileViewer.exportToMonkeycodePromptDownload': '请下载以下设计产物 ZIP 包并用于当前任务：',
   'fileViewer.exportToMonkeycodePromptDevelop': '解压后，基于里面的 HTML/CSS/JS 设计文件进行开发，保持设计稿中的样式、布局和交互效果，将其转化为可部署的前端项目。',
   'fileViewer.exportToMonkeycodeEditTitle': 'ตรวจสอบพรอมป์การพัฒนา',
   'fileViewer.exportToMonkeycodeEditHint': 'พรอมป์นี้จะไปพร้อมลิงก์และกรอกในช่องงานของ MonkeyCode โดยอัตโนมัติ (คัดลอกไปยังคลิปบอร์ดด้วย) หากเปิดแล้วช่องงานว่างเปล่า ให้วางได้เลย',

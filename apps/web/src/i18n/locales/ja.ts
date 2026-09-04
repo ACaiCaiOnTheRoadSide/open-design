@@ -5126,7 +5126,7 @@ export const ja: Dict = {
   'fileViewer.publishBusy': 'AI が処理中です。現在のターンの終了をお待ちください。',
   'fileViewer.publishFailed': '公開に失敗しました。もう一度お試しください。',
   'fileViewer.exportToMonkeycode': 'Export to MonkeyCode',
-  'fileViewer.exportToMonkeycodePromptDownload': '请将刚刚下载的设计产物 ZIP 包上传到当前任务。',
+  'fileViewer.exportToMonkeycodePromptDownload': '请下载以下设计产物 ZIP 包并用于当前任务：',
   'fileViewer.exportToMonkeycodePromptDevelop': '解压后，基于里面的 HTML/CSS/JS 设计文件进行开发，保持设计稿中的样式、布局和交互效果，将其转化为可部署的前端项目。',
   'fileViewer.exportToMonkeycodeEditTitle': '開発プロンプトを確認',
   'fileViewer.exportToMonkeycodeEditHint': 'このプロンプトはリンクと共に MonkeyCode に渡され、タスク入力欄に自動入力されます（クリップボードにもコピーされます）。開いても入力欄が空の場合は、そのまま貼り付けてください。',

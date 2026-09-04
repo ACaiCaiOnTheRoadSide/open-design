@@ -5126,7 +5126,7 @@ export const ru: Dict = {
   'fileViewer.publishBusy': 'ИИ занят — дождитесь завершения текущего хода.',
   'fileViewer.publishFailed': 'Не удалось опубликовать. Попробуйте ещё раз.',
   'fileViewer.exportToMonkeycode': 'Export to MonkeyCode',
-  'fileViewer.exportToMonkeycodePromptDownload': '请将刚刚下载的设计产物 ZIP 包上传到当前任务。',
+  'fileViewer.exportToMonkeycodePromptDownload': '请下载以下设计产物 ZIP 包并用于当前任务：',
   'fileViewer.exportToMonkeycodePromptDevelop': '解压后，基于里面的 HTML/CSS/JS 设计文件进行开发，保持设计稿中的样式、布局和交互效果，将其转化为可部署的前端项目。',
   'fileViewer.exportToMonkeycodeEditTitle': 'Проверьте промпт разработки',
   'fileViewer.exportToMonkeycodeEditHint': 'Этот промпт передаётся вместе со ссылкой и подставляется в поле задачи MonkeyCode (он также скопирован в буфер обмена). Если после открытия поле пустое, просто вставьте его.',

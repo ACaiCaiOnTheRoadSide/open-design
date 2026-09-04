@@ -5140,7 +5140,7 @@ export const en: Dict = {
   'fileViewer.publishBusy': 'The AI is busy — wait for the current turn to finish.',
   'fileViewer.publishFailed': 'Publishing failed. Please try again.',
   'fileViewer.exportToMonkeycode': 'Export to MonkeyCode',
-  'fileViewer.exportToMonkeycodePromptDownload': 'Upload the design artifact ZIP that was just downloaded to this task.',
+  'fileViewer.exportToMonkeycodePromptDownload': 'Download the design artifact ZIP from this URL and use it for this task:',
   'fileViewer.exportToMonkeycodePromptDevelop': 'Extract it and develop from the HTML/CSS/JS design files inside. Preserve the design\'s styling, layout, and interactions, and turn it into a deployable frontend project.',
   'fileViewer.exportToMonkeycodeEditTitle': 'Review the development prompt',
   'fileViewer.exportToMonkeycodeEditHint': 'This prompt travels with the link and pre-fills the MonkeyCode task box (it is also copied to your clipboard). If the task box is empty after opening, just paste.',

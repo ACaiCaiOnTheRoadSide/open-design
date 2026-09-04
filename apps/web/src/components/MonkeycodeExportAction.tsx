@@ -5,8 +5,7 @@ import {
   buildMonkeycodeTaskUrl,
   ensureSiteConfig,
 } from '../runtime/monkeycode';
-import { archiveRootFromFilePath, downloadProjectArchive } from '../runtime/exports';
-import { MonkeycodeExportDialog } from './MonkeycodeExportDialog';
+import { archiveRootFromFilePath } from '../runtime/exports';
 import { RemixIcon } from './RemixIcon';
 import { Toast } from './Toast';
 
@@ -28,56 +27,52 @@ export function MonkeycodeExportAction({
 }: Props) {
   const t = useT();
   const [busy, setBusy] = useState(false);
-  const [prompt, setPrompt] = useState('');
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  async function prepare() {
+  async function openMonkeycode() {
     if (disabled || busy) return;
-    setBusy(true);
-    onStarted?.();
-    try {
-      const downloaded = await downloadProjectArchive({
-        projectId,
-        fallbackTitle: filePath.split('/').filter(Boolean).pop() || projectId,
-        root: archiveRootFromFilePath(filePath),
-      });
-      if (!downloaded) throw new Error(t('fileViewer.exportFailed'));
-      setPrompt([
-        t('fileViewer.exportToMonkeycodePromptDownload'),
-        t('fileViewer.exportToMonkeycodePromptDevelop'),
-      ].join('\n'));
-      setDialogOpen(true);
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : t('fileViewer.exportToMonkeycodeOpenFailed'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function confirm(editedPrompt: string) {
     // Must happen in the click stack: Safari blocks windows opened after either
     // site-config or clipboard awaits. Detach opener before cross-origin nav.
     const popup = window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
-    setDialogOpen(false);
-    await ensureSiteConfig();
-    const copied = await copyToClipboard(editedPrompt);
-    const taskUrl = buildMonkeycodeTaskUrl(editedPrompt);
-    if (!taskUrl) {
+    setBusy(true);
+    onStarted?.();
+
+    const root = archiveRootFromFilePath(filePath);
+    const archivePath = `/api/projects/${encodeURIComponent(projectId)}/archive${
+      root ? `?root=${encodeURIComponent(root)}` : ''
+    }`;
+    const archiveUrl = new URL(archivePath, window.location.origin).toString();
+    const prompt = [
+      t('fileViewer.exportToMonkeycodePromptDownload'),
+      archiveUrl,
+      t('fileViewer.exportToMonkeycodePromptDevelop'),
+    ].join('\n');
+
+    try {
+      await ensureSiteConfig();
+      const copied = await copyToClipboard(prompt);
+      const taskUrl = buildMonkeycodeTaskUrl(prompt);
+      if (!taskUrl) {
+        popup?.close();
+        setToast(copied
+          ? t('fileViewer.exportToMonkeycodePopupBlocked')
+          : t('fileViewer.exportToMonkeycodeCopyFailed'));
+        return;
+      }
+      if (!popup) {
+        setToast(copied
+          ? t('fileViewer.exportToMonkeycodePopupBlocked')
+          : t('fileViewer.exportToMonkeycodeCopyFailed'));
+        return;
+      }
+      popup.location.replace(taskUrl);
+    } catch (error) {
       popup?.close();
-      setToast(copied
-        ? t('fileViewer.exportToMonkeycodePopupBlocked')
-        : t('fileViewer.exportToMonkeycodeCopyFailed'));
-      return;
+      setToast(error instanceof Error ? error.message : t('fileViewer.exportToMonkeycodeOpenFailed'));
+    } finally {
+      setBusy(false);
     }
-    if (!popup) {
-      setToast(copied
-        ? t('fileViewer.exportToMonkeycodePopupBlocked')
-        : t('fileViewer.exportToMonkeycodeCopyFailed'));
-      return;
-    }
-    popup.location.replace(taskUrl);
   }
 
   return (
@@ -93,7 +88,7 @@ export function MonkeycodeExportAction({
         data-tooltip-placement={variant === 'header' ? 'bottom' : undefined}
         disabled={disabled || busy}
         aria-busy={busy}
-        onClick={() => { void prepare(); }}
+        onClick={() => { void openMonkeycode(); }}
       >
         {variant === 'export' ? (
           <span className="share-menu-icon">
@@ -102,14 +97,6 @@ export function MonkeycodeExportAction({
         ) : null}
         <span>{busy ? t('fileViewer.exportZip') : t('fileViewer.exportToMonkeycode')}</span>
       </button>
-      <MonkeycodeExportDialog
-        open={dialogOpen}
-        prompt={prompt}
-        onCancel={() => {
-          setDialogOpen(false);
-        }}
-        onConfirm={(value) => { void confirm(value); }}
-      />
       {toast ? <Toast message={toast} tone="error" onDismiss={() => setToast(null)} /> : null}
     </>
   );
