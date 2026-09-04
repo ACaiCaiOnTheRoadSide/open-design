@@ -33,6 +33,8 @@
   --text-muted: #5c5c5c;
   --text-soft: #848484;
   --text-faint: #bdbdbd;
+  --user-message-bg: #ededed;
+  --user-message-text: #494949;
 
   --accent: #353535;
   --accent-contrast: #fafafa;
@@ -155,6 +157,8 @@
   --text-muted: #bdbdbd;
   --text-soft: #a8a8a2;
   --text-faint: #9e9e98;
+  --user-message-bg: #494949;
+  --user-message-text: #ededed;
 
   --accent: #ededed;
   --accent-contrast: #202020;
@@ -218,6 +222,8 @@
     --text-muted: #bdbdbd;
     --text-soft: #a8a8a2;
     --text-faint: #9e9e98;
+    --user-message-bg: #494949;
+    --user-message-text: #ededed;
 
     --accent: #ededed;
     --accent-contrast: #202020;

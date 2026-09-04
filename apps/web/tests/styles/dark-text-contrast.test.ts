@@ -95,9 +95,20 @@ describe('dark text hierarchy', () => {
     expect(darkPlaceholder).toContain('color: var(--text-faint);');
   });
 
-  it('keeps user message text and its background on the same theme', () => {
+  it('keeps user message text readable against its bubble in every theme', () => {
     const userMessage = cssBlock(chatCss, '.msg.user .user-text');
-    expect(userMessage).toContain('color: var(--text);');
-    expect(userMessage).toContain('background: var(--bg-subtle);');
+    expect(userMessage).toContain('color: var(--user-message-text);');
+    expect(userMessage).toContain('background: var(--user-message-bg);');
+
+    const themes = [
+      cssBlock(tokensCss, ':root'),
+      cssBlock(tokensCss, '[data-theme="dark"]'),
+      cssBlock(tokensCss, 'html:not([data-theme])'),
+    ];
+    for (const theme of themes) {
+      const foreground = cssVar(theme, '--user-message-text');
+      const background = cssVar(theme, '--user-message-bg');
+      expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
