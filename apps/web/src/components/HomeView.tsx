@@ -119,7 +119,9 @@ import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry'
 import { workspaceContextLinkedDirs } from './workspace-context';
 import {
   currentWorkspaceAccountGeneration,
+  resolveCurrentWorkspaceContextReadWitness,
   useTeamProjects,
+  workspaceContextReadWitnessFromState,
   useWorkspaceContext,
   workspaceResourceReadContext,
 } from '../collab/useWorkspaceContext';
@@ -684,10 +686,25 @@ export function HomeView({
     consumedTemplateHandoffRef.current = true;
     void (async () => {
       setError(null);
-      const workspaceContext = resolvedWorkspaceContextForWrite(workspaceContextState);
-      if (!workspaceContext) {
-        throw new Error('Sign in to a workspace before importing this template.');
+      // Null only triggers the authoritative directory recovery below; no
+      // project mutation is sent without a verified Workspace context.
+      let workspaceContext = resolvedWorkspaceContextForWrite(workspaceContextState, {
+        unavailablePolicy: 'unscoped',
+      });
+      let workspaceWitness = workspaceContextReadWitnessFromState(workspaceContextState);
+      if (!workspaceContext || !workspaceWitness) {
+        workspaceWitness = await resolveCurrentWorkspaceContextReadWitness({ fresh: true });
+        workspaceContext = workspaceWitness.context;
       }
+      if (!workspaceContext) {
+        throw new Error('No active workspace is available for this account.');
+      }
+      const assertWorkspaceStillCurrent = () => {
+        if (!workspaceWitness.isStillCurrent()) {
+          throw new Error('Workspace changed while importing this template. Try again.');
+        }
+      };
+      assertWorkspaceStillCurrent();
       const { project } = await createProject({
         name: templateHandoff.templateId
           ? `Template ${templateHandoff.templateId}`
@@ -702,11 +719,15 @@ export function HomeView({
         workspaceContext,
       });
       try {
+        assertWorkspaceStillCurrent();
         await importTemplateIntoProject(project.id, templateHandoff.sourceUrl, workspaceContext);
       } catch (error) {
-        await deleteProject(project.id, workspaceContext).catch(() => undefined);
+        if (workspaceWitness.isStillCurrent()) {
+          await deleteProject(project.id, workspaceContext).catch(() => undefined);
+        }
         throw error;
       }
+      assertWorkspaceStillCurrent();
       onOpenProject(project.id);
     })().catch((reason) => {
       setError(reason instanceof Error ? reason.message : 'Could not import template.');
