@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { load } from 'cheerio';
 import type { Express, Request, Response } from 'express';
@@ -4279,12 +4279,22 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     )) return;
     const source = typeof req.body?.templateUrl === 'string' ? req.body.templateUrl.trim() : '';
     if (!source) return sendApiError(res, 400, 'BAD_REQUEST', 'templateUrl is required');
+    if (typeof project.metadata?.baseDir === 'string') {
+      return sendApiError(res, 400, 'BAD_REQUEST', 'template import requires a managed project');
+    }
+    await mkdir(PROJECTS_DIR, { recursive: true });
+    const destination = path.join(PROJECTS_DIR, project.id);
+    if (await lstat(destination).then(() => true).catch(() => false)) {
+      return sendApiError(res, 409, 'PROJECT_NOT_EMPTY', 'template import requires a new project');
+    }
+    let stageRoot: string | undefined;
     try {
       const files = await downloadTemplateArchive(source);
-      await ensureProject(PROJECTS_DIR, project.id, project.metadata);
+      stageRoot = await mkdtemp(path.join(PROJECTS_DIR, '.template-import-'));
+      await ensureProject(stageRoot, project.id, project.metadata);
       for (const file of files) {
         await writeProjectFile(
-          PROJECTS_DIR,
+          stageRoot,
           project.id,
           file.name,
           file.content,
@@ -4292,6 +4302,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           project.metadata,
         );
       }
+      await rename(path.join(stageRoot, project.id), destination);
       res.json({ projectId: project.id, fileCount: files.length });
     } catch (error) {
       sendApiError(
@@ -4300,6 +4311,10 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         'TEMPLATE_IMPORT_FAILED',
         error instanceof Error ? error.message : String(error),
       );
+    } finally {
+      if (stageRoot) {
+        await rm(stageRoot, { recursive: true, force: true }).catch(() => undefined);
+      }
     }
   });
 

@@ -146,6 +146,9 @@ importers:
       undici:
         specifier: 7.29.0
         version: 7.29.0
+      yauzl:
+        specifier: 2.10.0
+        version: 2.10.0
     devDependencies:
       '@babel/types':
         specifier: 7.29.0
@@ -165,6 +168,9 @@ importers:
       '@types/pg':
         specifier: 8.20.0
         version: 8.20.0
+      '@types/yauzl':
+        specifier: 2.10.3
+        version: 2.10.3
       esbuild:
         specifier: 0.28.0
         version: 0.28.0
@@ -9970,7 +9976,6 @@ snapshots:
   '@types/yauzl@2.10.3':
     dependencies:
       '@types/node': 24.12.2
-    optional: true
 
   '@ungap/structured-clone@1.3.0': {}
 
