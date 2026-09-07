@@ -1902,10 +1902,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       }
       // Claim BEFORE arming the restart. On a conflict the reused run stays
       // terminal + resumable (never dropped) and the request is rejected —
-      // the claim writes the post-restart `queued` intent so the message row
+      // the claim writes the post-restart `starting` intent so the message row
       // does not stay terminal while the run is being resumed (#6418).
       const resumeClaim = pinAssistantMessageOnRunCreate(db, run, {
-        status: 'queued',
+        status: 'starting',
         isRunActive: isRunActiveForAssistantClaim,
       });
       if (!resumeClaim.ok) {

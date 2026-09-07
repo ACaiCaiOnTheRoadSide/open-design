@@ -8056,7 +8056,7 @@ export function ProjectView({
             const pinnedAssistant = {
               ...latestAssistantMsg,
               runId,
-              runStatus: 'queued' as const,
+              runStatus: 'starting' as const,
               taskAnalytics: resolvedTaskAnalytics,
             };
             latestAssistantMsg = pinnedAssistant;
@@ -8069,7 +8069,7 @@ export function ProjectView({
             updateMessageById(assistantId, (prev) => ({
               ...prev,
               runId,
-              runStatus: 'queued',
+              runStatus: 'starting',
               taskAnalytics: resolvedTaskAnalytics,
             }));
           },
@@ -8239,7 +8239,7 @@ export function ProjectView({
             const pinnedAssistant = {
               ...latestAssistantMsg,
               runId,
-              runStatus: 'queued' as const,
+              runStatus: 'starting' as const,
               taskAnalytics: resolvedTaskAnalytics,
             };
             latestAssistantMsg = pinnedAssistant;
@@ -8249,7 +8249,7 @@ export function ProjectView({
             updateMessageById(assistantId, (prev) => ({
               ...prev,
               runId,
-              runStatus: 'queued',
+              runStatus: 'starting',
               taskAnalytics: resolvedTaskAnalytics,
             }));
           },
@@ -11912,7 +11912,7 @@ function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {
 }
 
 function isActiveRunStatus(status: ChatMessage['runStatus']): boolean {
-  return status === 'queued' || status === 'running';
+  return status === 'starting' || status === 'queued' || status === 'running';
 }
 
 /** A daemon run-status snapshot, as returned by `fetchChatRunStatus`/`listActiveChatRuns`. */

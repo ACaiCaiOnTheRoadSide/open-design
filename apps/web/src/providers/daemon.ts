@@ -813,7 +813,7 @@ export async function streamViaDaemon({
       client_type: detectClientType(),
     });
     notifyRunsChanged();
-    emitRunStatus('queued');
+    emitRunStatus('starting');
     await consumeDaemonRun({
       agentId,
       runId,
@@ -1443,7 +1443,7 @@ async function consumeDaemonRun({
       let shouldResetReconnects = sawStreamProgress;
       if (pendingStructuredError && endStatus === null) {
         const status = await fetchChatRunStatus(runId, workspaceContext).catch(() => null);
-        if (status && isChatRunStatus(status.status) && status.status !== 'queued' && status.status !== 'running') {
+        if (status && isChatRunStatus(status.status) && status.status !== 'starting' && status.status !== 'queued' && status.status !== 'running') {
           endStatus = status.status;
           exitCode = status.exitCode ?? null;
           exitSignal = status.signal ?? null;
@@ -1485,7 +1485,7 @@ async function consumeDaemonRun({
 
     if (endStatus === null) {
       const status = await fetchChatRunStatus(runId, workspaceContext);
-      if (status && isChatRunStatus(status.status) && status.status !== 'queued' && status.status !== 'running') {
+      if (status && isChatRunStatus(status.status) && status.status !== 'starting' && status.status !== 'queued' && status.status !== 'running') {
         endStatus = status.status;
         exitCode = status.exitCode ?? null;
         exitSignal = status.signal ?? null;
@@ -1590,7 +1590,7 @@ async function consumeDaemonRun({
 }
 
 function isChatRunStatus(value: unknown): value is ChatRunStatus {
-  return value === 'queued' || value === 'running' || value === 'succeeded' || value === 'failed' || value === 'canceled';
+  return value === 'starting' || value === 'queued' || value === 'running' || value === 'succeeded' || value === 'failed' || value === 'canceled';
 }
 
 /** Tag an error surfaced to the chat with whether the failed run can be

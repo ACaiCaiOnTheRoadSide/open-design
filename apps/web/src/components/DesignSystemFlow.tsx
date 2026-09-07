@@ -2657,7 +2657,7 @@ export function DesignSystemDetailView({
           },
         },
         onRunCreated: (runId) => {
-          updateAssistant((message) => ({ ...message, runId, runStatus: 'queued' }), true);
+          updateAssistant((message) => ({ ...message, runId, runStatus: 'starting' }), true);
         },
         onRunStatus: (runStatus) => {
           updateAssistant(
@@ -3200,7 +3200,11 @@ function findWorkspaceActivityMessage(messages: ChatMessage[]): ChatMessage | nu
     const message = messages[index];
     if (!message || message.role !== 'assistant') continue;
     if (message.events?.some((event) => event.kind !== 'text')) return message;
-    if (message.runStatus === 'queued' || message.runStatus === 'running') return message;
+    if (
+      message.runStatus === 'starting' ||
+      message.runStatus === 'queued' ||
+      message.runStatus === 'running'
+    ) return message;
     if (message.runStatus === 'succeeded' || message.runStatus === 'failed' || message.runStatus === 'canceled')
       return message;
   }
@@ -3491,7 +3495,12 @@ function workspaceActivityStatus(
   message: ChatMessage | null,
   active: boolean,
 ): 'running' | 'succeeded' | 'failed' {
-  if (active || message?.runStatus === 'queued' || message?.runStatus === 'running') return 'running';
+  if (
+    active ||
+    message?.runStatus === 'starting' ||
+    message?.runStatus === 'queued' ||
+    message?.runStatus === 'running'
+  ) return 'running';
   if (message?.runStatus === 'failed' || message?.runStatus === 'canceled') return 'failed';
   return 'succeeded';
 }

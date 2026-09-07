@@ -797,7 +797,7 @@ export const TOOL_DEFS = [
   {
     name: 'get_run',
     description:
-      'Poll a run started by start_run. Returns status (queued|running|succeeded|failed|canceled) plus error info. On success, adds previewUrl (open it in a browser to view the rendered design) and agentMessage (the inner agent\'s textual output reassembled from the event stream — show this when there is no previewUrl, e.g. when the agent asked the user a clarifying question instead of producing files).',
+      'Poll a run started by start_run. Returns status (starting|running|succeeded|failed|canceled; legacy runs may report queued) plus error info. On success, adds previewUrl (open it in a browser to view the rendered design) and agentMessage (the inner agent\'s textual output reassembled from the event stream — show this when there is no previewUrl, e.g. when the agent asked the user a clarifying question instead of producing files).',
     inputSchema: {
       type: 'object',
       properties: {

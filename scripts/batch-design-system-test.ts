@@ -83,7 +83,7 @@ interface RunCreateResponse {
 
 interface RunStatusResponse {
   id: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  status: 'starting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
   exitCode?: number | null;
   error?: string | null;
   updatedAt?: number;
@@ -594,7 +594,7 @@ async function runOne(params: {
     content: '',
     agentId: config.agentId,
     agentName: config.agentId,
-    runStatus: 'queued',
+    runStatus: 'starting',
     startedAt: now,
     createdAt: now,
   });
@@ -619,12 +619,12 @@ async function runOne(params: {
     buildAssistantMessageUpdate({
       agentId: config.agentId,
       runId: run.runId,
-      runStatus: 'queued',
+      runStatus: 'starting',
       createdAt: now,
     }),
   );
   if (!config.wait) {
-    return { designSystemId, projectId, projectName, conversationId, runId: run.runId, status: 'queued', daemonUrl };
+    return { designSystemId, projectId, projectName, conversationId, runId: run.runId, status: 'starting', daemonUrl };
   }
 
   let finalStatus: RunStatusResponse;

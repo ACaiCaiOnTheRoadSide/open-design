@@ -100,7 +100,7 @@ export function latestTodoWriteInputFromMessages(
 export function latestTodoWriteInputForPinnedCard<
   T extends {
     events?: AgentEvent[] | undefined;
-    runStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | undefined;
+    runStatus?: 'starting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | undefined;
     endedAt?: number | undefined;
   },
 >(
@@ -134,7 +134,7 @@ export function isTodoWriteToolName(name: string): boolean {
 }
 
 function hasTerminalRunEnded(
-  runStatus: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | undefined,
+  runStatus: 'starting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | undefined,
   endedAt: number | undefined,
 ): boolean {
   return (

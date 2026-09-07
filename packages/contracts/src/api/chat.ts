@@ -364,6 +364,7 @@ export interface McpRunCreateRequest {
 }
 
 export const CHAT_RUN_STATUSES = [
+  'starting',
   'queued',
   'running',
   'succeeded',

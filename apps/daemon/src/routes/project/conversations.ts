@@ -436,8 +436,9 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
         (storedText === null || incomingText.length > storedText.length);
       const mergedRunStatus =
         daemonKnown &&
-        stored.runStatus === 'running' &&
-        incoming.runStatus === 'queued'
+        ((stored.runStatus === 'running' &&
+          (incoming.runStatus === 'starting' || incoming.runStatus === 'queued')) ||
+          (stored.runStatus === 'starting' && incoming.runStatus === 'queued'))
           ? stored.runStatus
           : incoming.runStatus ?? stored.runStatus;
       let mergedContent: string;
@@ -469,7 +470,7 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
         runId: stored.runId,
         content: mergedContent,
         // Preserve the stored run status when the snapshot omits it, and keep a
-        // daemon-known running row from moving backward to a delayed queued PUT.
+        // daemon-known active row from moving backward due to a delayed client PUT.
         runStatus: mergedRunStatus,
         lastRunEventId: mergeLastRunEventId(stored.lastRunEventId, incoming.lastRunEventId),
         startedAt: stored.startedAt ?? incoming.startedAt,

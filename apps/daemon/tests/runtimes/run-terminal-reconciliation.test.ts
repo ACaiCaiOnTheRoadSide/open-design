@@ -73,7 +73,7 @@ describe('durable run terminal reconciliation', () => {
     }));
     db.prepare(
       `INSERT INTO messages (id, run_id, run_status, events_json)
-       VALUES (?, ?, 'running', '[]')`,
+       VALUES (?, ?, 'starting', '[]')`,
     ).run('m1', runId);
     const capture = vi.fn(async () => undefined);
     const reportLangfuse = vi.fn(async () => ({
@@ -243,7 +243,7 @@ describe('durable run terminal reconciliation', () => {
     }));
     db.prepare(
       `INSERT INTO messages (id, run_id, run_status, events_json)
-       VALUES (?, ?, 'running', '[]')`,
+       VALUES (?, ?, 'starting', '[]')`,
     ).run('m1', runId);
     const capture = vi.fn(async () => undefined);
 

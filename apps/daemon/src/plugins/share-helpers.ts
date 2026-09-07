@@ -270,7 +270,7 @@ export function reconcileAssistantMessageOnRunEnd(
       db.prepare(
         `UPDATE messages
             SET run_status = ?, ended_at = COALESCE(ended_at, ?)
-          WHERE id = ? AND run_status IN ('queued', 'running')`,
+          WHERE id = ? AND run_status IN ('starting', 'queued', 'running')`,
       ).run(finalStatus.status, Date.now(), run.assistantMessageId);
     })
     .catch((err: Error) => {

@@ -11,7 +11,7 @@ export type E2eChatMessage = {
   producedFiles?: unknown[];
   role: 'assistant' | 'user';
   runId?: string;
-  runStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  runStatus?: 'starting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
   startedAt?: number;
   telemetryFinalized?: boolean;
 };

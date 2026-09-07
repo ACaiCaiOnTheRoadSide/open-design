@@ -215,6 +215,45 @@ describe('reattachDaemonRun SSE reader reconnection', () => {
     expect(error!.failureDetail).toBe('timeout');
   });
 
+  it('keeps reconnecting when the fallback status is still starting', async () => {
+    const reader = makeRejectingReader([
+      enc(sseEvent(1, 'error', {
+        error: { code: 'AGENT_EXECUTION_FAILED', message: 'temporary stream error' },
+      })),
+    ]);
+    let statusReads = 0;
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u.includes('/events')) return streamResponse(reader);
+      if (u.includes('/runs/') && !u.includes('/events') && !u.includes('/cancel')) {
+        statusReads += 1;
+        return jsonResponse(statusReads === 1
+          ? { status: 'starting', exitCode: null, signal: null }
+          : { status: 'failed', exitCode: 1, signal: null });
+      }
+      return jsonResponse({}, 404);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    let doneCalled = false;
+    let error: Error | null = null;
+    await reattachDaemonRun({
+      runId: 'test-run-starting',
+      signal: new AbortController().signal,
+      handlers: {
+        onDelta: () => {},
+        onDone: () => { doneCalled = true; },
+        onError: (err) => { error = err; },
+        onAgentEvent: () => {},
+      },
+      onRunStatus: () => {},
+    });
+
+    expect(statusReads).toBeGreaterThan(1);
+    expect(doneCalled).toBe(false);
+    expect(error).not.toBeNull();
+  });
+
   it('does not swallow handler exceptions as reconnection', async () => {
     // A handler callback (onDelta) throws — this should NOT be caught as a
     // stream break. It should propagate to the caller as an error, not

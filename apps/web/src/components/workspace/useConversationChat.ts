@@ -43,7 +43,7 @@ function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {
 }
 
 function isActiveRunStatus(status: ChatMessage['runStatus']): boolean {
-  return status === 'queued' || status === 'running';
+  return status === 'starting' || status === 'queued' || status === 'running';
 }
 
 export interface ConversationChatContext {
@@ -341,7 +341,7 @@ export function useConversationChat(
           updateAssistant(assistantId, (prev) => ({
             ...prev,
             runId,
-            runStatus: 'queued',
+            runStatus: 'starting',
           }));
           setMessages((curr) => {
             const pinned = curr.find((m) => m.id === assistantId);

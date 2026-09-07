@@ -774,8 +774,6 @@ export function createChatRunService({
       acpSession: null,
       childPid: null,
       processGroupId: null,
-      gateSlot: null,
-      abandonGate: null,
       cancelRequested: false,
       cancelOrigin: state.cancelOrigin ?? null,
       terminalTrigger: state.terminalTrigger ?? null,
@@ -856,7 +854,7 @@ export function createChatRunService({
                 meta.analyticsHints.generationSloWindowMs,
             }
           : null,
-      status: 'queued',
+      status: 'starting',
       createdAt: now,
       updatedAt: now,
       events: [],
@@ -868,8 +866,6 @@ export function createChatRunService({
       acpSession: null,
       childPid: null,
       processGroupId: null,
-      gateSlot: null,
-      abandonGate: null,
       childExitObservedAt: null,
       exitCode: null,
       signal: null,
@@ -1029,7 +1025,7 @@ export function createChatRunService({
     const rechargeWaitDurationMs = Math.max(0, resumedAt - run.updatedAt);
     // Invalidate the cleanup timer scheduled for the prior terminal attempt.
     run.cleanupGeneration = (run.cleanupGeneration ?? 0) + 1;
-    run.status = 'queued';
+    run.status = 'starting';
     run.updatedAt = resumedAt;
     run.exitCode = null;
     run.signal = null;
@@ -1221,12 +1217,6 @@ export function createChatRunService({
 
   const finish = (run, status, code: number | null = null, signal: string | null = null) => {
     if (TERMINAL_RUN_STATUSES.has(run.status)) return;
-    run.gateSlot?.release(
-      status === 'succeeded' ? 'completed' : status,
-      status === 'failed' ? (run.error ?? undefined) : undefined,
-    );
-    run.gateSlot = null;
-    run.abandonGate = null;
     run.status = status;
     run.exitCode = code;
     run.signal = signal;
@@ -1498,8 +1488,6 @@ export function createChatRunService({
     run.cancelOrigin = origin;
     run.updatedAt = Date.now();
     clearPendingRetryRestart(run);
-    run.abandonGate?.();
-    run.abandonGate = null;
     if (!run.child) {
       closeRunStdin(run);
       finish(run, 'canceled', null, 'SIGTERM');
@@ -1565,8 +1553,6 @@ export function createChatRunService({
       run.cancelOrigin = 'daemon_shutdown';
       run.updatedAt = Date.now();
       clearPendingRetryRestart(run);
-      run.abandonGate?.();
-      run.abandonGate = null;
       if (run.acpSession?.abort) {
         try {
           run.acpSession.abort();

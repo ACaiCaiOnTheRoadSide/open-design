@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
+import { reconcileAssistantMessageOnRunEnd } from '../src/plugins/share-helpers.js';
 import { pinAssistantMessageOnRunCreate } from '../src/runtimes/chat-run-messages.js';
 
 function createDb(): Database.Database {
@@ -325,6 +326,28 @@ describe('pinAssistantMessageOnRunCreate generation boundary (#6418)', () => {
     expect(m.eventsJson).not.toBeNull();
     expect(m.startedAt).toBe(100);
     expect(m.endedAt).toBeNull();
+  });
+
+  it('finalizes an assistant message that is still starting', async () => {
+    const db = createDb();
+    db.prepare(`INSERT INTO conversations (id) VALUES ('conv-a')`).run();
+    seedMessage(db, {
+      id: 'msg-1',
+      conversationId: 'conv-a',
+      content: '',
+      runId: 'run-a',
+      runStatus: 'starting',
+      startedAt: 100,
+    });
+
+    reconcileAssistantMessageOnRunEnd(
+      db,
+      { wait: async () => ({ status: 'succeeded' }) },
+      { id: 'run-a', assistantMessageId: 'msg-1' },
+    );
+    await Promise.resolve();
+
+    expect(readMessage(db, 'msg-1').runStatus).toBe('succeeded');
   });
 
   it('does not touch a message in another conversation', () => {

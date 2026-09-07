@@ -85,7 +85,7 @@ describe('media execution contracts', () => {
   });
 
   it('pins run status, manifest, and raw preview URL examples', () => {
-    expect(CHAT_RUN_STATUSES).toEqual(['queued', 'running', 'succeeded', 'failed', 'canceled']);
+    expect(CHAT_RUN_STATUSES).toEqual(['starting', 'queued', 'running', 'succeeded', 'failed', 'canceled']);
     expect(exampleChatRunStatusResponse).toMatchObject({
       id: 'run_1',
       projectId: 'project_1',

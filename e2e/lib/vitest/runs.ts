@@ -1,6 +1,6 @@
 import { requestJson, requestText } from './http.ts';
 
-export type ChatRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+export type ChatRunStatus = 'starting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
 export type ChatRunCreateBody = {
   agentId: string;

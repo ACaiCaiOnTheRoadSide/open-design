@@ -410,7 +410,7 @@ describe('chat run service shutdown', () => {
     expect(runs.statusBody(run)).toMatchObject({
       id: run.id,
       clientRequestId: 'brief-1-cloud',
-      status: 'queued',
+      status: 'starting',
       error: null,
       errorCode: null,
       failureAction: null,
@@ -511,7 +511,7 @@ describe('chat run service shutdown', () => {
     expect(invalid.context).toBeNull();
   });
 
-  it('cancels a queued run immediately without waiting for child process shutdown', async () => {
+  it('cancels a starting run immediately without waiting for child process shutdown', async () => {
     const runs = createRuns();
     const run = runs.create({ projectId: 'project-1', conversationId: 'conv-queued' });
 
@@ -1214,7 +1214,7 @@ describe('run event log persistence', () => {
     expect(JSON.parse(fs.readFileSync(statePath, 'utf8'))).toMatchObject({
       schemaVersion: 1,
       id: run.id,
-      status: 'queued',
+      status: 'starting',
       assistantMessageId: 'm1',
       workspaceScope: {
         schemaVersion: 1,

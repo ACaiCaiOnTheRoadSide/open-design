@@ -568,7 +568,7 @@ export function pinAssistantMessageOnRunCreate(
   // Headless / omit-pin runs with no assistant message have nothing to claim.
   if (!run.conversationId || !run.assistantMessageId) return { ok: true };
 
-  // A resume claim writes the post-restart intent (queued) while the run
+  // A resume claim writes the post-restart intent (starting) while the run
   // object is still terminal (failed) — prepareRestart flips it afterwards
   // (#6418).
   const claimStatus = opts?.status ?? run.status;
@@ -615,7 +615,9 @@ export function pinAssistantMessageOnRunCreate(
     const activeLookingExistingRun =
       existing.runId !== null &&
       !isSameRun &&
-      (existing.runStatus === 'queued' || existing.runStatus === 'running');
+      (existing.runStatus === 'starting' ||
+        existing.runStatus === 'queued' ||
+        existing.runStatus === 'running');
     const existingRunStillActive =
       activeLookingExistingRun &&
       (opts?.isRunActive ? opts.isRunActive(existing.runId!) : true);

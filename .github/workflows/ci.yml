@@ -395,7 +395,6 @@ jobs:
           pnpm --filter @open-design/daemon exec vitest run -c vitest.config.ts
           tests/postgres-memory-http-sse.test.ts
           tests/postgres-owner-migration.test.ts
-          tests/storage/run-queue-postgres.test.ts
 
   windows_tools_pack_payload_tests:
     name: Windows tools-pack payload tests

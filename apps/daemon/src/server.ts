@@ -1082,12 +1082,6 @@ import {
   requireRequestContext,
 } from './request-context.js';
 import { createBrandDesignSystemRegistry } from './storage/brand-design-system-registry.js';
-import {
-  createMemoryRunQueue,
-  createPostgresRunQueue,
-  resolveMaxConcurrentRuns,
-  resolveMaxConcurrentRunsPerTenant,
-} from './storage/run-queue.js';
 import { createPluginInstallIntentStore } from './storage/plugin-install-intents.js';
 import { createBusinessFactsStore } from './storage/business-facts.js';
 import { createBusinessFactsOutbox } from './storage/business-facts-outbox.js';
@@ -3150,11 +3144,6 @@ export async function startServer({
     }
   }
   const businessFactsOutbox = createBusinessFactsOutbox(db, businessFacts);
-  const maxConcurrentRuns = resolveMaxConcurrentRuns();
-  const maxConcurrentRunsPerTenant = resolveMaxConcurrentRunsPerTenant();
-  const runQueue = daemonDbConfig.kind === 'postgres'
-    ? createPostgresRunQueue(getPool(), maxConcurrentRuns, maxConcurrentRunsPerTenant)
-    : createMemoryRunQueue(maxConcurrentRuns);
   setBusinessProjectFactsSink({
     projectCreated: (_db, project) => businessFactsOutbox.enqueueProjectCreate({
       id: String(project.id), name: String(project.name),
@@ -11587,7 +11576,7 @@ export async function startServer({
       destroyStream(child.stdin);
     };
     // Synchronously detach the failed attempt: kill the old child and move the
-    // run back to `queued` *now*, even when the re-spawn is delayed by backoff.
+    // run back to `starting` *now*, even when the re-spawn is delayed by backoff.
     // This must not be deferred — leaving the old child alive during the backoff
     // window lets a follow-on signal (e.g. the inactivity watchdog's SIGTERM)
     // drive a second close-handler pass that finalizes the run as failed before
@@ -11622,7 +11611,7 @@ export async function startServer({
       // Release the previous child's stdio streams before letting the
       // reference drop — see destroyChildStdio for rationale.
       destroyChildStdio(priorChild);
-      run.status = 'queued';
+      run.status = 'starting';
       run.updatedAt = Date.now();
       run.child = null;
       run.executionHandle = null;
@@ -11664,10 +11653,10 @@ export async function startServer({
         finishWithRetryDecision('failed', 1, null);
       });
     };
-    // Tear the failed attempt down now (moving the run to `queued`), then wait
+    // Tear the failed attempt down now (moving the run to `starting`), then wait
     // out the policy's backoff before re-spawning. Stays cancel-aware: a cancel
     // or shutdown during the backoff window clears the timer (runtimes/runs.ts)
-    // and finalizes the queued run, and the callback re-checks cancel/terminal
+    // and finalizes the starting run, and the callback re-checks cancel/terminal
     // state in case it fires first.
     const scheduleRetryRestart = (delayMs, retryChatBody = chatBody) => {
       tearDownAttemptForRetry();
@@ -12436,24 +12425,13 @@ export async function startServer({
       }
     }
 
-    lifecycle.mark('admission_wait_start');
-    run.abandonGate = () => runQueue.cancelPending(run.id);
-    const gateSlot = await runQueue.acquire({
-      id: run.id,
-      principal: runPrincipal ?? { tenantId: '__local__', userId: '__local__' },
-      onQueued: (position, ahead) => send('queued', { position, ahead }),
-    });
-    run.abandonGate = null;
-    lifecycle.mark('admission_wait_end');
-    if (!gateSlot || run.cancelRequested || design.runs.isTerminal(run.status)) {
-      gateSlot?.release('canceled');
+    if (run.cancelRequested || design.runs.isTerminal(run.status)) {
       cleanupPromptFile();
       if (!design.runs.isTerminal(run.status)) {
         design.runs.finish(run, 'canceled', null, null);
       }
       return;
     }
-    run.gateSlot = gateSlot;
 
     // Serialize antigravity spawns whose buildArgs writes a concrete
     // model into settings.json. Two concurrent runs with different
@@ -15008,7 +14986,7 @@ export async function startServer({
 
   const startChatRun = (chatBody, run, runPrincipal) => {
     if (daemonDbConfig.kind === 'postgres' && !runPrincipal) {
-      return Promise.reject(new Error('Missing principal for persistent run queue'));
+      return Promise.reject(new Error('Missing principal for persistent run'));
     }
     return runWithCapturedRequestContext(
       runPrincipal,
@@ -15101,7 +15079,7 @@ export async function startServer({
       agentId,
       agentName: getAgentDef(agentId)?.name ?? agentId,
       runId: run.id,
-      runStatus: 'queued',
+      runStatus: 'starting',
       startedAt: now,
     });
 
@@ -15537,7 +15515,7 @@ export async function startServer({
         agentId,
         agentName: getAgentDef(agentId)?.name ?? agentId,
         runId: run.id,
-        runStatus: 'queued',
+        runStatus: 'starting',
         startedAt: now,
       });
     };
@@ -15786,7 +15764,6 @@ export async function startServer({
   //   - `apps/daemon/src/cli.ts`            → expects `{ url, server, shutdown }`
   //   - `apps/daemon/sidecar/server.ts`     → expects `{ url, server }`
   //   - `apps/daemon/tests/version-route.test.ts` → expects `{ url, server }`
-  await runQueue.start();
   return await new Promise((resolve, reject) => {
     let daemonShutdownPromise: Promise<void> | undefined;
     const stopProjectCacheEvictionScheduler = startProjectCacheEvictionScheduler();
@@ -15824,7 +15801,6 @@ export async function startServer({
 
           await attempt('plugin intents', () => pluginIntentReconciler?.shutdown());
           await attempt('active runs', () => design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() }));
-          await attempt('run queue', () => runQueue.shutdown());
           await attempt('terminals', () => terminalService.shutdownActive());
           await attempt('browser sessions', () => browserSessionService.shutdownActive());
           // Active run teardown may perform the final project writes. Flush
@@ -15856,7 +15832,6 @@ export async function startServer({
       cleanupDaemonBackgroundWork();
       void (async () => {
         await businessFactsOutbox.stop().catch(() => undefined);
-        await runQueue.shutdown().catch(() => undefined);
         if (daemonDbConfig.kind === 'postgres') await closePool().catch(() => undefined);
         reject(error);
       })();
@@ -15927,13 +15902,11 @@ export async function startServer({
       });
     } catch (error) {
       cleanupDaemonBackgroundWork();
-      void runQueue.shutdown().finally(() => {
-        if (daemonDbConfig.kind === 'postgres') {
-          void closePool().then(() => reject(error), () => reject(error));
-        } else {
-          reject(error);
-        }
-      });
+      if (daemonDbConfig.kind === 'postgres') {
+        void closePool().then(() => reject(error), () => reject(error));
+      } else {
+        reject(error);
+      }
       return;
     }
     server.once('close', () => {

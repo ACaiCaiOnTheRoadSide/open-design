@@ -2840,7 +2840,9 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
     const preserveDaemonEventSnapshot =
       existing.hasEventBatches === 1 ||
       (typeof existing.runId === 'string' &&
-        (existing.runStatus === 'queued' || existing.runStatus === 'running') &&
+        (existing.runStatus === 'starting' ||
+          existing.runStatus === 'queued' ||
+          existing.runStatus === 'running') &&
         !incomingRunIsTerminal);
     const nextEventsJson = preserveDaemonEventSnapshot
       ? existing.eventsJson ?? null

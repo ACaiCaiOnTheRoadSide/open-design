@@ -21,7 +21,7 @@ type ProjectResponse = {
 };
 
 type RunStatusResponse = {
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  status: 'starting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
   endedWithUnfinishedWork?: boolean;
 };
 

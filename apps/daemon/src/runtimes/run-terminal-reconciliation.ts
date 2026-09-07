@@ -191,7 +191,7 @@ function reconcileMessages(
     rows = db.prepare(
       `SELECT id, run_id AS runId
          FROM messages
-        WHERE run_status IN ('queued', 'running')`,
+        WHERE run_status IN ('starting', 'queued', 'running')`,
     ).all() as Array<{ id: string; runId: string | null }>;
   } catch {
     return 0;
@@ -202,7 +202,7 @@ function reconcileMessages(
     db.prepare(
       `UPDATE messages
           SET run_status = ?, ended_at = COALESCE(ended_at, ?)
-        WHERE id = ? AND run_status IN ('queued', 'running')`,
+        WHERE id = ? AND run_status IN ('starting', 'queued', 'running')`,
     ).run(status, state?.updatedAt ?? now, row.id);
     const isDaemonRestart = state?.terminalRecoveryReason === 'daemon_restart'
       || state?.errorCode === RESTART_ERROR_CODE;

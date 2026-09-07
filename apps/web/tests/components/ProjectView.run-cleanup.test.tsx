@@ -903,7 +903,7 @@ describe('ProjectView daemon cleanup', () => {
           call[2]?.id === capturedAssistantMessageId &&
           call[2]?.role === 'assistant' &&
           call[2]?.runId === 'run-delayed' &&
-          call[2]?.runStatus === 'queued',
+          call[2]?.runStatus === 'starting',
       );
       expect(persistedAssistant).toBeTruthy();
     });
@@ -2005,7 +2005,7 @@ describe('ProjectView daemon cleanup', () => {
         (call) =>
           call[2]?.role === 'assistant' &&
           call[2]?.runId === 'run-pinned-xyz' &&
-          call[2]?.runStatus === 'queued',
+          call[2]?.runStatus === 'starting',
       );
       expect(pinnedSave).toBeTruthy();
     });

@@ -4545,7 +4545,7 @@ function CommentSection({
 }
 
 function isActiveRunStatus(status: ChatMessage['runStatus']): boolean {
-  return status === 'queued' || status === 'running';
+  return status === 'starting' || status === 'queued' || status === 'running';
 }
 
 function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {

@@ -41,6 +41,7 @@ describe('parseSseFrame', () => {
 describe('streamViaDaemon', () => {
   it('sends the latest user turn separately from the full CLI transcript', async () => {
     const handlers = createDaemonHandlers();
+    const onRunStatus = vi.fn();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
@@ -62,7 +63,11 @@ describe('streamViaDaemon', () => {
       systemPrompt: '',
       signal: new AbortController().signal,
       handlers,
+      onRunStatus,
     });
+
+    expect(onRunStatus).toHaveBeenCalledWith('starting');
+    expect(onRunStatus).not.toHaveBeenCalledWith('queued');
 
     const [, createRunInit] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
     const body = JSON.parse(String(createRunInit.body));
@@ -2016,7 +2021,8 @@ describe('streamViaDaemon', () => {
       clientRequestId: 'client-1',
     });
     expect(onRunCreated).toHaveBeenCalledWith('run-1');
-    expect(onRunStatus).toHaveBeenCalledWith('queued');
+    expect(onRunStatus).toHaveBeenCalledWith('starting');
+    expect(onRunStatus).not.toHaveBeenCalledWith('queued');
     expect(onRunStatus).toHaveBeenCalledWith('running');
     expect(onRunStatus).toHaveBeenCalledWith('succeeded');
     expect(onRunEventId).toHaveBeenCalledWith('4');
