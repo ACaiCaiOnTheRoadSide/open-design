@@ -132,9 +132,9 @@ describe('home composer sending state', () => {
     expect(window.location.pathname).toBe('/workspace');
     expect(window.location.search).toBe('');
 
-    setHomeHeroPrompt('Build a storefront for a coffee roaster');
     const submit = screen.getByTestId('home-hero-submit') as HTMLButtonElement;
     await waitFor(() => expect(submit.disabled).toBe(false));
+    setHomeHeroPrompt('Build a storefront for a coffee roaster');
     fireEvent.click(submit);
 
     await waitFor(() => {

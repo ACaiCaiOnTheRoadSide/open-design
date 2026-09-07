@@ -1,4 +1,5 @@
 import { safeExternalFetch } from '../plugins/plugin-asset-cache.js';
+import { parseFrontmatter } from '../design-systems/frontmatter.js';
 import yauzl, { type Entry, type ZipFile } from 'yauzl';
 
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
@@ -8,6 +9,69 @@ const HANDOFF_PATH_RE = /\/api\/v1\/catalog\/handoff-download\/[^/]+$/;
 export interface TemplateArchiveFile {
   name: string;
   content: Buffer;
+}
+
+export interface PreparedTemplateArchive {
+  files: TemplateArchiveFile[];
+  templateId: string | null;
+  title: string | null;
+  prompt: string | null;
+  skillPath: string | null;
+}
+
+const CATALOG_PREVIEW_PATH_RE = /^(?:preview\.(?:gif|jpe?g|mp4|png|webp)|previews\/)/i;
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+export function composeTemplateSkillInstructions(
+  existingSkillBody: string | null | undefined,
+  skillMarkdown: string,
+  title?: string | null,
+): string | undefined {
+  const instructions = parseFrontmatter(skillMarkdown).body.trim();
+  if (!instructions) return existingSkillBody?.trim() || undefined;
+  const existing = existingSkillBody?.trim() ?? '';
+  const heading = `## Selected template instructions${title?.trim() ? ` — ${title.trim()}` : ''}`;
+  return `${existing}${existing ? '\n\n---\n\n' : ''}${heading}\n\n${instructions}`;
+}
+
+export function prepareTemplateArchive(
+  archiveFiles: TemplateArchiveFile[],
+): PreparedTemplateArchive {
+  const metadataFile = archiveFiles.find((file) => file.name === 'template.json');
+  let metadata: Record<string, unknown> = {};
+  if (metadataFile) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(metadataFile.content.toString('utf8'));
+    } catch {
+      throw new Error('template archive contains invalid template.json');
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('template archive contains invalid template.json');
+    }
+    metadata = parsed as Record<string, unknown>;
+  }
+
+  const skillFile = archiveFiles.find((file) => file.name === 'SKILL.md');
+  const skillMetadata = skillFile
+    ? parseFrontmatter(skillFile.content.toString('utf8')).data
+    : {};
+  const files = archiveFiles.filter(
+    (file) => file.name !== 'template.json' && !CATALOG_PREVIEW_PATH_RE.test(file.name),
+  );
+  return {
+    files,
+    templateId: nonEmptyString(metadata.id) ?? nonEmptyString(skillMetadata.name),
+    title: nonEmptyString(metadata.title)
+      ?? nonEmptyString(metadata.name)
+      ?? nonEmptyString(skillMetadata.title)
+      ?? nonEmptyString(skillMetadata.name),
+    prompt: nonEmptyString(metadata.prompt) ?? nonEmptyString(metadata.examplePrompt),
+    skillPath: skillFile ? skillFile.name : null,
+  };
 }
 
 export function isTemplateHandoffUrl(rawUrl: string): boolean {

@@ -229,6 +229,7 @@ interface Props {
   pendingPluginId: string | null;
   pendingChipId: string | null;
   submitDisabled?: boolean;
+  allowEmptySubmit?: boolean;
   // True while the submitted run is still creating its project/conversation
   // (#4082). Distinct from `submitDisabled`: it swaps the send button into a
   // visible Sending… state instead of leaving it silently idle.
@@ -363,6 +364,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     pendingPluginId,
     pendingChipId,
     submitDisabled = false,
+    allowEmptySubmit = false,
     submitting = false,
     onPickPlugin,
     onPickExamplePlugin = () => undefined,
@@ -456,7 +458,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const shortcutsMenuRef = useRef<HTMLDivElement>(null);
   const canSubmit =
-    (prompt.trim().length > 0 || stagedFiles.length > 0) && !submitDisabled && !submitting;
+    (prompt.trim().length > 0 || stagedFiles.length > 0 || allowEmptySubmit)
+    && !submitDisabled
+    && !submitting;
   const previewHomeFile = useMemo(() => {
     if (!previewHomeFileKey) return null;
     return stagedFiles.find((file, index) => homeFileKey(file, index) === previewHomeFileKey) ?? null;

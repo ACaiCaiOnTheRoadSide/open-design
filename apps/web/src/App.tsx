@@ -2866,7 +2866,7 @@ function AppInner() {
       // to "None" for every kind now, and the user expects that to land
       // as a no-design-system project rather than silently inheriting the
       // workspace default.
-      const derivedPendingPrompt =
+      let derivedPendingPrompt =
       input.pendingPrompt ??
       (input.metadata?.promptTemplate?.prompt?.trim() || undefined);
 
@@ -2964,11 +2964,28 @@ function AppInner() {
           workspaceContext: createWorkspaceContext,
         });
         if (input.templateHandoff) {
-          await importTemplateIntoProject(
+          const templateImport = await importTemplateIntoProject(
             result.project.id,
             input.templateHandoff.sourceUrl,
             createWorkspaceContext,
           );
+          const templatePrompt = templateImport.prompt?.trim();
+          const userPrompt = derivedPendingPrompt?.trim();
+          if (templatePrompt) {
+            derivedPendingPrompt = userPrompt
+              ? `${userPrompt}\n\nSelected template brief:\n${templatePrompt}`
+              : templatePrompt;
+          } else if (!userPrompt && (
+            templateImport.capabilities.hasSkill || templateImport.capabilities.hasFiles
+          )) {
+            derivedPendingPrompt = 'Create a design using the selected template.';
+          }
+          if (derivedPendingPrompt) {
+            result = {
+              ...result,
+              project: { ...result.project, pendingPrompt: derivedPendingPrompt },
+            };
+          }
         }
       } catch (err) {
         const errorCode =

@@ -2695,7 +2695,7 @@ export function HomeView({
     // path lands here directly — swallow re-entry during the in-flight window.
     if (sending) return;
     const trimmed = prompt.trim();
-    if (!trimmed && stagedFiles.length === 0) return;
+    if (!trimmed && stagedFiles.length === 0 && !templateHandoff) return;
     // P0 ui_click area=chat_composer element=send_button. Fires before the
     // async plugin-apply roundtrip so the click count reflects user intent
     // even when the run is rejected (missing inputs, apply failure). The
@@ -3105,6 +3105,7 @@ export function HomeView({
         connectorOptions={connectors.filter((connector) => connector.status === 'connected')}
         pendingPluginId={pendingApplyId}
         pendingChipId={pendingChipId}
+        allowEmptySubmit={templateHandoff !== null}
         submitDisabled={
           (defaultChipSeedPending && !hasExplicitSubmitRoute) ||
           Boolean(pendingChipRestore) ||

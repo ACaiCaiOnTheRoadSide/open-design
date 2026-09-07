@@ -207,6 +207,25 @@ vi.mock('../../src/components/EntryView', () => ({
       </button>
       <button
         type="button"
+        onClick={() => {
+          void Promise.resolve(onCreateProject({
+            name: 'Prompt-only template project',
+            skillId: null,
+            designSystemId: null,
+            pendingPrompt: '',
+            autoSendFirstMessage: true,
+            metadata: { kind: 'other', templateId: 'prompt-only' },
+            templateHandoff: {
+              sourceUrl: 'https://inspire.example.com/prompt-template.zip',
+              templateId: 'prompt-only',
+            },
+          })).catch(() => {});
+        }}
+      >
+        Create prompt-only template project
+      </button>
+      <button
+        type="button"
         onClick={() => void onCreatePluginShareProject(
           'plugin-source',
           'publish-github',
@@ -806,7 +825,11 @@ describe('App project creation routing', () => {
     mockedMergeDaemonConfig.mockImplementation((local) => local);
     mockedLoadConfig.mockReturnValue({ ...baseConfig });
     mockedUploadProjectFiles.mockResolvedValue({ uploaded: [], failed: [] });
-    mockedImportTemplateIntoProject.mockResolvedValue(undefined);
+    mockedImportTemplateIntoProject.mockResolvedValue({
+      projectId: 'project-new',
+      fileCount: 0,
+      capabilities: { hasFiles: false, hasSkill: false, hasPrompt: false },
+    });
     mockedCreateProject.mockResolvedValue({
       project: freshProject,
       conversationId: 'conv-new',
@@ -1246,7 +1269,7 @@ describe('App project creation routing', () => {
       project: { ...freshProject, name: 'Template project' },
       conversationId: 'conv-new',
     });
-    const templateImport = deferred<void>();
+    const templateImport = deferred<Awaited<ReturnType<typeof importTemplateIntoProject>>>();
     mockedImportTemplateIntoProject.mockReturnValue(templateImport.promise);
 
     render(<App />);
@@ -1264,14 +1287,68 @@ describe('App project creation routing', () => {
     expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBeNull();
 
     await act(async () => {
-      templateImport.resolve();
+      templateImport.resolve({
+        projectId: 'project-new',
+        fileCount: 2,
+        capabilities: { hasFiles: true, hasSkill: true, hasPrompt: true },
+        prompt: 'Preserve the template layout and visual language.',
+      });
       await templateImport.promise;
     });
 
     await screen.findByTestId('project-view');
     expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBe('1');
     expect(window.sessionStorage.getItem('od:auto-send-prompt:project-new')).toBe(
-      'Extend the imported landing page',
+      'Extend the imported landing page\n\nSelected template brief:\nPreserve the template layout and visual language.',
+    );
+    window.sessionStorage.removeItem('od:auto-send-first:project-new');
+    window.sessionStorage.removeItem('od:auto-send-prompt:project-new');
+  });
+
+  it('uses a prompt-only handoff as the first message when the composer is empty', async () => {
+    window.sessionStorage.removeItem('od:auto-send-first:project-new');
+    window.sessionStorage.removeItem('od:auto-send-prompt:project-new');
+    mockedListProjects.mockResolvedValue([]);
+    mockedImportTemplateIntoProject.mockResolvedValue({
+      projectId: 'project-new',
+      fileCount: 0,
+      capabilities: { hasFiles: false, hasSkill: false, hasPrompt: true },
+      prompt: 'Apply the supplied camera motion exactly.',
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Create prompt-only template project',
+    }));
+
+    await screen.findByTestId('project-view');
+    expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBe('1');
+    expect(window.sessionStorage.getItem('od:auto-send-prompt:project-new')).toBe(
+      'Apply the supplied camera motion exactly.',
+    );
+    window.sessionStorage.removeItem('od:auto-send-first:project-new');
+    window.sessionStorage.removeItem('od:auto-send-prompt:project-new');
+  });
+
+  it('starts generation for a Skill-only handoff when the composer is empty', async () => {
+    window.sessionStorage.removeItem('od:auto-send-first:project-new');
+    window.sessionStorage.removeItem('od:auto-send-prompt:project-new');
+    mockedListProjects.mockResolvedValue([]);
+    mockedImportTemplateIntoProject.mockResolvedValue({
+      projectId: 'project-new',
+      fileCount: 1,
+      capabilities: { hasFiles: false, hasSkill: true, hasPrompt: false },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Create prompt-only template project',
+    }));
+
+    await screen.findByTestId('project-view');
+    expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBe('1');
+    expect(window.sessionStorage.getItem('od:auto-send-prompt:project-new')).toBe(
+      'Create a design using the selected template.',
     );
     window.sessionStorage.removeItem('od:auto-send-first:project-new');
     window.sessionStorage.removeItem('od:auto-send-prompt:project-new');

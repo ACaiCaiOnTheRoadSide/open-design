@@ -66,7 +66,10 @@ import {
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
-import { downloadTemplateArchive } from '../../services/template-import.js';
+import {
+  downloadTemplateArchive,
+  prepareTemplateArchive,
+} from '../../services/template-import.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId, ProjectDirectoryRollbackError } from '../../projects.js';
 import {
@@ -4289,10 +4292,10 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     }
     let stageRoot: string | undefined;
     try {
-      const files = await downloadTemplateArchive(source);
+      const archive = prepareTemplateArchive(await downloadTemplateArchive(source));
       stageRoot = await mkdtemp(path.join(PROJECTS_DIR, '.template-import-'));
       await ensureProject(stageRoot, project.id, project.metadata);
-      for (const file of files) {
+      for (const file of archive.files) {
         await writeProjectFile(
           stageRoot,
           project.id,
@@ -4303,7 +4306,40 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         );
       }
       await rename(path.join(stageRoot, project.id), destination);
-      res.json({ projectId: project.id, fileCount: files.length });
+      const hasSkill = archive.skillPath !== null;
+      const hasFiles = archive.files.some((file) => file.name !== archive.skillPath);
+      const existingPrompt = typeof project.pendingPrompt === 'string'
+        ? project.pendingPrompt.trim()
+        : '';
+      const importedPendingPrompt = archive.prompt
+        ? existingPrompt
+          ? `${existingPrompt}\n\nSelected template brief:\n${archive.prompt}`
+          : archive.prompt
+        : existingPrompt || (hasSkill || hasFiles
+          ? 'Create a design using the selected template.'
+          : project.pendingPrompt);
+      updateProject(db, project.id, {
+        pendingPrompt: importedPendingPrompt,
+        metadata: {
+          ...project.metadata,
+          templateHandoff: {
+            ...(archive.templateId ? { templateId: archive.templateId } : {}),
+            ...(archive.title ? { title: archive.title } : {}),
+            ...(archive.skillPath ? { skillPath: archive.skillPath } : {}),
+          },
+        },
+      });
+      res.json({
+        projectId: project.id,
+        fileCount: archive.files.length,
+        capabilities: {
+          hasFiles,
+          hasSkill,
+          hasPrompt: archive.prompt !== null,
+        },
+        ...(archive.prompt ? { prompt: archive.prompt } : {}),
+        ...(archive.title ? { title: archive.title } : {}),
+      });
     } catch (error) {
       sendApiError(
         res,

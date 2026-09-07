@@ -631,6 +631,7 @@ import {
   writeProjectFile,
   reconcileHtmlArtifactManifest,
 } from './projects.js';
+import { composeTemplateSkillInstructions } from './services/template-import.js';
 import { validateArtifactManifestInput } from './artifacts/manifest.js';
 import {
   assertProjectActive,
@@ -9763,6 +9764,34 @@ export async function startServer({
         console.warn(
           `[plugins] pluginSkillBody load failed: ${err?.message ?? err}`,
         );
+      }
+    }
+
+    const templateSkillPath = typeof metadata?.templateHandoff?.skillPath === 'string'
+      ? metadata.templateHandoff.skillPath
+      : null;
+    if (project?.id && templateSkillPath === 'SKILL.md') {
+      try {
+        const localSkill = await readProjectFile(
+          PROJECTS_DIR,
+          project.id,
+          templateSkillPath,
+          project.metadata,
+        );
+        const templateTitle = typeof metadata?.templateHandoff?.title === 'string'
+          ? metadata.templateHandoff.title.trim()
+          : '';
+        const composedSkillBody = composeTemplateSkillInstructions(
+          skillBody,
+          localSkill.buffer.toString('utf8'),
+          templateTitle,
+        );
+        if (composedSkillBody) {
+          skillBody = composedSkillBody;
+          skillName ||= templateTitle || 'selected-template';
+        }
+      } catch (err) {
+        console.warn(`[templates] project SKILL.md load failed: ${err?.message ?? err}`);
       }
     }
 
