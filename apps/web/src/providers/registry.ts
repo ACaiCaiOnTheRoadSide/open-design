@@ -2651,6 +2651,29 @@ export async function deletePreviewComment(
   }
 }
 
+export async function importTemplateIntoProject(
+  projectId: string,
+  templateUrl: string,
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<void> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/template-import`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(workspaceContext ? workspaceProjectHeaders(workspaceContext) : {}),
+      },
+      body: JSON.stringify({ templateUrl }),
+    },
+  );
+  if (!response.ok) {
+    const error = await readApiErrorBody(response);
+    throw new Error(error.message || response.statusText || 'Could not import template.');
+  }
+  invalidateProjectFilesCache(projectId, workspaceContext);
+}
+
 export async function writeProjectTextFile(
   projectId: string,
   name: string,

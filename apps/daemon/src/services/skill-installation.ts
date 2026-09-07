@@ -182,7 +182,7 @@ function resolveSkillSource(rawSource: string): ResolvedSkillSource | SkillRemot
   }
   if (
     !/\.(?:tar\.gz|tgz|zip)$/i.test(url.pathname)
-    && !url.pathname.endsWith('/handoff-download')
+    && !/\/catalog\/handoff-download\/[^/]+$/.test(url.pathname)
   ) {
     return error(
       'BAD_REQUEST',

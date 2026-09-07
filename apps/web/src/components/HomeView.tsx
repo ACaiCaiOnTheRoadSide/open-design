@@ -41,6 +41,7 @@ import {
 import {
   applyPlugin,
   createProject,
+  deleteProject,
   duplicatePluginAsProject,
   listPlugins,
   listPluginsFresh,
@@ -112,10 +113,7 @@ import {
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
-import {
-  projectInputForInstalledTemplate,
-  templateHandoffFromPageUrl,
-} from '../runtime/ohmy-inspire-handoff';
+import { templateHandoffFromPageUrl } from '../runtime/ohmy-inspire-handoff';
 import { navigate } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import { workspaceContextLinkedDirs } from './workspace-context';
@@ -159,7 +157,7 @@ import { RecentProjectsStrip } from './RecentProjectsStrip';
 import type { Recommendation } from '../onboarding/recommendation';
 import type { OnboardingEntry } from '../onboarding/onboarding-entry';
 import { AnimatePresence } from 'motion/react';
-import { fetchSkills, installSkill } from '../providers/registry';
+import { importTemplateIntoProject } from '../providers/registry';
 
 export interface ActivePlugin {
   record: InstalledPluginRecord;
@@ -682,34 +680,33 @@ export function HomeView({
   const consumedTemplateHandoffRef = useRef(false);
   useEffect(() => {
     if (!templateHandoff || consumedTemplateHandoffRef.current) return;
-    if (workspaceContextState.identityChangePending) return;
+    if (workspaceContextState.loading || workspaceContextState.identityChangePending) return;
     consumedTemplateHandoffRef.current = true;
     void (async () => {
       setError(null);
-      const workspaceContext = resolvedWorkspaceContextForWrite(
-        workspaceContextState,
-        { unavailablePolicy: 'unscoped' },
-      );
-      const installResult = await installSkill(
-        { source: templateHandoff.sourceUrl },
-        workspaceContext,
-      );
-      const installedSkill = 'skill' in installResult
-        ? installResult.skill
-        : installResult.error.status === 409 && templateHandoff.templateId
-          ? (await fetchSkills(workspaceContext)).find(
-              (skill) => skill.id === templateHandoff.templateId,
-            ) ?? null
-          : null;
-      if (!installedSkill) {
-        throw new Error('error' in installResult ? installResult.error.message : 'Could not import template.');
+      const workspaceContext = resolvedWorkspaceContextForWrite(workspaceContextState);
+      if (!workspaceContext) {
+        throw new Error('Sign in to a workspace before importing this template.');
       }
-      const input = projectInputForInstalledTemplate(installedSkill);
       const { project } = await createProject({
-        ...input,
+        name: templateHandoff.templateId
+          ? `Template ${templateHandoff.templateId}`
+          : 'Imported template',
+        skillId: null,
         designSystemId: null,
+        metadata: {
+          kind: 'other',
+          nameSource: 'generated',
+          ...(templateHandoff.templateId ? { templateId: templateHandoff.templateId } : {}),
+        },
         workspaceContext,
       });
+      try {
+        await importTemplateIntoProject(project.id, templateHandoff.sourceUrl, workspaceContext);
+      } catch (error) {
+        await deleteProject(project.id, workspaceContext).catch(() => undefined);
+        throw error;
+      }
       onOpenProject(project.id);
     })().catch((reason) => {
       setError(reason instanceof Error ? reason.message : 'Could not import template.');

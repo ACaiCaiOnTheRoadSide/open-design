@@ -7,20 +7,20 @@ import {
 describe('templateHandoffFromPageUrl', () => {
   it('returns the package source and removes the one-shot parameter', () => {
     const result = templateHandoffFromPageUrl(
-      'https://design.example.com/studio/?template_url=https%3A%2F%2Finspire.example.com%2Ftemplate.zip&template_id=cinematic-video&keep=1',
+      'https://design.example.com/studio/?template_url=https%3A%2F%2Finspire.example.com%2Fapi%2Fv1%2Fcatalog%2Fhandoff-download%2Fsigned&template_id=cinematic-video&keep=1',
     );
 
-    expect(result?.sourceUrl).toBe('https://inspire.example.com/template.zip');
+    expect(result?.sourceUrl).toBe('https://inspire.example.com/api/v1/catalog/handoff-download/signed');
     expect(result?.templateId).toBe('cinematic-video');
     expect(result?.sanitizedUrl).toBe('https://design.example.com/studio/?keep=1');
   });
 
-  it('derives the template id from a signed handoff URL', () => {
+  it('does not infer an entitlement-bearing template id from the token URL', () => {
     const result = templateHandoffFromPageUrl(
-      'https://design.example.com/studio/?template_url=https%3A%2F%2Finspire.example.com%2Fapi%2Fv1%2Fcatalog%2Ftemplates%2Fcinematic-video%2Fhandoff-download%3Ftoken%3Dsigned',
+      'https://design.example.com/studio/?template_url=https%3A%2F%2Finspire.example.com%2Fapi%2Fv1%2Fcatalog%2Fhandoff-download%2Fsigned',
     );
 
-    expect(result?.templateId).toBe('cinematic-video');
+    expect(result?.templateId).toBeNull();
   });
 
   it('rejects non-http template URLs', () => {

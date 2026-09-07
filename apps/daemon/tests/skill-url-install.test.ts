@@ -327,7 +327,7 @@ describe('installSkillFromRemoteSource', () => {
     const userSkillsRoot = await tempRoot('od-user-skills-');
     const result = await installSkillFromRemoteSource(
       userSkillsRoot,
-      'https://inspire.example/api/v1/catalog/templates/remote-skill/handoff-download?token=signed',
+      'https://inspire.example/api/v1/catalog/handoff-download/signed',
       { fetcher: archiveFetcher(await skillZipArchive()) },
     );
 

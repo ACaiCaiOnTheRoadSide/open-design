@@ -66,6 +66,7 @@ import {
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
+import { downloadTemplateArchive } from '../../services/template-import.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId, ProjectDirectoryRollbackError } from '../../projects.js';
 import {
@@ -4260,6 +4261,45 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       res.json(body);
     } catch (err: any) {
       sendApiError(res, 400, 'BAD_REQUEST', String(err));
+    }
+  });
+
+  app.post('/api/projects/:id/template-import', async (req, res) => {
+    const project = getProject(db, req.params.id);
+    if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+    if (!await enforceWorkspaceProjectMutation(
+      req,
+      res,
+      sendApiError,
+      getWorkspaceProject,
+      getWorkspaceProjectByProjectId,
+      db,
+      project.id,
+      'writeFiles',
+    )) return;
+    const source = typeof req.body?.templateUrl === 'string' ? req.body.templateUrl.trim() : '';
+    if (!source) return sendApiError(res, 400, 'BAD_REQUEST', 'templateUrl is required');
+    try {
+      const files = await downloadTemplateArchive(source);
+      await ensureProject(PROJECTS_DIR, project.id, project.metadata);
+      for (const file of files) {
+        await writeProjectFile(
+          PROJECTS_DIR,
+          project.id,
+          file.name,
+          file.content,
+          { overwrite: false },
+          project.metadata,
+        );
+      }
+      res.json({ projectId: project.id, fileCount: files.length });
+    } catch (error) {
+      sendApiError(
+        res,
+        400,
+        'TEMPLATE_IMPORT_FAILED',
+        error instanceof Error ? error.message : String(error),
+      );
     }
   });
 
