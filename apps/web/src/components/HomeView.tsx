@@ -112,7 +112,10 @@ import {
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
-import { consumeOhMyInspireTemplateHandoff } from '../runtime/ohmy-inspire-handoff';
+import {
+  projectInputForInstalledTemplate,
+  templateHandoffFromPageUrl,
+} from '../runtime/ohmy-inspire-handoff';
 import { navigate } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import { workspaceContextLinkedDirs } from './workspace-context';
@@ -156,6 +159,7 @@ import { RecentProjectsStrip } from './RecentProjectsStrip';
 import type { Recommendation } from '../onboarding/recommendation';
 import type { OnboardingEntry } from '../onboarding/onboarding-entry';
 import { AnimatePresence } from 'motion/react';
+import { fetchSkills, installSkill } from '../providers/registry';
 
 export interface ActivePlugin {
   record: InstalledPluginRecord;
@@ -621,9 +625,13 @@ export function HomeView({
   const [active, setActive] = useState<ActivePlugin | null>(null);
   const reconciledPluginCatalogKeyRef = useRef<string | null>(null);
   const previousWorkspaceNameRef = useRef<string | null>(null);
-  // A placeholder-carousel scenario the user submitted on an empty composer.
-  // We seed the prompt + bind the template synchronously, then let an effect
-  // fire submit() once both have committed (submit() reads state, not args).
+  const [templateHandoff] = useState(() =>
+    typeof window === 'undefined'
+      ? null
+      : templateHandoffFromPageUrl(window.location.href),
+  );
+  // A placeholder-carousel scenario submitted on an empty composer. Seed
+  // first, then submit after state has committed.
   const [pendingCarouselSubmit, setPendingCarouselSubmit] = useState<{
     text: string;
     chipId: string | null;
@@ -658,9 +666,8 @@ export function HomeView({
     designSystemCatalogScope: LocalCatalogScope | null;
   } | null>(null);
   if (restoredDraftRef.current === null) {
-    const handoffPrompt = consumeOhMyInspireTemplateHandoff(locale);
     restoredDraftRef.current = {
-      prompt: handoffPrompt ?? readHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY) ?? '',
+      prompt: readHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY) ?? '',
       designSystemId: readHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_KEY),
       designSystemCatalogScope: readLocalCatalogScopeDraft(
         HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY,
@@ -668,6 +675,46 @@ export function HomeView({
     };
   }
   const restoredDraft = restoredDraftRef.current;
+  useEffect(() => {
+    if (!templateHandoff) return;
+    window.history.replaceState(window.history.state, '', templateHandoff.sanitizedUrl);
+  }, [templateHandoff]);
+  const consumedTemplateHandoffRef = useRef(false);
+  useEffect(() => {
+    if (!templateHandoff || consumedTemplateHandoffRef.current) return;
+    if (workspaceContextState.identityChangePending) return;
+    consumedTemplateHandoffRef.current = true;
+    void (async () => {
+      setError(null);
+      const workspaceContext = resolvedWorkspaceContextForWrite(
+        workspaceContextState,
+        { unavailablePolicy: 'unscoped' },
+      );
+      const installResult = await installSkill(
+        { source: templateHandoff.sourceUrl },
+        workspaceContext,
+      );
+      const installedSkill = 'skill' in installResult
+        ? installResult.skill
+        : installResult.error.status === 409 && templateHandoff.templateId
+          ? (await fetchSkills(workspaceContext)).find(
+              (skill) => skill.id === templateHandoff.templateId,
+            ) ?? null
+          : null;
+      if (!installedSkill) {
+        throw new Error('error' in installResult ? installResult.error.message : 'Could not import template.');
+      }
+      const input = projectInputForInstalledTemplate(installedSkill);
+      const { project } = await createProject({
+        ...input,
+        designSystemId: null,
+        workspaceContext,
+      });
+      onOpenProject(project.id);
+    })().catch((reason) => {
+      setError(reason instanceof Error ? reason.message : 'Could not import template.');
+    });
+  }, [onOpenProject, templateHandoff, workspaceContextState]);
   const [designSystemId, setDesignSystemId] = useState<string | null>(() =>
     restoredDraft.designSystemId ??
     homeDefaultDesignSystemId(designSystems, defaultDesignSystemId),

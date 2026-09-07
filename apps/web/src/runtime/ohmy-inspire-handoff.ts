@@ -1,33 +1,63 @@
-import type { Locale } from '../i18n/types';
+import type { ProjectKind, ProjectMetadata, SkillSummary } from '@open-design/contracts';
 
 const TEMPLATE_URL_PARAM = 'template_url';
+const TEMPLATE_ID_PARAM = 'template_id';
 
 type TemplateHandoff = {
-  prompt: string;
+  sourceUrl: string;
+  templateId: string | null;
   sanitizedUrl: string;
 };
 
 export function templateHandoffFromPageUrl(
   pageUrl: string,
-  locale: Locale,
 ): TemplateHandoff | null {
   const url = new URL(pageUrl);
   const templateUrl = url.searchParams.get(TEMPLATE_URL_PARAM);
   if (!templateUrl || !isHttpUrl(templateUrl)) return null;
 
-  const prompt = locale.startsWith('zh')
-    ? `请下载并解压以下 OhMyInspire 模板，先阅读其中的 SKILL.md，然后以该模板为基础进行开发。我会继续补充具体需求。\n\n模板下载地址：${templateUrl}`
-    : `Download and extract the following OhMyInspire template. Read its SKILL.md first, then develop from the template. I will add my specific requirements.\n\nTemplate download URL: ${templateUrl}`;
+  const templateId = url.searchParams.get(TEMPLATE_ID_PARAM)?.trim() || null;
   url.searchParams.delete(TEMPLATE_URL_PARAM);
-  return { prompt, sanitizedUrl: url.toString() };
+  url.searchParams.delete(TEMPLATE_ID_PARAM);
+  return { sourceUrl: templateUrl, templateId, sanitizedUrl: url.toString() };
 }
 
-export function consumeOhMyInspireTemplateHandoff(locale: Locale) {
-  if (typeof window === 'undefined') return null;
-  const handoff = templateHandoffFromPageUrl(window.location.href, locale);
-  if (!handoff) return null;
-  window.history.replaceState(window.history.state, '', handoff.sanitizedUrl);
-  return handoff.prompt;
+export function projectInputForInstalledTemplate(skill: SkillSummary): {
+  name: string;
+  skillId: string;
+  pendingPrompt: string;
+  metadata: ProjectMetadata;
+} {
+  const kind = projectKindForTemplateMode(skill.mode);
+  const prompt = skill.examplePrompt.trim() || `Create a new result using the ${skill.name} template.`;
+  return {
+    name: skill.name,
+    skillId: skill.id,
+    pendingPrompt: prompt,
+    metadata: {
+      kind,
+      nameSource: 'generated',
+      ...(kind === 'image' || kind === 'video'
+        ? {
+            promptTemplate: {
+              id: skill.id,
+              surface: kind,
+              title: skill.name,
+              prompt,
+              summary: skill.description,
+              ...(skill.category ? { category: skill.category } : {}),
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+function projectKindForTemplateMode(mode: SkillSummary['mode']): ProjectKind {
+  if (mode === 'prototype' || mode === 'deck' || mode === 'image' || mode === 'video' || mode === 'audio') {
+    return mode;
+  }
+  return 'other';
 }
 
 function isHttpUrl(value: string) {
