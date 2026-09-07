@@ -290,14 +290,17 @@ function parseForm(body: string, attrs: Record<string, string>): FormParseResult
   // Allow the JSON to be wrapped in a fenced ```json block — common when
   // the model echoes its own indented body.
   const stripped = trimmed
-    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/^```[a-z0-9_-]*\s*/i, '')
     .replace(/```\s*$/i, '')
     .trim();
   let data: unknown;
   try {
     data = JSON.parse(stripped);
   } catch {
-    return { form: null, reason: 'invalid-json' };
+    const shorthandForm = parseQuestionToolShorthand(stripped, attrs);
+    return shorthandForm
+      ? { form: shorthandForm }
+      : { form: null, reason: 'invalid-json' };
   }
   if (!data || typeof data !== 'object') return { form: null, reason: 'unsupported-payload' };
   const obj = Array.isArray(data) ? {} : (data as Record<string, unknown>);
@@ -329,6 +332,61 @@ function parseForm(body: string, attrs: Record<string, string>): FormParseResult
       ...(lang ? { lang } : {}),
     },
   };
+}
+
+// Some agents fall back to the question tool's YAML-like display syntax when
+// the native tool is unavailable. Accept only that small, flat shape rather
+// than treating arbitrary YAML as executable form data.
+function parseQuestionToolShorthand(
+  body: string,
+  attrs: Record<string, string>,
+): QuestionForm | null {
+  let question: string | undefined;
+  let header: string | undefined;
+  let readingOptions = false;
+  const options: FormOption[] = [];
+
+  for (const line of body.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const questionMatch = /^\s*question\s*:\s*(.+?)\s*$/i.exec(line);
+    if (questionMatch) {
+      question = unwrapShorthandScalar(questionMatch[1] ?? '');
+      readingOptions = false;
+      continue;
+    }
+    const headerMatch = /^\s*header\s*:\s*(.+?)\s*$/i.exec(line);
+    if (headerMatch) {
+      header = unwrapShorthandScalar(headerMatch[1] ?? '');
+      readingOptions = false;
+      continue;
+    }
+    if (/^\s*options\s*:\s*$/i.test(line)) {
+      readingOptions = true;
+      continue;
+    }
+    const optionMatch = readingOptions ? /^\s*-\s+(.+?)\s*$/.exec(line) : null;
+    if (optionMatch) {
+      const value = unwrapShorthandScalar(optionMatch[1] ?? '');
+      if (value) options.push({ label: value, value });
+      continue;
+    }
+    return null;
+  }
+
+  if (!question || options.length === 0) return null;
+  return {
+    id: attrs.id ?? 'discovery',
+    title: attrs.title ?? header ?? 'A few quick questions',
+    questions: [{ id: 'question', label: question, type: 'radio', options }],
+  };
+}
+
+function unwrapShorthandScalar(value: string): string {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  return quote && (quote === '"' || quote === "'") && trimmed.endsWith(quote)
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
 }
 
 function mapRawQuestion(q: unknown, index: number): FormQuestion | null {

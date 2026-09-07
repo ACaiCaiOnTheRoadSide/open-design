@@ -532,6 +532,44 @@ describe('AssistantMessage thinking blocks', () => {
 });
 
 describe('AssistantMessage question forms', () => {
+  it('renders and submits the question tool YAML-like fallback', () => {
+    const form = [
+      '<question-form>',
+      '```text',
+      'question: 需要把本应用发布到哪里的作品集？',
+      'header: 发布目标',
+      'options:',
+      '  - 中国大陆 (sc.monkeycode-ai.online)',
+      '  - 全球 (monkeycode-ai.gallery)',
+      '```',
+      '</question-form>',
+    ].join('\n');
+    const onSubmitQuestionForm = vi.fn();
+
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          content: form,
+          events: [{ kind: 'text', text: form } as ChatMessage['events'][number]],
+        })}
+        streaming={false}
+        projectId="proj-1"
+        isLast
+        onSubmitQuestionForm={onSubmitQuestionForm}
+      />,
+    );
+
+    expect(screen.getByText('发布目标')).toBeTruthy();
+    expect(screen.getByText('需要把本应用发布到哪里的作品集？')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('中国大陆 (sc.monkeycode-ai.online)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    expect(onSubmitQuestionForm).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '- 需要把本应用发布到哪里的作品集？: 中国大陆 (sc.monkeycode-ai.online)',
+      ),
+    );
+  });
+
   it('renders repeated question forms once as an interactive inline form', () => {
     const firstForm = [
       '<question-form id="discovery" title="Quick brief — tailored">',

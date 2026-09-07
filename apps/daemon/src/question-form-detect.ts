@@ -14,25 +14,54 @@
 export const QUESTION_FORM_OPEN_RE = /<(question-form|ask-question)\b[^>]*>/i;
 
 // True when `body` is a renderable question-form body: JSON (optionally fenced)
-// parsing to an object with a non-empty `questions` array. This is the minimal
-// contract `tryParseForm` enforces in the web parser; a body that fails it is
-// kept as raw prose by the UI (no form card renders).
+// with questions, or the small YAML-like fallback used by the question tool.
+// This mirrors the accepted shapes in the web parser.
 export function questionFormBodyIsRenderable(body: string): boolean {
   const trimmed = typeof body === 'string' ? body.trim() : '';
   if (!trimmed) return false;
   const stripped = trimmed
-    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/^```[a-z0-9_-]*\s*/i, '')
     .replace(/```\s*$/i, '')
     .trim();
   let data: unknown;
   try {
     data = JSON.parse(stripped);
   } catch {
-    return false;
+    return questionToolShorthandIsRenderable(stripped);
   }
   if (!data || typeof data !== 'object') return false;
-  const questions = (data as { questions?: unknown }).questions;
+  const questions = Array.isArray(data) ? data : (data as { questions?: unknown }).questions;
   return Array.isArray(questions) && questions.some((q) => q && typeof q === 'object');
+}
+
+function questionToolShorthandIsRenderable(body: string): boolean {
+  let hasQuestion = false;
+  let readingOptions = false;
+  let optionCount = 0;
+
+  for (const line of body.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (/^\s*question\s*:\s*.+?\s*$/i.test(line)) {
+      hasQuestion = true;
+      readingOptions = false;
+      continue;
+    }
+    if (/^\s*header\s*:\s*.+?\s*$/i.test(line)) {
+      readingOptions = false;
+      continue;
+    }
+    if (/^\s*options\s*:\s*$/i.test(line)) {
+      readingOptions = true;
+      continue;
+    }
+    if (readingOptions && /^\s*-\s+.+?\s*$/.test(line)) {
+      optionCount++;
+      continue;
+    }
+    return false;
+  }
+
+  return hasQuestion && optionCount > 0;
 }
 
 // Locate `closeTag` (case-insensitively) at or after `from`, returning an index

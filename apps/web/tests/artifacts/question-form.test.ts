@@ -279,6 +279,39 @@ describe('splitOnQuestionForms', () => {
     ]);
   });
 
+  it('parses the question tool YAML-like fallback emitted inside a text fence', () => {
+    const input = [
+      '<question-form>',
+      '```text',
+      'question: 需要把本应用发布到哪里的作品集？',
+      'header: 发布目标',
+      'options:',
+      '  - 中国大陆 (sc.monkeycode-ai.online)',
+      '  - 全球 (monkeycode-ai.gallery)',
+      '```',
+      '</question-form>',
+    ].join('\n');
+
+    const out = splitOnQuestionForms(input);
+    expect(out.map((s) => s.kind)).toEqual(['form']);
+    const form = out[0]?.kind === 'form' ? out[0].form : null;
+    expect(form).toMatchObject({
+      id: 'discovery',
+      title: '发布目标',
+      questions: [
+        {
+          id: 'question',
+          label: '需要把本应用发布到哪里的作品集？',
+          type: 'radio',
+          options: [
+            { label: '中国大陆 (sc.monkeycode-ai.online)', value: '中国大陆 (sc.monkeycode-ai.online)' },
+            { label: '全球 (monkeycode-ai.gallery)', value: '全球 (monkeycode-ai.gallery)' },
+          ],
+        },
+      ],
+    });
+  });
+
   it('accepts <ask-question> as an alias for <question-form> (#1194)', () => {
     const out = splitOnQuestionForms(`<ask-question id="brief" title="Quick brief">${VALID_BODY}</ask-question>`);
     expect(out.map((s) => s.kind)).toEqual(['form']);
