@@ -2,6 +2,7 @@ import { Readable } from 'node:stream';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import JSZip from 'jszip';
 import { c as createTar } from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -60,6 +61,16 @@ async function skillArchive(wrapper = 'repo-main'): Promise<Buffer> {
     );
     await writeFile(path.join(skillRoot, 'assets', 'fixture.txt'), 'asset');
   }, wrapper ? [wrapper] : ['SKILL.md', 'assets']);
+}
+
+async function skillZipArchive(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    'remote-skill/SKILL.md',
+    '---\nname: remote-skill\ndescription: Remote fixture\n---\n\n# Workflow\n',
+  );
+  zip.file('remote-skill/assets/fixture.txt', 'asset');
+  return zip.generateAsync({ type: 'nodebuffer' });
 }
 
 describe('installSkillFromRemoteSource', () => {
@@ -312,10 +323,23 @@ describe('installSkillFromRemoteSource', () => {
     expect(result).toMatchObject({ ok: true, id: 'remote-skill' });
   });
 
+  it('installs a ZIP archive from a signed template handoff URL', async () => {
+    const userSkillsRoot = await tempRoot('od-user-skills-');
+    const result = await installSkillFromRemoteSource(
+      userSkillsRoot,
+      'https://inspire.example/api/v1/catalog/templates/remote-skill/handoff-download?token=signed',
+      { fetcher: archiveFetcher(await skillZipArchive()) },
+    );
+
+    expect(result).toMatchObject({ ok: true, id: 'remote-skill' });
+    await expect(
+      readFile(path.join(userSkillsRoot, 'remote-skill', 'assets', 'fixture.txt'), 'utf8'),
+    ).resolves.toBe('asset');
+  });
+
   it.each([
     'file:///tmp/skill.tgz',
     'http://downloads.example/skill.tgz',
-    'https://downloads.example/skill.zip',
     'github:owner/../repo',
     'https://github.com/owner/repo/issues',
     'https://github.com/owner/repo/tree/main/skills/../escape',

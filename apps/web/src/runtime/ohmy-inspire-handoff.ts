@@ -16,7 +16,8 @@ export function templateHandoffFromPageUrl(
   const templateUrl = url.searchParams.get(TEMPLATE_URL_PARAM);
   if (!templateUrl || !isHttpUrl(templateUrl)) return null;
 
-  const templateId = url.searchParams.get(TEMPLATE_ID_PARAM)?.trim() || null;
+  const templateId = url.searchParams.get(TEMPLATE_ID_PARAM)?.trim()
+    || templateIdFromHandoffUrl(templateUrl);
   url.searchParams.delete(TEMPLATE_URL_PARAM);
   url.searchParams.delete(TEMPLATE_ID_PARAM);
   return { sourceUrl: templateUrl, templateId, sanitizedUrl: url.toString() };
@@ -58,6 +59,15 @@ function projectKindForTemplateMode(mode: SkillSummary['mode']): ProjectKind {
     return mode;
   }
   return 'other';
+}
+
+function templateIdFromHandoffUrl(value: string): string | null {
+  try {
+    const match = /\/templates\/([^/]+)\/handoff-download\/?$/.exec(new URL(value).pathname);
+    return match ? decodeURIComponent(match[1]!) : null;
+  } catch {
+    return null;
+  }
 }
 
 function isHttpUrl(value: string) {

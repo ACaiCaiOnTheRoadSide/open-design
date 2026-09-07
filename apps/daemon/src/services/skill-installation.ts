@@ -18,6 +18,7 @@ import { parseFrontmatter } from '../design-systems/frontmatter.js';
 import { resolveGithubRepositoryUrl } from '../github-install-source.js';
 import { safeExternalFetch } from '../plugins/plugin-asset-cache.js';
 import { findSkillById, listSkills, slugifySkillName } from '../skills.js';
+import { extractPluginZipToFolder } from './plugin-installation.js';
 
 const DEFAULT_MAX_BYTES = 50 * 1024 * 1024;
 const MAX_SKILL_SCAN_DEPTH = 6;
@@ -170,7 +171,7 @@ function resolveSkillSource(rawSource: string): ResolvedSkillSource | SkillRemot
   } catch {
     return error(
       'BAD_REQUEST',
-      'Unsupported skill source; expected github:owner/repo or an HTTPS .tar.gz/.tgz URL',
+      'Unsupported skill source; expected github:owner/repo or an HTTPS skill archive URL',
     );
   }
   if (url.protocol !== 'https:') {
@@ -179,8 +180,14 @@ function resolveSkillSource(rawSource: string): ResolvedSkillSource | SkillRemot
   if (url.username || url.password) {
     return error('BAD_REQUEST', 'Skill archive URLs must not contain credentials');
   }
-  if (!/\.(?:tar\.gz|tgz)$/i.test(url.pathname)) {
-    return error('BAD_REQUEST', 'Only HTTPS .tar.gz or .tgz skill archives are supported');
+  if (
+    !/\.(?:tar\.gz|tgz|zip)$/i.test(url.pathname)
+    && !url.pathname.endsWith('/handoff-download')
+  ) {
+    return error(
+      'BAD_REQUEST',
+      'Only HTTPS .tar.gz, .tgz, .zip, or signed handoff skill archives are supported',
+    );
   }
   return { candidates: [{ fetchUrl: url.toString() }] };
 }
@@ -424,29 +431,35 @@ async function installSkillSourceCandidate(
     await mkdir(extractRoot, { recursive: true });
     let unsafeEntry: string | undefined;
     try {
-      await pipeline(
-        fs.createReadStream(archivePath),
-        extractTar({
-          cwd: extractRoot,
-          strict: true,
-          filter: (entryPath, entry) => {
-            if (!isSafeSkillArchivePath(entryPath)) {
-              unsafeEntry = 'path traversal';
-              return false;
-            }
-            const type = (entry as { type?: string }).type;
-            if (type === 'SymbolicLink' || type === 'Link') {
-              unsafeEntry = 'symbolic or hard link';
-              return false;
-            }
-            if (type && !['File', 'OldFile', 'Directory', 'GNUDumpDir'].includes(type)) {
-              unsafeEntry = `unsupported entry type "${type}"`;
-              return false;
-            }
-            return true;
-          },
-        }) as NodeJS.WritableStream,
-      );
+      const archive = await readFile(archivePath);
+      const isZip = archive[0] === 0x50 && archive[1] === 0x4b;
+      if (isZip) {
+        await extractPluginZipToFolder(archive, extractRoot, maxBytes);
+      } else {
+        await pipeline(
+          fs.createReadStream(archivePath),
+          extractTar({
+            cwd: extractRoot,
+            strict: true,
+            filter: (entryPath, entry) => {
+              if (!isSafeSkillArchivePath(entryPath)) {
+                unsafeEntry = 'path traversal';
+                return false;
+              }
+              const type = (entry as { type?: string }).type;
+              if (type === 'SymbolicLink' || type === 'Link') {
+                unsafeEntry = 'symbolic or hard link';
+                return false;
+              }
+              if (type && !['File', 'OldFile', 'Directory', 'GNUDumpDir'].includes(type)) {
+                unsafeEntry = `unsupported entry type "${type}"`;
+                return false;
+              }
+              return true;
+            },
+          }) as NodeJS.WritableStream,
+        );
+      }
     } catch (cause) {
       return error(
         'INVALID_ARCHIVE',

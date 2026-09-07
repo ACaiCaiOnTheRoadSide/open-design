@@ -15,6 +15,14 @@ describe('templateHandoffFromPageUrl', () => {
     expect(result?.sanitizedUrl).toBe('https://design.example.com/studio/?keep=1');
   });
 
+  it('derives the template id from a signed handoff URL', () => {
+    const result = templateHandoffFromPageUrl(
+      'https://design.example.com/studio/?template_url=https%3A%2F%2Finspire.example.com%2Fapi%2Fv1%2Fcatalog%2Ftemplates%2Fcinematic-video%2Fhandoff-download%3Ftoken%3Dsigned',
+    );
+
+    expect(result?.templateId).toBe('cinematic-video');
+  });
+
   it('rejects non-http template URLs', () => {
     expect(
       templateHandoffFromPageUrl(
