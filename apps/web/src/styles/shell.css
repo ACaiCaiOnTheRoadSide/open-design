@@ -2575,7 +2575,7 @@ a.avatar-item:visited {
   width: clamp(220px, 22vw, 280px);
   margin: 0;
   pointer-events: none;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%) translateY(calc(-50% - var(--home-scroll-offset, 0px)));
 }
 .home-brand-row__title .home-hero__title-mark {
   width: 100%;
@@ -2608,7 +2608,7 @@ body:has(.home-hero__template-sidebar.is-expanded) .home-brand-row__title {
   .home-brand-row__title {
     left: 12px;
     width: 180px;
-    transform: translateY(-50%);
+    transform: translateY(calc(-50% - var(--home-scroll-offset, 0px)));
   }
 }
 

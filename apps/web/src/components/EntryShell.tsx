@@ -1220,11 +1220,16 @@ export function EntryShell({
     const scrollContainer = entryMainScrollRef.current;
     if (!scrollContainer) return;
     const sync = () => {
-      scrollContainer.classList.toggle('is-scrolled', scrollContainer.scrollTop > 0);
+      const scrollTop = scrollContainer.scrollTop;
+      scrollContainer.classList.toggle('is-scrolled', scrollTop > 0);
+      document.documentElement.style.setProperty('--home-scroll-offset', `${scrollTop}px`);
     };
     sync();
     scrollContainer.addEventListener('scroll', sync, { passive: true });
-    return () => scrollContainer.removeEventListener('scroll', sync);
+    return () => {
+      scrollContainer.removeEventListener('scroll', sync);
+      document.documentElement.style.removeProperty('--home-scroll-offset');
+    };
   }, [view]);
 
   useEffect(() => {
