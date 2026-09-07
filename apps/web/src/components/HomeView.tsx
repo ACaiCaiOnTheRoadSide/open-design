@@ -693,14 +693,20 @@ export function HomeView({
       });
       let workspaceWitness = workspaceContextReadWitnessFromState(workspaceContextState);
       if (!workspaceContext || !workspaceWitness) {
-        workspaceWitness = await resolveCurrentWorkspaceContextReadWitness({ fresh: true });
-        workspaceContext = workspaceWitness.context;
+        try {
+          workspaceWitness = await resolveCurrentWorkspaceContextReadWitness({ fresh: true });
+          workspaceContext = workspaceWitness.context;
+        } catch (error) {
+          if (workspaceContext) throw error;
+          workspaceWitness = null;
+        }
       }
-      if (!workspaceContext) {
-        throw new Error('No active workspace is available for this account.');
-      }
+      // A missing directory entry is the supported local/single-player mode.
+      // Keep the project unbound and let the daemon's unbound-resource gate
+      // authorize its writes instead of treating it as a sign-in failure.
+      if (!workspaceContext) workspaceWitness = null;
       const assertWorkspaceStillCurrent = () => {
-        if (!workspaceWitness.isStillCurrent()) {
+        if (workspaceWitness && !workspaceWitness.isStillCurrent()) {
           throw new Error('Workspace changed while importing this template. Try again.');
         }
       };
@@ -722,7 +728,7 @@ export function HomeView({
         assertWorkspaceStillCurrent();
         await importTemplateIntoProject(project.id, templateHandoff.sourceUrl, workspaceContext);
       } catch (error) {
-        if (workspaceWitness.isStillCurrent()) {
+        if (!workspaceWitness || workspaceWitness.isStillCurrent()) {
           await deleteProject(project.id, workspaceContext).catch(() => undefined);
         }
         throw error;
