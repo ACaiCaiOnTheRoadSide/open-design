@@ -31,6 +31,7 @@ import {
   fetchDesignTemplates,
   fetchPromptTemplates,
   fetchSkills,
+  importTemplateIntoProject,
   replaceProjectWorkingDir,
   uploadProjectFiles,
 } from '../../src/providers/registry';
@@ -184,6 +185,25 @@ vi.mock('../../src/components/EntryView', () => ({
         }}
       >
         Create prompted project
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void Promise.resolve(onCreateProject({
+            name: 'Template project',
+            skillId: null,
+            designSystemId: null,
+            pendingPrompt: 'Extend the imported landing page',
+            autoSendFirstMessage: true,
+            metadata: { kind: 'prototype', templateId: 'landing-page' },
+            templateHandoff: {
+              sourceUrl: 'https://inspire.example.com/template.zip',
+              templateId: 'landing-page',
+            },
+          })).catch(() => {});
+        }}
+      >
+        Create handoff template project
       </button>
       <button
         type="button"
@@ -586,6 +606,7 @@ vi.mock('../../src/providers/registry', async () => {
     fetchDesignTemplates: vi.fn(),
     fetchPromptTemplates: vi.fn(),
     fetchSkills: vi.fn(),
+    importTemplateIntoProject: vi.fn(),
     replaceProjectWorkingDir: vi.fn(),
     uploadProjectFiles: vi.fn(),
   };
@@ -633,6 +654,7 @@ const mockedFetchDesignSystems = vi.mocked(fetchDesignSystems);
 const mockedFetchDesignTemplates = vi.mocked(fetchDesignTemplates);
 const mockedFetchPromptTemplates = vi.mocked(fetchPromptTemplates);
 const mockedFetchSkills = vi.mocked(fetchSkills);
+const mockedImportTemplateIntoProject = vi.mocked(importTemplateIntoProject);
 const mockedUploadProjectFiles = vi.mocked(uploadProjectFiles);
 const mockedReplaceProjectWorkingDir = vi.mocked(replaceProjectWorkingDir);
 const mockedCreateDesignSystemProjectFromProject = vi.mocked(createDesignSystemProjectFromProject);
@@ -784,6 +806,7 @@ describe('App project creation routing', () => {
     mockedMergeDaemonConfig.mockImplementation((local) => local);
     mockedLoadConfig.mockReturnValue({ ...baseConfig });
     mockedUploadProjectFiles.mockResolvedValue({ uploaded: [], failed: [] });
+    mockedImportTemplateIntoProject.mockResolvedValue(undefined);
     mockedCreateProject.mockResolvedValue({
       project: freshProject,
       conversationId: 'conv-new',
@@ -1213,6 +1236,62 @@ describe('App project creation routing', () => {
     expect(window.sessionStorage.getItem('od:auto-send-prompt:project-new')).toBe(
       'Build the retained artifact prompt',
     );
+  });
+
+  it('imports a handoff template before opening and auto-sending the project', async () => {
+    window.sessionStorage.removeItem('od:auto-send-first:project-new');
+    window.sessionStorage.removeItem('od:auto-send-prompt:project-new');
+    mockedListProjects.mockResolvedValue([]);
+    mockedCreateProject.mockResolvedValue({
+      project: { ...freshProject, name: 'Template project' },
+      conversationId: 'conv-new',
+    });
+    const templateImport = deferred<void>();
+    mockedImportTemplateIntoProject.mockReturnValue(templateImport.promise);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Create handoff template project' }));
+
+    await waitFor(() => {
+      expect(mockedImportTemplateIntoProject).toHaveBeenCalledWith(
+        'project-new',
+        'https://inspire.example.com/template.zip',
+        null,
+      );
+    });
+    expect(screen.getByTestId('project-creation-pending-view')).toBeTruthy();
+    expect(screen.queryByTestId('project-view')).toBeNull();
+    expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBeNull();
+
+    await act(async () => {
+      templateImport.resolve();
+      await templateImport.promise;
+    });
+
+    await screen.findByTestId('project-view');
+    expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBe('1');
+    expect(window.sessionStorage.getItem('od:auto-send-prompt:project-new')).toBe(
+      'Extend the imported landing page',
+    );
+    window.sessionStorage.removeItem('od:auto-send-first:project-new');
+    window.sessionStorage.removeItem('od:auto-send-prompt:project-new');
+  });
+
+  it('rolls back a new project when its handoff template cannot be imported', async () => {
+    window.sessionStorage.removeItem('od:auto-send-first:project-new');
+    window.sessionStorage.removeItem('od:auto-send-prompt:project-new');
+    mockedListProjects.mockResolvedValue([]);
+    mockedImportTemplateIntoProject.mockRejectedValue(new Error('TEMPLATE_IMPORT_FAILED'));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Create handoff template project' }));
+
+    await waitFor(() => {
+      expect(mockedDeleteProject).toHaveBeenCalledWith('project-new', null);
+    });
+    await screen.findByTestId('entry-home-surface');
+    expect(screen.queryByTestId('project-view')).toBeNull();
+    expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBeNull();
   });
 
   it('enters the project preparing surface before Home project creation settles', async () => {
