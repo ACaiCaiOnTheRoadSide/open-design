@@ -1945,6 +1945,31 @@
   min-height: 36px;
   overflow: hidden;
 }
+.app .live-thinking-line {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  max-width: 100%;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.app .live-thinking-line .thinking-status {
+  flex: 0 0 24px;
+}
+.app .live-thinking-window {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.app .live-thinking-copy {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .app .task-activity-current-row {
   width: fit-content;
   max-width: 100%;

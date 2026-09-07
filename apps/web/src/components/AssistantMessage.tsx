@@ -607,13 +607,27 @@ function AssistantMessageImpl({
   // every command, file operation, and streaming code preview for review.
   // TodoWrite has already been removed because ChatPane owns the single
   // conversation-level progress card outside message history.
-  const { contentBlocks, taskActivity } = useMemo(
+  const { contentBlocks, taskActivity: activityWithThinking } = useMemo(
     () => splitTaskActivity(blocks),
     [blocks],
   );
   const hasConclusion = contentBlocks.some(
     (block) => block.kind === "text" && block.text.trim().length > 0,
   );
+  const trailingActivityEntry = activityWithThinking?.entries.at(-1);
+  const activeThinkingText =
+    streaming
+    && activityWithThinking?.trailingThinking
+    && trailingActivityEntry?.kind === "thinking"
+      ? trailingActivityEntry.text
+      : null;
+  // Thinking is transient progress. Keep it out of the persisted execution
+  // disclosure so a completed turn settles to tools (when any) plus the answer.
+  const taskActivity = useMemo(() => {
+    if (!activityWithThinking) return null;
+    const entries = activityWithThinking.entries.filter((entry) => entry.kind !== "thinking");
+    return entries.length > 0 ? { entries, trailingThinking: false } : null;
+  }, [activityWithThinking]);
   const fileOps = useMemo(() => deriveFileOps(displayEvents), [displayEvents]);
   const produced = message.producedFiles ?? [];
   const displayedProduced = useMemo(
@@ -910,6 +924,7 @@ function AssistantMessageImpl({
         </div>
       ) : null}
       <div className="assistant-flow">
+        {activeThinkingText ? <LiveThinkingLine text={activeThinkingText} /> : null}
         {taskActivity ? (
           <TaskActivityCard
             entries={taskActivity.entries}
@@ -3363,6 +3378,26 @@ function SystemReminderBlock({
         </span>
       </button>
       {open ? <pre className="system-reminder-body">{trimmed}</pre> : null}
+    </div>
+  );
+}
+
+function LiveThinkingLine({ text }: { text: string }) {
+  const preview = text.replace(/\s+/g, " ").trim().slice(-240);
+  if (!preview) return null;
+  return (
+    <div
+      className="live-thinking-line"
+      data-testid="live-thinking-line"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <span className="thinking-status op-status-running" aria-hidden>
+        <Icon name="spinner" size={14} />
+      </span>
+      <span className="live-thinking-window">
+        <span className="live-thinking-copy shimmer-text">{preview}</span>
+      </span>
     </div>
   );
 }

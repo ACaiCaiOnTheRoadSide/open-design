@@ -523,7 +523,8 @@ describe('AssistantMessage tool status', () => {
       [thinking],
       { streaming: true, runStatus: 'running' },
     ));
-    expect(screen.getByTestId('task-activity-current').textContent).toContain('Thinking');
+    expect(screen.getByTestId('live-thinking-line').textContent).toContain('Reviewing the request.');
+    expect(screen.queryByTestId('task-activity-current')).toBeNull();
     expect(screen.queryByTestId('task-activity-toggle')).toBeNull();
 
     rerender(renderMessage(
@@ -559,17 +560,50 @@ describe('AssistantMessage tool status', () => {
     expect(completedActivity.querySelector('.task-activity-complete-icon')).toBeNull();
   });
 
-  it('keeps streamed thinking expandable while the run is still in progress (recvqgLmAkUM6G)', () => {
-    // A run parked on "Thinking" (e.g. a hung provider) must let the user
-    // open the streamed reasoning mid-run — the pre-#5667 ThinkingBlock
-    // affordance — instead of a dead, non-interactive label.
+  it('streams the latest thinking text in one fixed line and removes it when done', () => {
+    const renderThinking = (text: string, streaming = true) => (
+      <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
+        message={{
+          ...messageWithEvents([
+            { kind: 'thinking', text },
+            ...(streaming ? [] : [{ kind: 'text', text: 'Here is the answer.' } satisfies AgentEvent]),
+          ]),
+          endedAt: streaming ? undefined : 3_000,
+          runStatus: streaming ? 'running' : 'succeeded',
+        }}
+        streaming={streaming}
+        projectId="project-1"
+      />
+    );
+    const longPrefix = `Earlier analysis that should be clipped. ${'padding '.repeat(40)}`;
+    const { rerender } = render(renderThinking(`${longPrefix}Reviewing the request.`));
+
+    const line = screen.getByTestId('live-thinking-line');
+    expect(line.textContent).toContain('Reviewing the request.');
+    expect(line.textContent).not.toContain('Earlier analysis');
+    expect(line.querySelector('.thinking-toggle')).toBeNull();
+    expect(line.querySelector('.live-thinking-window')).not.toBeNull();
+
+    rerender(renderThinking(`${longPrefix}Reviewing the request. Inspecting the files.`));
+    expect(screen.getByTestId('live-thinking-line').textContent).toContain('Inspecting the files.');
+
+    rerender(renderThinking(`${longPrefix}Reviewing the request. Inspecting the files.`, false));
+    expect(screen.queryByTestId('live-thinking-line')).toBeNull();
+    expect(screen.queryByText('Reviewing the request.', { exact: false })).toBeNull();
+    expect(screen.getByText('Here is the answer.')).toBeTruthy();
+  });
+
+  it('shows trailing streamed thinking even after earlier prose', () => {
     render(
       <AssistantMessage
         projectKind="prototype"
         conversationId="conv-1"
         message={{
           ...messageWithEvents([
-            { kind: 'thinking', text: 'Reviewing the request.' },
+            { kind: 'text', text: 'I will inspect this first.' },
+            { kind: 'thinking', text: 'Checking the latest implementation.' },
           ]),
           endedAt: undefined,
           runStatus: 'running',
@@ -579,18 +613,13 @@ describe('AssistantMessage tool status', () => {
       />,
     );
 
-    const activity = screen.getByTestId('task-activity-current');
-    const toggle = activity.querySelector<HTMLButtonElement>('.thinking-toggle');
-    expect(toggle).not.toBeNull();
-    expect(activity.querySelector('.accordion-collapsible')?.classList.contains('open')).toBe(false);
-
-    fireEvent.click(toggle!);
-    const body = activity.querySelector('.accordion-collapsible');
-    expect(body?.classList.contains('open')).toBe(true);
-    expect(body?.textContent).toContain('Reviewing the request.');
+    expect(screen.getByTestId('live-thinking-line').textContent).toContain(
+      'Checking the latest implementation.',
+    );
+    expect(screen.getByText('I will inspect this first.')).toBeTruthy();
   });
 
-  it('keeps the run state above the answer and groups thinking into the timeline', () => {
+  it('keeps the run state above the answer without retaining thinking text', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -614,7 +643,7 @@ describe('AssistantMessage tool status', () => {
 
     fireEvent.click(activity);
     const activityCard = activity.closest('.task-activity');
-    expect(activityCard?.querySelector('.thinking-block')).not.toBeNull();
+    expect(activityCard?.querySelector('.thinking-block')).toBeNull();
     expect(activityCard?.querySelector('[data-tool-category="read"]')).not.toBeNull();
     expect(screen.queryByTestId('task-activity-terminal')).toBeNull();
   });

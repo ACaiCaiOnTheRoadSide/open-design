@@ -511,7 +511,7 @@ describe('AssistantMessage thinking blocks', () => {
     expect(container.querySelector('.thinking-block')).toBeNull();
   });
 
-  it('keeps non-empty thinking content visible after leading whitespace deltas', () => {
+  it('keeps non-empty streamed thinking visible after leading whitespace deltas', () => {
     const { container } = render(
       <AssistantMessage
         message={baseMessage({
@@ -521,13 +521,13 @@ describe('AssistantMessage thinking blocks', () => {
             { kind: 'thinking', text: 'Reading the directory listing.' } as ChatMessage['events'][number],
           ],
         })}
-        streaming={false}
+        streaming
         projectId="proj-1"
       />,
     );
 
-    expect(container.querySelector('.thinking-block')).toBeTruthy();
-    expect(screen.getByText('Reading the directory listing.')).toBeTruthy();
+    expect(container.querySelector('.thinking-block')).toBeNull();
+    expect(screen.getByTestId('live-thinking-line').textContent).toContain('Reading the directory listing.');
   });
 });
 
