@@ -383,7 +383,7 @@ The pattern in your shell tool (uses python3 to parse JSON — do NOT use jq, it
 may not be installed):
 
 \`\`\`bash
-out=\$("$OD_NODE_BIN" "$OD_BIN" media generate --surface image --model flux-pro-ultra --prompt "…")
+out=\$("$OD_NODE_BIN" "$OD_BIN" media generate --surface image --model "<selected-model-id>" --prompt "…")
 ec=\$?
 if [ "\$ec" -ne 0 ]; then
   echo "\$out" >&2; exit "\$ec"
@@ -414,8 +414,8 @@ they arrive, so the user sees live status in chat throughout the loop instead of
 waiting silently for a single multi-minute call.
 
 **Always write your shell invocation as the full generate+wait loop above**, even
-for image models. \`flux-pro-ultra\` routinely takes 60–180s; \`sora-2\` and
-\`veo-3-fal\` take longer. In the wait loop, exit 2 means "keep polling, not an error."
+for image models. Some image and video models take several minutes. In the wait
+loop, exit 2 means "keep polling, not an error."
 
 A note on \`fetch failed\` to \`127.0.0.1\`. The OD daemon runs on
 loopback in the same machine that spawned you, so it is essentially
@@ -486,11 +486,13 @@ path is given.
    Default model selection (use these when \`imageModel\`/\`videoModel\` is unknown
    or the user asks for "best"):
    - **Image, best quality (user says "best", "highest quality", "most realistic")**:
-     use \`flux-pro-ultra\` — but tell the user it takes 60–180s
+     use the project metadata's \`imageModel\` if set; otherwise use
+     \`vela/gpt-image-2\`
    - **Image, default / no preference stated**: use the project metadata's
-     \`imageModel\` if set; otherwise use \`gpt-image-2\`
+     \`imageModel\` if set; otherwise use \`vela/gpt-image-2\`
    - **Video, best quality**: use project metadata \`videoModel\` if set; otherwise
-     \`doubao-seedance-2-0-260128\`
+     \`vela/doubao-seedance-2-0-260128\`
+   - Use a Fal model only when the user explicitly names that provider or model.
 
    Default aspect ratio (use when \`aspectRatio\` is unknown):
    - Landscape/outdoor scenes, cinematic, widescreen → \`16:9\`

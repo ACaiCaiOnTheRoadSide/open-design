@@ -542,11 +542,11 @@ function renderMediaDispatchModelGuidance(defaults?: ByokMediaDefaults): string 
   const videoModel = defaults?.videoModel?.trim();
   const imagePart = imageModel
     ? `For image generation prefer your configured model: \`${imageModel}\`.`
-    : 'For the best fal image model use `--model flux-pro-ultra`.';
+    : 'For image generation use the managed dispatcher model `vela/gpt-image-2`.';
   const videoPart = videoModel
     ? `For video prefer your configured model: \`${videoModel}\`.`
-    : 'For video use `--model veo-3-fal` or `--model wan-2.1-t2v`.';
-  return `${imagePart} ${videoPart} Always pass \`--surface\` explicitly (\`image\`, \`video\`, or \`audio\`). Any \`fal-ai/*\` path (e.g. \`fal-ai/flux/schnell\`, \`fal-ai/wan-i2v\`) is also a valid \`--model\` value for image/video — pass it through as-is without substitution.`;
+    : 'For video use the managed dispatcher model `vela/doubao-seedance-2-0-260128`.';
+  return `${imagePart} ${videoPart} Always pass \`--surface\` explicitly (\`image\`, \`video\`, or \`audio\`). Only use a Fal model when the user explicitly requests that provider or model. If the user explicitly requests a \`fal-ai/*\` path, pass it through as-is without substitution.`;
 }
 
 function renderMediaDispatchHint(
@@ -554,7 +554,7 @@ function renderMediaDispatchHint(
   runtimeDefaults?: ByokMediaDefaults,
 ): string {
   const effectiveDefaults = runtimeDefaults ?? defaults;
-  const imageModel = effectiveDefaults?.imageModel?.trim() || 'flux-pro-ultra';
+  const imageModel = effectiveDefaults?.imageModel?.trim() || 'vela/gpt-image-2';
   const hint = MEDIA_DISPATCH_HINT
     .replace('IMAGE_MODEL_VALUE', shellDoubleQuote(imageModel))
     .replace(
@@ -567,20 +567,22 @@ function renderMediaDispatchHint(
 function mediaDefaultsForRuntime(
   agentId: string | null | undefined,
   defaults?: ByokMediaDefaults,
+  metadata?: ProjectMetadata,
 ): ByokMediaDefaults | undefined {
+  const imageModel = defaults?.imageModel?.trim() || metadata?.imageModel?.trim();
+  const videoModel = defaults?.videoModel?.trim() || metadata?.videoModel?.trim();
   if (agentId === 'amr') {
     return {
       ...defaults,
-      imageModel: defaults?.imageModel?.trim() || 'vela/gpt-image-2',
-      videoModel:
-        defaults?.videoModel?.trim()
-        || 'vela/doubao-seedance-2-0-260128',
+      imageModel: imageModel || 'vela/gpt-image-2',
+      videoModel: videoModel || 'vela/doubao-seedance-2-0-260128',
     };
   }
-  if (agentId === 'ohmyagent' && process.env.OD_MINIMAX_API_KEY?.trim()) {
+  if (agentId === 'ohmyagent') {
     return {
       ...defaults,
-      imageModel: defaults?.imageModel?.trim() || 'minimax-image-01',
+      imageModel: imageModel || 'vela/gpt-image-2',
+      videoModel: videoModel || 'vela/doubao-seedance-2-0-260128',
     };
   }
   return defaults;
@@ -897,7 +899,18 @@ export function composeSystemPrompt({
   const runtimeMediaDefaults = mediaDefaultsForRuntime(
     agentId,
     byokMediaDefaults,
+    metadata,
   );
+  const explicitImageModel = byokMediaDefaults?.imageModel?.trim() || metadata?.imageModel?.trim();
+  const explicitVideoModel = byokMediaDefaults?.videoModel?.trim() || metadata?.videoModel?.trim();
+  const explicitMediaDefaults: ByokMediaDefaults | undefined =
+    byokMediaDefaults || explicitImageModel || explicitVideoModel
+      ? {
+          ...byokMediaDefaults,
+          ...(explicitImageModel ? { imageModel: explicitImageModel } : {}),
+          ...(explicitVideoModel ? { videoModel: explicitVideoModel } : {}),
+        }
+      : undefined;
   // Media surfaces (image / video / audio) must be resolved BEFORE the head
   // is built: their generation contract, rather than the design charter's
   // HTML workflow, is the sole workflow authority on these runs.
@@ -1335,7 +1348,7 @@ export function composeSystemPrompt({
     parts.push(renderMediaGenerationContract(mediaExecution, byokMediaDefaults));
     const runtimeDefaultsHint = renderRuntimeMediaDefaultsHint(
       runtimeMediaDefaults,
-      byokMediaDefaults,
+      explicitMediaDefaults,
     );
     if (runtimeDefaultsHint) parts.push(runtimeDefaultsHint);
   } else if (mediaHintSignal ?? true) {

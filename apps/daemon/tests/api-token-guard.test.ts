@@ -187,7 +187,7 @@ describe('browser authentication for non-loopback Docker peers', () => {
     const unauthenticatedShell = await fetch(`${baseUrl}/`);
     expect(unauthenticatedShell.status).toBe(401);
     expect(unauthenticatedShell.headers.get('www-authenticate')).toBe(
-      'Basic realm="OpenDesign", charset="UTF-8"',
+      'Basic realm="od-api", charset="UTF-8"',
     );
     expect(unauthenticatedShell.headers.get('set-cookie')).toBeNull();
     expect(await unauthenticatedShell.text()).not.toContain('docker shell');
@@ -218,6 +218,7 @@ describe('browser authentication for non-loopback Docker peers', () => {
       undefined,
       `Basic ${Buffer.from('open-design:wrong-token').toString('base64')}`,
       `Basic ${Buffer.from('admin:secret-test-token').toString('base64')}`,
+      `Basic ${Buffer.from('open-design:错误令牌').toString('base64')}`,
       'Basic not-base64!',
       'Bearer wrong-token',
     ];
@@ -229,9 +230,14 @@ describe('browser authentication for non-loopback Docker peers', () => {
 
       expect(resp.status).toBe(401);
       expect(resp.headers.get('www-authenticate')).toBe(
-        'Basic realm="OpenDesign", charset="UTF-8"',
+        'Basic realm="od-api", charset="UTF-8"',
       );
     }
+
+    // Bad authentication input must remain a request-level failure. In
+    // particular, it must not poison response headers or terminate the daemon.
+    const healthAfterFailures = await fetch(`${baseUrl}/api/health`);
+    expect(healthAfterFailures.status).toBe(200);
   });
 
   it('keeps the documented Docker browser host separate from powered previews', async () => {

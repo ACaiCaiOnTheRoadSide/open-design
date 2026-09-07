@@ -1,7 +1,10 @@
 import { timingSafeEqual } from 'node:crypto';
 
 export const API_TOKEN_BASIC_USERNAME = 'open-design';
-export const API_TOKEN_BASIC_CHALLENGE = 'Basic realm="OpenDesign", charset="UTF-8"';
+// Keep the HTTP auth challenge protocol-only and ASCII. Build-time white-label
+// replacement scans source strings; a localized product name here would make
+// Node reject the response header with ERR_INVALID_CHAR.
+export const API_TOKEN_BASIC_CHALLENGE = 'Basic realm="od-api", charset="UTF-8"';
 
 export function isTruthyEnvFlag(value: unknown): boolean {
   const normalized = String(value || '').trim().toLowerCase();

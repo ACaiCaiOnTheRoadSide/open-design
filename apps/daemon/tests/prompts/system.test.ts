@@ -394,12 +394,13 @@ describe('composeSystemPrompt', () => {
       expect(prompt).toContain('Do not output generated source code in a `<artifact type="text/html">...</artifact>` block.');
     });
 
-    it('uses Vela media defaults only for AMR and forbids direct Vela calls', () => {
+    it('uses Vela media defaults without falling back to Fal', () => {
       const amrPrompt = composeSystemPrompt({
         agentId: 'amr',
         metadata: { kind: 'image', imageModel: 'vela/gpt-image-2' } as any,
       });
-      expect(amrPrompt).toContain('Image model: `vela/gpt-image-2`');
+      expect(amrPrompt).toContain('- **imageModel**: vela/gpt-image-2');
+      expect(amrPrompt).not.toContain('Image model: `vela/gpt-image-2`');
       expect(amrPrompt).toContain(
         'Video model: `vela/doubao-seedance-2-0-260128`',
       );
@@ -411,18 +412,18 @@ describe('composeSystemPrompt', () => {
       expect(amrPrompt).toContain('trusted Workspace attribution');
 
       const claudePrompt = composeSystemPrompt({ agentId: 'claude' });
-      expect(claudePrompt).not.toContain('Image model: `vela/gpt-image-2`');
-      expect(claudePrompt).toContain('`--model flux-pro-ultra`');
+      expect(claudePrompt).toContain('IMAGE_MODEL="vela/gpt-image-2"');
+      expect(claudePrompt).not.toContain('`--model flux-pro-ultra`');
     });
 
-    it('recommends configured MiniMax images for OhMyAgent without exposing the key', () => {
+    it('uses the managed Vela image tool for OhMyAgent without exposing unrelated keys', () => {
       const secret = 'minimax-secret-must-not-reach-the-prompt';
       const previous = process.env.OD_MINIMAX_API_KEY;
       process.env.OD_MINIMAX_API_KEY = secret;
       try {
         const prompt = composeSystemPrompt({ agentId: 'ohmyagent' });
-        expect(prompt).toContain('IMAGE_MODEL="minimax-image-01"');
-        expect(prompt).toContain('Image model: `minimax-image-01`');
+        expect(prompt).toContain('IMAGE_MODEL="vela/gpt-image-2"');
+        expect(prompt).toContain('Image model: `vela/gpt-image-2`');
         expect(prompt).toContain('### Runtime media defaults');
         expect(prompt).not.toContain('For the best fal image model');
         expect(prompt).not.toContain(secret);
@@ -432,7 +433,7 @@ describe('composeSystemPrompt', () => {
       }
     });
 
-    it('keeps an explicit image default ahead of OhMyAgent MiniMax runtime defaults', () => {
+    it('keeps an explicit image default ahead of OhMyAgent managed runtime defaults', () => {
       const previous = process.env.OD_MINIMAX_API_KEY;
       process.env.OD_MINIMAX_API_KEY = 'another-secret-value';
       try {
@@ -448,6 +449,23 @@ describe('composeSystemPrompt', () => {
         if (previous === undefined) delete process.env.OD_MINIMAX_API_KEY;
         else process.env.OD_MINIMAX_API_KEY = previous;
       }
+    });
+
+    it('keeps an explicit project image model ahead of OhMyAgent runtime defaults', () => {
+      const prompt = composeSystemPrompt({
+        agentId: 'ohmyagent',
+        metadata: {
+          kind: 'image',
+          imageModel: 'vela/nano-banana-2',
+        },
+      });
+
+      expect(prompt).toContain('- **imageModel**: vela/nano-banana-2');
+      expect(prompt).toContain('### Runtime media defaults');
+      expect(prompt).not.toContain('Image model: `vela/gpt-image-2`');
+      expect(prompt).toContain('Video model: `vela/doubao-seedance-2-0-260128`');
+      expect(prompt).not.toContain('--model flux-pro-ultra');
+      expect(prompt).toContain('otherwise use `vela/gpt-image-2`');
     });
 
     it('keeps image completion copy concrete while retaining internal diagnostics', () => {
