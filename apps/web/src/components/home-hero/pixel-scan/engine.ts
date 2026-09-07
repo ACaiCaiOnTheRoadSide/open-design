@@ -251,6 +251,7 @@ export class PixelScanField {
   private lastFrame = this.startTime;
   private raf = 0;
   private running = false;
+  private contextLost = false;
 
   constructor(
     host: HTMLDivElement,
@@ -322,6 +323,7 @@ export class PixelScanField {
     this.host.addEventListener('pointerleave', this.onLeave);
     this.host.addEventListener('pointermove', this.onMove);
     window.addEventListener('resize', this.onResize);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
 
     this.canvas.addEventListener('webglcontextlost', this.onContextLost);
     this.canvas.addEventListener('webglcontextrestored', this.onContextRestored);
@@ -419,18 +421,34 @@ export class PixelScanField {
 
   private onResize = () => this.setSize();
 
+  private onVisibilityChange = () => {
+    if (document.hidden) {
+      if (this.raf) cancelAnimationFrame(this.raf);
+      this.raf = 0;
+    } else if (this.running && !this.contextLost && !this.raf) {
+      this.lastFrame = performance.now();
+      this.raf = requestAnimationFrame(this.tick);
+    }
+  };
+
   private onContextLost = (e: Event) => {
     e.preventDefault();
+    this.contextLost = true;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
   };
 
   private onContextRestored = () => {
+    this.contextLost = false;
     this.setSize();
-    if (this.running && !this.raf) this.raf = requestAnimationFrame(this.tick);
+    if (this.running && !document.hidden && !this.raf) {
+      this.raf = requestAnimationFrame(this.tick);
+    }
   };
 
   private tick = () => {
+    this.raf = 0;
+    if (!this.running || this.disposed || this.contextLost || document.hidden) return;
     const now = performance.now();
     this.uniforms.time!.value = (now - this.startTime) / 1000;
     this.uniforms.enterTime!.value = this.enterTimeVal();
@@ -474,7 +492,9 @@ export class PixelScanField {
     (this.uniforms.mouse!.value as InstanceType<Three['Vector2']>).set(this.liveX, this.liveY);
 
     this.renderer.render(this.scene, this.camera);
-    this.raf = requestAnimationFrame(this.tick);
+    if (this.running && !this.contextLost && !document.hidden) {
+      this.raf = requestAnimationFrame(this.tick);
+    }
   };
 
   start() {
@@ -483,7 +503,7 @@ export class PixelScanField {
 
     const now = performance.now();
     this.lastFrame = now;
-    this.raf = requestAnimationFrame(this.tick);
+    if (!this.contextLost && !document.hidden) this.raf = requestAnimationFrame(this.tick);
   }
 
   stop() {
@@ -504,6 +524,7 @@ export class PixelScanField {
     this.host.removeEventListener('pointerleave', this.onLeave);
     this.host.removeEventListener('pointermove', this.onMove);
     window.removeEventListener('resize', this.onResize);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.texture.dispose();

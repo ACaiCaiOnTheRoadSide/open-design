@@ -91,6 +91,7 @@ import {
   invalidateProjectFilesCache,
   fetchPromptTemplates,
   fetchSkills,
+  importTemplateIntoProject,
   openExternalUrl,
   uploadProjectFiles,
   replaceProjectWorkingDir,
@@ -241,6 +242,7 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   pluginId?: string;
   pluginSource?: string;
   skillCatalogScope?: LocalCatalogScope | null;
+  templateHandoff?: { sourceUrl: string; templateId: string | null } | null;
   designSystemCatalogScope?: LocalCatalogScope | null;
   pluginType?: string;
   appliedPluginSnapshotId?: string;
@@ -2872,7 +2874,7 @@ function AppInner() {
       const kind = metadata?.kind ?? null;
       const fidelity = fidelityToTracking(metadata?.fidelity ?? null);
       const creationSource: 'blank' | 'template' | 'zip' | 'folder' =
-        kind === 'template' ? 'template' : 'blank';
+        input.templateHandoff || kind === 'template' ? 'template' : 'blank';
       let createWorkspaceContext: WorkspaceCollabContext | null = null;
       let optimisticProjectId: string | null = null;
       let result;
@@ -2961,6 +2963,13 @@ function AppInner() {
           ...(input.pluginInputs ? { pluginInputs: input.pluginInputs } : {}),
           workspaceContext: createWorkspaceContext,
         });
+        if (input.templateHandoff) {
+          await importTemplateIntoProject(
+            result.project.id,
+            input.templateHandoff.sourceUrl,
+            createWorkspaceContext,
+          );
+        }
       } catch (err) {
         const errorCode =
           err instanceof Error && err.message.trim()
@@ -2981,6 +2990,9 @@ function AppInner() {
           { requestId: input.requestId },
         );
         if (optimisticProjectId) {
+          if (result?.project?.id && input.templateHandoff) {
+            await deleteProjectApi(result.project.id, createWorkspaceContext).catch(() => undefined);
+          }
           clearLocalProject(optimisticProjectId);
           removeWorkspaceProjectTabs(optimisticProjectId);
           setProjects((current) => current.filter((project) => project.id !== optimisticProjectId));

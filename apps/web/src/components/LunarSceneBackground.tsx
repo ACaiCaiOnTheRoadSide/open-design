@@ -150,13 +150,31 @@ function useDarkTheme(theme?: AppTheme): boolean {
   return theme === 'dark' || (theme !== 'light' && systemDark);
 }
 
+type LunarFallback = 'video' | 'image' | null;
+
 export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
-  const [useFallback, setUseFallback] = React.useState(false);
+  const [fallback, setFallback] = React.useState<LunarFallback>(null);
   const dark = useDarkTheme(theme);
 
   React.useEffect(() => {
-    if (!dark || useFallback) return;
+    if (!dark || fallback) return;
+
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (motionPreference.matches) {
+      setFallback('image');
+      return;
+    }
+
+    const device = navigator as Navigator & { deviceMemory?: number };
+    const lowPowerDevice =
+      window.innerWidth < 768 ||
+      (device.deviceMemory !== undefined && device.deviceMemory <= 4) ||
+      navigator.hardwareConcurrency <= 4;
+    if (lowPowerDevice) {
+      setFallback('video');
+      return;
+    }
 
     const canvas = canvasRef.current
     if (!canvas) return
@@ -168,20 +186,24 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
       powerPreference: "low-power",
     })
     if (!gl) {
-      setUseFallback(true)
+      setFallback('video')
       return
     }
 
     const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource)
     const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource)
     if (!vertexShader || !fragmentShader) {
-      setUseFallback(true)
+      if (vertexShader) gl.deleteShader(vertexShader)
+      if (fragmentShader) gl.deleteShader(fragmentShader)
+      setFallback('video')
       return
     }
 
     const program = gl.createProgram()
     if (!program) {
-      setUseFallback(true)
+      gl.deleteShader(vertexShader)
+      gl.deleteShader(fragmentShader)
+      setFallback('video')
       return
     }
 
@@ -192,16 +214,11 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
     gl.deleteShader(fragmentShader)
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
       gl.deleteProgram(program)
-      setUseFallback(true)
+      setFallback('video')
       return
     }
 
-    const device = navigator as Navigator & { deviceMemory?: number }
-    const lowPowerDevice =
-      window.innerWidth < 768 ||
-      (device.deviceMemory !== undefined && device.deviceMemory <= 4) ||
-      navigator.hardwareConcurrency <= 4
-    const geometry = createSphereGeometry(lowPowerDevice ? 56 : 80, lowPowerDevice ? 36 : 52)
+    const geometry = createSphereGeometry(80, 52)
     const positionBuffer = gl.createBuffer()
     const texcoordBuffer = gl.createBuffer()
     const indexBuffer = gl.createBuffer()
@@ -227,8 +244,12 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
       !scaleLocation ||
       !textureLocation
     ) {
+      if (texture) gl.deleteTexture(texture)
+      if (indexBuffer) gl.deleteBuffer(indexBuffer)
+      if (texcoordBuffer) gl.deleteBuffer(texcoordBuffer)
+      if (positionBuffer) gl.deleteBuffer(positionBuffer)
       gl.deleteProgram(program)
-      setUseFallback(true)
+      setFallback('video')
       return
     }
 
@@ -255,19 +276,17 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
     gl.depthFunc(gl.LEQUAL)
     gl.clearColor(0.008, 0.012, 0.018, 1)
 
-    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)")
-    let reducedMotion = motionPreference.matches
+    let reducedMotion = false
     let animationFrame = 0
     let disposed = false
     let textureReady = false
     let elapsedSeconds = 0
     let previousTime = performance.now()
     let lastDrawTime = 0
-    let pixelRatioCap = lowPowerDevice ? 1 : 1.35
-    let frameInterval = 1000 / (lowPowerDevice ? 24 : 30)
-    let sampleStart = performance.now()
+    const pixelRatioCap = 1.35
+    const frameInterval = 1000 / 30
+    let sampleStart = 0
     let sampledFrames = 0
-    let qualityReduced = lowPowerDevice
 
     const resize = () => {
       const pixelRatio = Math.min(window.devicePixelRatio || 1, pixelRatioCap)
@@ -303,14 +322,13 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
       gl.uniform1f(scaleLocation, Math.min(0.98, aspect * 0.78))
       gl.drawElements(gl.TRIANGLES, geometry.indices.length, gl.UNSIGNED_SHORT, 0)
 
+      if (!sampleStart) sampleStart = now
       sampledFrames += 1
-      if (!qualityReduced && now - sampleStart > 3000) {
+      if (now - sampleStart > 3000) {
         const measuredFps = (sampledFrames * 1000) / (now - sampleStart)
         if (measuredFps < 21) {
-          qualityReduced = true
-          pixelRatioCap = 0.9
-          frameInterval = 1000 / 20
-          canvas.width = 1
+          setFallback('video')
+          return
         }
         sampleStart = now
         sampledFrames = 0
@@ -332,6 +350,8 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
         cancelAnimationFrame(animationFrame)
         animationFrame = 0
       } else {
+        sampleStart = performance.now()
+        sampledFrames = 0
         requestDraw()
       }
     }
@@ -340,13 +360,15 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
       reducedMotion = event.matches
       cancelAnimationFrame(animationFrame)
       animationFrame = 0
+      sampleStart = performance.now()
+      sampledFrames = 0
       requestDraw()
     }
 
     const handleContextLost = (event: Event) => {
       event.preventDefault()
       cancelAnimationFrame(animationFrame)
-      setUseFallback(true)
+      setFallback('video')
     }
 
     const image = new Image()
@@ -361,7 +383,7 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
       textureReady = true
       requestDraw()
     }
-    image.onerror = () => setUseFallback(true)
+    image.onerror = () => setFallback('video')
     // NASA Goddard LRO CGI Moon Kit color map, stored locally to avoid runtime network work.
     image.src = '/backgrounds/lunar-surface.jpg';
 
@@ -385,11 +407,43 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
       gl.deleteBuffer(positionBuffer)
       gl.deleteProgram(program)
     }
-  }, [dark, useFallback]);
+  }, [dark, fallback]);
+
+  React.useEffect(() => {
+    if (!dark || fallback !== 'video') return;
+
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handleMotionPreference = () => {
+      if (motionPreference.matches) setFallback('image');
+    };
+    handleMotionPreference();
+    motionPreference.addEventListener('change', handleMotionPreference);
+    return () => motionPreference.removeEventListener('change', handleMotionPreference);
+  }, [dark, fallback]);
 
   if (!dark) return null;
-  if (useFallback) {
+  if (fallback === 'image') {
     return <div aria-hidden="true" className="app-lunar-fallback" />;
+  }
+  if (fallback === 'video') {
+    return (
+      <video
+        aria-hidden="true"
+        autoPlay
+        className="app-lunar-video"
+        loop
+        muted
+        onCanPlay={(event) => {
+          const video = event.currentTarget;
+          void video.play().catch(() => setFallback('image'));
+        }}
+        onError={() => setFallback('image')}
+        playsInline
+        poster="/backgrounds/lunar-globe-fallback.jpg"
+        preload="auto"
+        src="/backgrounds/lunar-globe-loop.mp4"
+      />
+    );
   }
 
   return <canvas aria-hidden="true" className="app-lunar-atmosphere" ref={canvasRef} />;

@@ -9,33 +9,6 @@ export type TemplateHandoff = {
   sanitizedUrl: string;
 };
 
-type SkillInstallResult =
-  | { skill: SkillSummary }
-  | { error: { message: string } };
-
-export async function installOrReuseTemplateHandoff(
-  handoff: TemplateHandoff,
-  installedSkills: readonly SkillSummary[],
-  install: (sourceUrl: string) => Promise<SkillInstallResult>,
-  listInstalled: () => Promise<readonly SkillSummary[]>,
-): Promise<SkillSummary> {
-  const findInstalled = (skills: readonly SkillSummary[]) =>
-    handoff.templateId
-      ? skills.find((skill) => skill.id === handoff.templateId) ?? null
-      : null;
-  const existing = findInstalled(installedSkills);
-  if (existing) return existing;
-
-  const result = await install(handoff.sourceUrl);
-  if ('skill' in result) return result.skill;
-
-  // The catalog can be stale when another tab or an earlier handoff already
-  // installed this template. Re-read before surfacing the install conflict.
-  const concurrentlyInstalled = findInstalled(await listInstalled());
-  if (concurrentlyInstalled) return concurrentlyInstalled;
-  throw new Error(result.error.message);
-}
-
 export function templateHandoffFromPageUrl(
   pageUrl: string,
 ): TemplateHandoff | null {

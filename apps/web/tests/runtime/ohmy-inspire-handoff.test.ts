@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  installOrReuseTemplateHandoff,
   projectInputForInstalledTemplate,
   templateHandoffFromPageUrl,
 } from '../../src/runtime/ohmy-inspire-handoff';
@@ -83,50 +82,5 @@ describe('projectInputForInstalledTemplate', () => {
       mode: 'prototype',
       examplePrompt: 'Create a landing page.',
     }).metadata.kind).toBe('prototype');
-  });
-});
-
-describe('installOrReuseTemplateHandoff', () => {
-  const handoff = {
-    sourceUrl: 'https://inspire.example.com/api/v1/catalog/handoff-download/signed',
-    templateId: 'landing-page',
-    sanitizedUrl: 'https://design.example.com/studio/',
-  };
-  const skill = {
-    ...baseSkill,
-    id: 'landing-page',
-    name: 'Landing Page',
-    mode: 'prototype' as const,
-    examplePrompt: 'Create a landing page.',
-  };
-
-  it('reuses an installed template without downloading it again', async () => {
-    const install = vi.fn();
-    const listInstalled = vi.fn();
-
-    await expect(
-      installOrReuseTemplateHandoff(handoff, [skill], install, listInstalled),
-    ).resolves.toBe(skill);
-    expect(install).not.toHaveBeenCalled();
-    expect(listInstalled).not.toHaveBeenCalled();
-  });
-
-  it('installs the template without creating a project', async () => {
-    const install = vi.fn().mockResolvedValue({ skill });
-
-    await expect(
-      installOrReuseTemplateHandoff(handoff, [], install, vi.fn()),
-    ).resolves.toBe(skill);
-    expect(install).toHaveBeenCalledWith(handoff.sourceUrl);
-  });
-
-  it('reuses the template after a concurrent install conflict', async () => {
-    const install = vi.fn().mockResolvedValue({
-      error: { message: 'A skill named "landing-page" is already installed' },
-    });
-
-    await expect(
-      installOrReuseTemplateHandoff(handoff, [], install, async () => [skill]),
-    ).resolves.toBe(skill);
   });
 });

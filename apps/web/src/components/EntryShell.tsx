@@ -292,6 +292,7 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   pluginId?: string;
   pluginSource?: string;
   skillCatalogScope?: PluginLoopSubmit['skillCatalogScope'];
+  templateHandoff?: PluginLoopSubmit['templateHandoff'];
   designSystemCatalogScope?: PluginLoopSubmit['designSystemCatalogScope'];
   pluginType?: string;
   appliedPluginSnapshotId?: string;
@@ -1422,6 +1423,9 @@ export function EntryShell({
         examplePromptTitle: payload.examplePromptContext.title,
         examplePromptBrief: payload.examplePromptContext.brief,
       } : {}),
+      ...(payload.templateHandoff?.templateId
+        ? { templateId: payload.templateHandoff.templateId }
+        : {}),
     };
     const createInput: EntryCreateProjectInput = {
       name,
@@ -1435,6 +1439,7 @@ export function EntryShell({
         : {}),
       metadata,
       pendingPrompt: payload.prompt,
+      ...(payload.templateHandoff ? { templateHandoff: payload.templateHandoff } : {}),
       ...(payload.pluginId ? { pluginId: payload.pluginId } : {}),
       ...(payload.pluginSource ? { pluginSource: payload.pluginSource } : {}),
       ...(payload.pluginType ? { pluginType: payload.pluginType } : {}),
@@ -1672,7 +1677,6 @@ export function EntryShell({
                 projectOwnerMemberIds={teamProjectOwnerMemberIds}
                 skills={skills}
                 skillsLoading={skillsLoading}
-                onSkillsRefresh={onSkillsRefresh}
                 connectors={connectors}
                 promptTemplates={promptTemplates}
                 executionSwitcher={view === 'home' ? homeExecutionSwitcher : undefined}

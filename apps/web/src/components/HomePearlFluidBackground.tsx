@@ -224,17 +224,28 @@ export function HomePearlFluidBackground() {
 
     const vertex = createShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
     const fragment = createShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
-    if (!vertex || !fragment) return;
+    if (!vertex || !fragment) {
+      if (vertex) gl.deleteShader(vertex);
+      if (fragment) gl.deleteShader(fragment);
+      return;
+    }
 
     const program = gl.createProgram();
     const buffer = gl.createBuffer();
-    if (!program || !buffer) return;
+    if (!program || !buffer) {
+      gl.deleteShader(vertex);
+      gl.deleteShader(fragment);
+      if (program) gl.deleteProgram(program);
+      if (buffer) gl.deleteBuffer(buffer);
+      return;
+    }
     gl.attachShader(program, vertex);
     gl.attachShader(program, fragment);
     gl.linkProgram(program);
     gl.deleteShader(vertex);
     gl.deleteShader(fragment);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      gl.deleteBuffer(buffer);
       gl.deleteProgram(program);
       return;
     }
@@ -302,27 +313,38 @@ export function HomePearlFluidBackground() {
     const startedAt = performance.now();
     let animationFrame = 0;
     const render = (now: number) => {
-      if (!document.hidden) {
-        pointer.x += (target.x - pointer.x) * 0.055;
-        pointer.y += (target.y - pointer.y) * 0.055;
-        velocity.x *= 0.91;
-        velocity.y *= 0.91;
-        influence *= 0.992;
+      animationFrame = 0;
+      if (document.hidden) return;
 
-        gl.uniform2f(resolutionLocation, width, height);
-        gl.uniform2f(pointerLocation, pointer.x, pointer.y);
-        gl.uniform2f(velocityLocation, velocity.x, velocity.y);
-        gl.uniform1f(timeLocation, ((now - startedAt) / 1000) * FLUID_TIME_SCALE);
-        gl.uniform1f(influenceLocation, influence);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-      }
+      pointer.x += (target.x - pointer.x) * 0.055;
+      pointer.y += (target.y - pointer.y) * 0.055;
+      velocity.x *= 0.91;
+      velocity.y *= 0.91;
+      influence *= 0.992;
+
+      gl.uniform2f(resolutionLocation, width, height);
+      gl.uniform2f(pointerLocation, pointer.x, pointer.y);
+      gl.uniform2f(velocityLocation, velocity.x, velocity.y);
+      gl.uniform1f(timeLocation, ((now - startedAt) / 1000) * FLUID_TIME_SCALE);
+      gl.uniform1f(influenceLocation, influence);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
       animationFrame = requestAnimationFrame(render);
     };
-    animationFrame = requestAnimationFrame(render);
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = 0;
+      } else if (!animationFrame) {
+        animationFrame = requestAnimationFrame(render);
+      }
+    };
+    if (!document.hidden) animationFrame = requestAnimationFrame(render);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       cancelAnimationFrame(animationFrame);
       observer.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('blur', onPointerLeave);
       gl.deleteBuffer(buffer);

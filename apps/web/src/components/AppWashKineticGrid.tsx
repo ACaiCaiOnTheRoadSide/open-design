@@ -141,10 +141,8 @@ export function AppWashKineticGrid({ clipBottomTo }: AppWashKineticGridProps) {
 
     let raf = 0;
     const frame = () => {
-      if (document.hidden) {
-        raf = requestAnimationFrame(frame);
-        return;
-      }
+      raf = 0;
+      if (document.hidden) return;
       ctx.clearRect(0, 0, width, height);
       const interactive = mouse.active && !hoverSuppressed;
       for (const d of dots) {
@@ -178,11 +176,21 @@ export function AppWashKineticGrid({ clipBottomTo }: AppWashKineticGridProps) {
       ctx.globalAlpha = 1;
       raf = requestAnimationFrame(frame);
     };
-    raf = requestAnimationFrame(frame);
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      } else if (!raf) {
+        raf = requestAnimationFrame(frame);
+      }
+    };
+    if (!document.hidden) raf = requestAnimationFrame(frame);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseout', onLeave);
       window.removeEventListener('blur', onLeave);
