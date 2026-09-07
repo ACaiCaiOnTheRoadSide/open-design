@@ -1357,7 +1357,7 @@ export const zhCN: Dict = {
   "pluginCard.contributeAria": "将 {title} 贡献到 OpenDesign",
   "pluginCard.contributeTitle": "通过 pull request 将插件贡献到 OpenDesign",
   "skillPluginCandidate.createForMe": "创建插件/模板",
-  "skillPluginCandidate.contributeToMain": "贡献到 open-design",
+  "skillPluginCandidate.contributeToMain": "贡献到 ohmyinspire 个人模版空间",
   "skillPluginCandidate.repoDescription": "这个仓库看起来可以做成插件。",
   "integrations.kicker": "集成",
   "integrations.lede":

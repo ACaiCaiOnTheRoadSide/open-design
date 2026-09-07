@@ -880,6 +880,10 @@ function AssistantMessageImpl({
     ? "thinking"
     : "preparing";
 
+  const isPluginCandidateOnlyMessage =
+    displayEvents.length > 0 &&
+    displayEvents.every((event) => event.kind === "plugin_candidate");
+
   // Index of the trailing text block — the streaming caret rides the end of
   // the last prose block so it tracks the final character as tokens arrive.
   let lastTextBlockIndex = -1;
@@ -889,6 +893,8 @@ function AssistantMessageImpl({
       break;
     }
   }
+
+  if (isPluginCandidateOnlyMessage) return null;
 
   return (
     <div
@@ -993,16 +999,7 @@ function AssistantMessageImpl({
             // case a future block type opts out of that collection.
             return null;
           }
-          if (b.kind === "plugin-candidate") {
-            return (
-              <SkillPluginCandidateCard
-                key={i}
-                block={b}
-                projectId={projectId}
-                onRequestOpenFile={onRequestOpenFile}
-              />
-            );
-          }
+          if (b.kind === "plugin-candidate") return null;
           if (b.kind === "status") {
             // Suppress this message's gray error pill ONLY when ChatPane is
             // rendering the top-level error card for it (the last failed run).

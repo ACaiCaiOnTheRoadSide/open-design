@@ -125,9 +125,10 @@ describe('AssistantMessage feedback gate', () => {
     },
   );
 
-  it('renders plugin suggestions as compact user decisions with secondary actions in details', () => {
+  it('hides plugin candidate suggestions', () => {
     const message = baseMessage({
-      content: '',
+      content: 'OpenDesign found reusable skill material that can become a plugin: Design review helper',
+      endedAt: Date.now(),
       events: [
         {
           kind: 'plugin_candidate',
@@ -146,18 +147,11 @@ describe('AssistantMessage feedback gate', () => {
       />,
     );
 
-    expect(container.querySelector('[data-user-action-card="plugin-suggestion"]')).toBeTruthy();
-    const contribute = screen.getByRole('button', { name: 'Contribute to open-design' });
-    expect(contribute).toBeTruthy();
-    expect(contribute.classList.contains('plugin-action-button--primary')).toBe(false);
-    const toggle = screen.getByRole('button', { name: 'View details' });
-    const disclosure = container.querySelector('[data-user-action-card="plugin-suggestion"] .accordion-collapsible');
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(disclosure?.classList.contains('open')).toBe(false);
-
-    fireEvent.click(toggle);
-    expect(disclosure?.classList.contains('open')).toBe(true);
-    expect(screen.getByRole('button', { name: 'Create plugin/template' })).toBeTruthy();
+    expect(container.querySelector('.msg.assistant')).toBeNull();
+    expect(container.querySelector('[data-user-action-card="plugin-suggestion"]')).toBeNull();
+    expect(screen.queryByText(/OpenDesign found reusable skill material/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Contribute to open-design' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create plugin/template' })).toBeNull();
   });
 
   it('omits the repeated identity header for a consecutive assistant reply', () => {
