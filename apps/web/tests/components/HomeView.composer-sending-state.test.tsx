@@ -17,6 +17,10 @@ vi.mock('../../src/components/home-hero/PlaceholderCarousel', () => ({
   PlaceholderCarousel: () => null,
 }));
 
+vi.mock('../../src/components/HomePearlFluidBackground', () => ({
+  HomePearlFluidBackground: () => null,
+}));
+
 vi.mock('../../src/collab/useWorkspaceContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/collab/useWorkspaceContext')>();
   return {
@@ -39,6 +43,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   cleanup();
   window.localStorage.clear();
+  window.history.replaceState({}, '', '/');
 });
 
 function stubPluginsFetch(plugins: unknown[] = []) {
@@ -91,6 +96,157 @@ function renderHome(onSubmit: (payload: unknown) => Promise<boolean> | void) {
 }
 
 describe('home composer sending state', () => {
+  it('installs a handoff template and waits for Send before creating', async () => {
+    const source = 'https://inspire.example.com/api/v1/catalog/handoff-download/signed';
+    window.history.replaceState(
+      {},
+      '',
+      `/workspace?template_url=${encodeURIComponent(source)}&template_id=landing-page`,
+    );
+    const skill = {
+      id: 'landing-page',
+      name: 'Landing Page',
+      description: 'Landing page template',
+      mode: 'prototype',
+      examplePrompt: 'Create a landing page.',
+      triggers: [],
+      previewType: 'html',
+      designSystemRequired: false,
+      defaultFor: [],
+      upstream: null,
+      hasBody: true,
+      aggregatesExamples: false,
+    };
+    let resolveInstall: (response: Response) => void = () => undefined;
+    const installResponse = new Promise<Response>((resolve) => {
+      resolveInstall = resolve;
+    });
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [] }), { status: 200 });
+      }
+      if (typeof url === 'string' && url === '/api/skills/install') {
+        return installResponse;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const onSubmit = vi.fn();
+    const onOpenProject = vi.fn();
+
+    const view = render(
+      <I18nProvider initial="en">
+        <HomeView
+          projects={[]}
+          onSubmit={onSubmit}
+          onOpenProject={onOpenProject}
+          onViewAllProjects={() => undefined}
+        />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/skills/install',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+    expect(onOpenProject).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/workspace');
+    expect(window.location.search).toBe('');
+    setHomeHeroPrompt('Build a storefront for a coffee roaster');
+    const submit = (await screen.findByTestId('home-hero-submit')) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.click(submit);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    resolveInstall(new Response(JSON.stringify({ skill }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const activeSkill = await screen.findByTestId('home-hero-active-skill');
+    expect(activeSkill.textContent).toContain('Landing Page');
+    await waitFor(() => expect(submit.disabled).toBe(false));
+
+    view.rerender(
+      <I18nProvider initial="en">
+        <HomeView
+          projects={[]}
+          skills={[]}
+          onSubmit={onSubmit}
+          onOpenProject={onOpenProject}
+          onViewAllProjects={() => undefined}
+        />
+      </I18nProvider>,
+    );
+    expect(screen.getByTestId('home-hero-active-skill').textContent).toContain('Landing Page');
+
+    fireEvent.click(submit);
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: 'Build a storefront for a coffee roaster',
+          skillId: 'landing-page',
+        }),
+      );
+    });
+    expect(onOpenProject).not.toHaveBeenCalled();
+  });
+
+  it('waits for the skills catalog before reusing an installed handoff template', async () => {
+    const source = 'https://inspire.example.com/api/v1/catalog/handoff-download/signed';
+    window.history.replaceState(
+      {},
+      '',
+      `/workspace?template_url=${encodeURIComponent(source)}&template_id=landing-page`,
+    );
+    const skill = {
+      id: 'landing-page',
+      name: 'Landing Page',
+      description: 'Landing page template',
+      mode: 'prototype' as const,
+      examplePrompt: 'Create a landing page.',
+      triggers: [],
+      previewType: 'html' as const,
+      designSystemRequired: false,
+      defaultFor: [],
+      upstream: null,
+      hasBody: true,
+      aggregatesExamples: false,
+    };
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [] }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const props = {
+      projects: [],
+      onSubmit: vi.fn(),
+      onOpenProject: vi.fn(),
+      onViewAllProjects: vi.fn(),
+    };
+    const view = render(
+      <I18nProvider initial="en">
+        <HomeView {...props} skills={[]} skillsLoading />
+      </I18nProvider>,
+    );
+
+    await screen.findByTestId('home-hero-submit');
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/skills/install')).toBe(false);
+
+    view.rerender(
+      <I18nProvider initial="en">
+        <HomeView {...props} skills={[skill]} skillsLoading={false} />
+      </I18nProvider>,
+    );
+    expect((await screen.findByTestId('home-hero-active-skill')).textContent)
+      .toContain('Landing Page');
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/skills/install')).toBe(false);
+  });
+
   it('shows Sending… and swallows repeat clicks while creation is in flight', async () => {
     let resolveSubmit: (accepted: boolean) => void = () => undefined;
     const onSubmit = vi.fn(

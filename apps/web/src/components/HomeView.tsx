@@ -41,7 +41,6 @@ import {
 import {
   applyPlugin,
   createProject,
-  deleteProject,
   duplicatePluginAsProject,
   listPlugins,
   listPluginsFresh,
@@ -74,7 +73,9 @@ import {
 import {
   daemonIsLive,
   dirExists,
+  fetchSkills,
   fetchRecentLinkedDirs,
+  installSkill,
   openFolderDialog,
   pushRecentLinkedDir,
 } from '../providers/registry';
@@ -113,7 +114,10 @@ import {
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
-import { templateHandoffFromPageUrl } from '../runtime/ohmy-inspire-handoff';
+import {
+  installOrReuseTemplateHandoff,
+  templateHandoffFromPageUrl,
+} from '../runtime/ohmy-inspire-handoff';
 import { navigate } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import { workspaceContextLinkedDirs } from './workspace-context';
@@ -159,7 +163,6 @@ import { RecentProjectsStrip } from './RecentProjectsStrip';
 import type { Recommendation } from '../onboarding/recommendation';
 import type { OnboardingEntry } from '../onboarding/onboarding-entry';
 import { AnimatePresence } from 'motion/react';
-import { importTemplateIntoProject } from '../providers/registry';
 
 export interface ActivePlugin {
   record: InstalledPluginRecord;
@@ -300,6 +303,7 @@ interface Props {
   projectOwnerMemberIds?: ReadonlyMap<string, string>;
   skills?: SkillSummary[];
   skillsLoading?: boolean;
+  onSkillsRefresh?: () => Promise<void> | void;
   connectors?: ConnectorDetail[];
   promptTemplates?: PromptTemplateSummary[];
   // Personalized first-run starting point (spec §7). Null unless the user just
@@ -423,6 +427,15 @@ function localCatalogScopeFromWorkspaceContext(
   };
 }
 
+function localCatalogScopesMatch(
+  left: LocalCatalogScope | null,
+  right: LocalCatalogScope | null,
+): boolean {
+  if (!left || !right) return left === right;
+  return left.workspaceId === right.workspaceId
+    && left.workspaceMemberId === right.workspaceMemberId;
+}
+
 function readLocalCatalogScopeDraft(key: string): LocalCatalogScope | null {
   const raw = readHomeComposerDraft(key);
   if (!raw) return null;
@@ -517,6 +530,7 @@ export function HomeView({
   projectOwnerMemberIds,
   skills = EMPTY_SKILLS,
   skillsLoading = false,
+  onSkillsRefresh,
   connectors = EMPTY_CONNECTORS,
   promptTemplates = EMPTY_PROMPT_TEMPLATES,
   recommendation = null,
@@ -630,6 +644,7 @@ export function HomeView({
       ? null
       : templateHandoffFromPageUrl(window.location.href),
   );
+  const [templateHandoffPending, setTemplateHandoffPending] = useState(Boolean(templateHandoff));
   // A placeholder-carousel scenario submitted on an empty composer. Seed
   // first, then submit after state has committed.
   const [pendingCarouselSubmit, setPendingCarouselSubmit] = useState<{
@@ -640,6 +655,10 @@ export function HomeView({
   const [activeSkill, setActiveSkill] = useState<SkillSummary | null>(null);
   const [activeSkillCatalogScope, setActiveSkillCatalogScope] =
     useState<LocalCatalogScope | null>(null);
+  const [installedHandoffSkill, setInstalledHandoffSkill] = useState<{
+    skill: SkillSummary;
+    scope: LocalCatalogScope | null;
+  } | null>(null);
   const [selectedPluginContexts, setSelectedPluginContexts] = useState<SelectedPluginContext[]>([]);
   const [selectedMcpContexts, setSelectedMcpContexts] = useState<SelectedMcpContext[]>([]);
   const [selectedConnectorContexts, setSelectedConnectorContexts] = useState<SelectedConnectorContext[]>([]);
@@ -682,28 +701,30 @@ export function HomeView({
   const consumedTemplateHandoffRef = useRef(false);
   useEffect(() => {
     if (!templateHandoff || consumedTemplateHandoffRef.current) return;
-    if (workspaceContextState.loading || workspaceContextState.identityChangePending) return;
+    if (
+      workspaceContextState.loading
+      || workspaceContextState.identityChangePending
+      || skillsLoading
+    ) return;
     consumedTemplateHandoffRef.current = true;
     void (async () => {
       setError(null);
       // Null only triggers the authoritative directory recovery below; no
-      // project mutation is sent without a verified Workspace context.
-      let workspaceContext = resolvedWorkspaceContextForWrite(workspaceContextState, {
-        unavailablePolicy: 'unscoped',
-      });
+      // skill mutation is sent without a verified Workspace context.
+      let workspaceContext = resolvedWorkspaceContextForWrite(workspaceContextState);
       let workspaceWitness = workspaceContextReadWitnessFromState(workspaceContextState);
       if (!workspaceContext || !workspaceWitness) {
         try {
           workspaceWitness = await resolveCurrentWorkspaceContextReadWitness({ fresh: true });
           workspaceContext = workspaceWitness.context;
         } catch (error) {
-          if (workspaceContext) throw error;
+          if (workspaceContext || workspaceContextState.failure !== 'unsupported') throw error;
           workspaceWitness = null;
         }
       }
-      // A missing directory entry is the supported local/single-player mode.
-      // Keep the project unbound and let the daemon's unbound-resource gate
-      // authorize its writes instead of treating it as a sign-in failure.
+      // A missing directory entry is the supported old-daemon/local mode.
+      // Keep the skill unbound only in that compatibility lane instead of
+      // treating it as a sign-in failure.
       if (!workspaceContext) workspaceWitness = null;
       const assertWorkspaceStillCurrent = () => {
         if (workspaceWitness && !workspaceWitness.isStillCurrent()) {
@@ -711,34 +732,30 @@ export function HomeView({
         }
       };
       assertWorkspaceStillCurrent();
-      const { project } = await createProject({
-        name: templateHandoff.templateId
-          ? `Template ${templateHandoff.templateId}`
-          : 'Imported template',
-        skillId: null,
-        designSystemId: null,
-        metadata: {
-          kind: 'other',
-          nameSource: 'generated',
-          ...(templateHandoff.templateId ? { templateId: templateHandoff.templateId } : {}),
-        },
-        workspaceContext,
-      });
-      try {
-        assertWorkspaceStillCurrent();
-        await importTemplateIntoProject(project.id, templateHandoff.sourceUrl, workspaceContext);
-      } catch (error) {
-        if (!workspaceWitness || workspaceWitness.isStillCurrent()) {
-          await deleteProject(project.id, workspaceContext).catch(() => undefined);
-        }
-        throw error;
-      }
+      const skill = await installOrReuseTemplateHandoff(
+        templateHandoff,
+        skills,
+        async (source) => installSkill({ source }, workspaceContext),
+        () => fetchSkills(workspaceContext),
+      );
       assertWorkspaceStillCurrent();
-      onOpenProject(project.id);
+      activePluginApplyRequestRef.current += 1;
+      setActive(null);
+      setPendingChipId(null);
+      setPendingApplyId(null);
+      setFallbackProjectKind(null);
+      setFallbackProjectMetadata(null);
+      const skillScope = localCatalogScopeFromWorkspaceContext(workspaceContext);
+      setInstalledHandoffSkill({ skill, scope: skillScope });
+      setActiveSkill(skill);
+      setActiveSkillCatalogScope(skillScope);
+      await onSkillsRefresh?.();
     })().catch((reason) => {
-      setError(reason instanceof Error ? reason.message : 'Could not import template.');
+      setError(reason instanceof Error ? reason.message : 'Could not install template.');
+    }).finally(() => {
+      setTemplateHandoffPending(false);
     });
-  }, [onOpenProject, templateHandoff, workspaceContextState]);
+  }, [onSkillsRefresh, skills, skillsLoading, templateHandoff, workspaceContextState]);
   const [designSystemId, setDesignSystemId] = useState<string | null>(() =>
     restoredDraft.designSystemId ??
     homeDefaultDesignSystemId(designSystems, defaultDesignSystemId),
@@ -1310,8 +1327,17 @@ export function HomeView({
   );
 
   const selectableSkills = useMemo(
-    () => skills.filter((skill) => !skill.aggregatesExamples),
-    [skills],
+    () => {
+      const currentScope = localCatalogScopeFromWorkspaceContext(workspaceContext);
+      const visible = skills.filter((skill) => !skill.aggregatesExamples);
+      if (
+        !installedHandoffSkill
+        || !localCatalogScopesMatch(installedHandoffSkill.scope, currentScope)
+        || visible.some((skill) => skill.id === installedHandoffSkill.skill.id)
+      ) return visible;
+      return [...visible, installedHandoffSkill.skill];
+    },
+    [installedHandoffSkill, skills, workspaceContext],
   );
 
   const enabledMcpServers = useMemo(
@@ -3154,6 +3180,7 @@ export function HomeView({
         pendingPluginId={pendingApplyId}
         pendingChipId={pendingChipId}
         submitDisabled={
+          templateHandoffPending ||
           (defaultChipSeedPending && !hasExplicitSubmitRoute) ||
           Boolean(pendingChipRestore) ||
           Boolean(pendingPluginUseHandoff) ||

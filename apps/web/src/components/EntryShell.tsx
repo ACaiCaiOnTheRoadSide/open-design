@@ -1672,6 +1672,7 @@ export function EntryShell({
                 projectOwnerMemberIds={teamProjectOwnerMemberIds}
                 skills={skills}
                 skillsLoading={skillsLoading}
+                onSkillsRefresh={onSkillsRefresh}
                 connectors={connectors}
                 promptTemplates={promptTemplates}
                 executionSwitcher={view === 'home' ? homeExecutionSwitcher : undefined}
