@@ -112,6 +112,7 @@ import {
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
+import { consumeOhMyInspireTemplateHandoff } from '../runtime/ohmy-inspire-handoff';
 import { navigate } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import { workspaceContextLinkedDirs } from './workspace-context';
@@ -657,8 +658,9 @@ export function HomeView({
     designSystemCatalogScope: LocalCatalogScope | null;
   } | null>(null);
   if (restoredDraftRef.current === null) {
+    const handoffPrompt = consumeOhMyInspireTemplateHandoff(locale);
     restoredDraftRef.current = {
-      prompt: readHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY) ?? '',
+      prompt: handoffPrompt ?? readHomeComposerDraft(HOME_COMPOSER_PROMPT_KEY) ?? '',
       designSystemId: readHomeComposerDraft(HOME_COMPOSER_DESIGN_SYSTEM_KEY),
       designSystemCatalogScope: readLocalCatalogScopeDraft(
         HOME_COMPOSER_DESIGN_SYSTEM_SCOPE_KEY,
