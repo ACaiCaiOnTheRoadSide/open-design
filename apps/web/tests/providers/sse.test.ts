@@ -1899,6 +1899,102 @@ describe('streamViaDaemon', () => {
     }
   });
 
+  it('retries a transient daemon 502 during canceled-run handoff with the same idempotent request', async () => {
+    vi.useFakeTimers();
+    try {
+      const handlers = createDaemonHandlers();
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response('{"error":"upstream unavailable"}', { status: 502 }))
+        .mockResolvedValueOnce(jsonResponse({ runId: 'replacement-run' }))
+        .mockResolvedValueOnce(sseResponse(
+          'event: end\ndata: {"code":0,"status":"succeeded"}\n\n',
+        ));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const streaming = streamViaDaemon({
+        agentId: 'ohmyagent',
+        history: [{ id: '1', role: 'user', content: 'replacement prompt' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        handlers,
+        clientRequestId: 'replacement-request-1',
+      });
+      await vi.runAllTimersAsync();
+      await streaming;
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const firstCreate = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+      const retriedCreate = fetchMock.mock.calls[1] as unknown as [RequestInfo | URL, RequestInit];
+      expect(firstCreate[0]).toBe('/api/runs');
+      expect(retriedCreate[0]).toBe('/api/runs');
+      expect(retriedCreate[1].body).toBe(firstCreate[1].body);
+      expect(JSON.parse(String(retriedCreate[1].body)).clientRequestId).toBe('replacement-request-1');
+      expect(handlers.onError).not.toHaveBeenCalled();
+      expect(handlers.onDone).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers and cancels a run accepted before a 502 when stopped during retry backoff', async () => {
+    vi.useFakeTimers();
+    try {
+      const handlers = createDaemonHandlers();
+      const cancelController = new AbortController();
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response('{"error":"upstream unavailable"}', { status: 502 }))
+        .mockResolvedValueOnce(jsonResponse({ runId: 'accepted-run' }))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const streaming = streamViaDaemon({
+        agentId: 'ohmyagent',
+        history: [{ id: '1', role: 'user', content: 'replacement prompt' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        cancelSignal: cancelController.signal,
+        handlers,
+        clientRequestId: 'accepted-request-1',
+      });
+      await vi.advanceTimersByTimeAsync(250);
+      cancelController.abort();
+      await vi.runAllTimersAsync();
+      await streaming;
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const firstCreate = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+      const recoveredCreate = fetchMock.mock.calls[1] as unknown as [RequestInfo | URL, RequestInit];
+      expect(recoveredCreate[0]).toBe('/api/runs');
+      expect(recoveredCreate[1].body).toBe(firstCreate[1].body);
+      expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/runs/accepted-run/cancel', { method: 'POST' });
+      expect(handlers.onError).not.toHaveBeenCalled();
+      expect(handlers.onDone).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry a daemon 502 without an idempotent client request id', async () => {
+    const handlers = createDaemonHandlers();
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response('{"error":"upstream unavailable"}', { status: 502 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamViaDaemon({
+      agentId: 'ohmyagent',
+      history: [{ id: '1', role: 'user', content: 'hello' }],
+      systemPrompt: '',
+      signal: new AbortController().signal,
+      handlers,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(handlers.onError).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'daemon 502: {"error":"upstream unavailable"}',
+    }));
+  });
+
   it('surfaces the structured authority error after automatic run-create retries are exhausted', async () => {
     vi.useFakeTimers();
     try {

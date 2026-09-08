@@ -69,7 +69,7 @@ import { trackRunProgress, trackRunStart, trackRunTerminal } from '../observabil
 const MAX_TRANSCRIPT_MESSAGE_CHARS = 12_000;
 const LARGE_TOOL_RESULT_CHARS = 8_000;
 const HIGH_INPUT_TOKEN_WARNING_THRESHOLD = 200_000;
-const RUN_CREATE_AUTHORITY_RETRY_DELAYS_MS = [500, 1_000, 2_000] as const;
+const RUN_CREATE_RETRY_DELAYS_MS = [500, 1_000, 2_000] as const;
 const BYOK_OPENCODE_AGENT_ID = 'byok-opencode';
 const API_MODE_AGENT_IDS = new Set([
   'anthropic-api',
@@ -759,6 +759,7 @@ export async function streamViaDaemon({
 
   try {
     let createResp: Response;
+    let createMayHaveSucceeded = false;
     for (let attempt = 0; ; attempt += 1) {
       createResp = await fetch('/api/runs', {
         method: 'POST',
@@ -787,13 +788,27 @@ export async function streamViaDaemon({
         createResp.status === 503
         && error?.code === 'WORKSPACE_AUTHORITY_UNAVAILABLE'
         && error.retryable === true;
-      const delayMs = RUN_CREATE_AUTHORITY_RETRY_DELAYS_MS[attempt];
-      if (!retryableAuthorityOutage || delayMs === undefined || cancelSignal?.aborted) break;
+      // Stopping the previous turn closes its long-lived SSE request while the
+      // daemon proxy is recycling that upstream connection. A replacement POST
+      // can briefly receive 502/504 during that handoff. Retrying is safe only
+      // with the stable client request id: the daemon deduplicates a first
+      // attempt that succeeded but whose response was lost.
+      const retryableDaemonHandoff =
+        Boolean(clientRequestId?.trim())
+        && (createResp.status === 502 || createResp.status === 504);
+      if (retryableDaemonHandoff) createMayHaveSucceeded = true;
+      const delayMs = RUN_CREATE_RETRY_DELAYS_MS[attempt];
+      if ((!retryableAuthorityOutage && !retryableDaemonHandoff) || delayMs === undefined) break;
+      if (cancelSignal?.aborted) {
+        if (!createMayHaveSucceeded) return;
+        continue;
+      }
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      if (cancelSignal?.aborted) return;
+      if (cancelSignal?.aborted && !createMayHaveSucceeded) return;
     }
 
     if (!createResp.ok) {
+      if (cancelSignal?.aborted) return;
       const text = await createResp.text().catch(() => '');
       emitRunStatus('failed');
       handlers.onError(daemonCreateRunError(createResp, text));
@@ -802,6 +817,15 @@ export async function streamViaDaemon({
 
     const created = (await createResp.json()) as ChatRunCreateResponse;
     const runId = created.runId;
+    if (cancelSignal?.aborted) {
+      await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        ...(workspaceContext
+          ? { headers: workspaceProjectHeaders(workspaceContext) }
+          : {}),
+      }).catch(() => {});
+      return;
+    }
     onRunCreated?.(runId);
     // Start the stuck-run watchdog. trackRunProgress is called inside the
     // SSE consumer below on every event; trackRunTerminal fires when the
