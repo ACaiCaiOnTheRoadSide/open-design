@@ -9276,6 +9276,15 @@ describe('FileViewer tweaks toolbar', () => {
           ? input.url
           : String(input);
       if (url === `/api/projects/${projectId}/files`) return filesResponse.promise;
+      if (url.includes(`/api/projects/${projectId}/preview-url`)) {
+        return Response.json({
+          url: `/api/projects/${projectId}/preview/scope-assets/system/artifacts/poster.html`,
+          file: 'system/artifacts/poster.html',
+          csp: "default-src 'none'",
+          iframeSandbox: 'allow-scripts allow-forms',
+          opaqueOrigin: true,
+        });
+      }
       return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -9320,7 +9329,7 @@ describe('FileViewer tweaks toolbar', () => {
       await waitFor(() => {
         const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
         expect(frame.srcdoc).toContain(
-          `/api/projects/${projectId}/raw/${fontPath}`,
+          `/api/projects/${projectId}/preview/scope-assets/${fontPath}`,
         );
         expect(frame.srcdoc).not.toContain('workspaceMemberId=');
         expect(frame.srcdoc).not.toContain('../../fonts/inter-variable-400.woff2');
@@ -9330,7 +9339,73 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
-  it('materializes Team deck relative assets into server-authorized raw URLs before showing srcDoc', async () => {
+  it('falls back to preview-scoped URLs when sibling CSS, JS, and image reads require iframe authorization', async () => {
+    const projectId = 'scoped-sibling-assets-project';
+    const fileName = 'manage-rfumbles-poster.html';
+    const assetPaths = [
+      'fonts.css',
+      'styles.css',
+      'main.js',
+      'logo.webp',
+      'hero#1.webp',
+      'query?1.webp',
+      '100%.webp',
+    ];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url === `/api/projects/${projectId}/files`) {
+        return Response.json({
+          files: [
+            htmlPreviewFile({ name: fileName, path: fileName }),
+            ...assetPaths.map((assetPath) => baseFile({ name: assetPath, path: assetPath })),
+          ],
+        });
+      }
+      if (url.includes(`/api/projects/${projectId}/preview-url`)) {
+        return Response.json({
+          url: `/api/projects/${projectId}/preview/scope-siblings/${fileName}`,
+          file: fileName,
+          csp: "default-src 'none'",
+          iframeSandbox: 'allow-scripts allow-forms',
+          opaqueOrigin: true,
+        });
+      }
+      if (url.includes(`/api/projects/${projectId}/raw/`)) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithProjectWorkspace(
+      <FileViewer
+        projectId={projectId}
+        projectKind="prototype"
+        file={htmlPreviewFile({ name: fileName, path: fileName })}
+        liveHtml={'<!doctype html><html><head><link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="styles.css"></head><body><img src="logo.webp"><img src="hero%231.webp"><img src="query%3F1.webp"><img src="100%25.webp"><script src="main.js"></script></body></html>'}
+      />,
+      teamWorkspaceContext(),
+    );
+
+    await waitFor(() => {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      for (const assetPath of assetPaths) {
+        const encodedAssetPath = encodeURIComponent(assetPath);
+        expect(frame.srcdoc).toContain(
+          `/api/projects/${projectId}/preview/scope-siblings/${encodedAssetPath}`,
+        );
+        expect(frame.srcdoc).not.toContain(
+          `/api/projects/${projectId}/raw/${encodedAssetPath}`,
+        );
+      }
+    });
+  });
+
+  it('materializes Team deck relative assets into preview-scoped URLs before showing srcDoc', async () => {
     const filesResponse = deferredResponse();
     const projectId = 'scoped-deck-assets-project';
     const deckPath = 'system/deck.html';
@@ -9342,6 +9417,15 @@ describe('FileViewer tweaks toolbar', () => {
           ? input.url
           : String(input);
       if (url === `/api/projects/${projectId}/files`) return filesResponse.promise;
+      if (url.includes(`/api/projects/${projectId}/preview-url`)) {
+        return Response.json({
+          url: `/api/projects/${projectId}/preview/scope-deck/${deckPath}`,
+          file: deckPath,
+          csp: "default-src 'none'",
+          iframeSandbox: 'allow-scripts allow-forms',
+          opaqueOrigin: true,
+        });
+      }
       return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -9383,7 +9467,7 @@ describe('FileViewer tweaks toolbar', () => {
       await waitFor(() => {
         const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
         expect(frame.srcdoc).toContain(
-          `/api/projects/${projectId}/raw/${imagePath}`,
+          `/api/projects/${projectId}/preview/scope-deck/${imagePath}`,
         );
         expect(frame.srcdoc).not.toContain('workspaceMemberId=');
         expect(frame.srcdoc).not.toContain('../images/hero.png');

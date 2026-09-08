@@ -7952,6 +7952,7 @@ function HtmlViewer({
     identity: string;
     href: string;
   } | null>(null);
+  const [srcDocPreviewBaseRetryKey, setSrcDocPreviewBaseRetryKey] = useState(0);
   const effectiveScopedSrcDocPreviewBase =
     scopedSrcDocPreviewBase?.identity === srcDocPreviewBaseIdentity
       ? scopedSrcDocPreviewBase.href
@@ -10122,13 +10123,21 @@ function HtmlViewer({
       || projectResourceReadBlocked
     ) return;
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const identity = srcDocPreviewBaseIdentity;
     void fetchProjectPreviewBaseHref(projectId, file.name).then((href) => {
-      if (cancelled || !href) return;
+      if (cancelled) return;
+      if (!href) {
+        retryTimer = setTimeout(() => {
+          setSrcDocPreviewBaseRetryKey((key) => key + 1);
+        }, 5_000);
+        return;
+      }
       setScopedSrcDocPreviewBase({ identity, href });
     });
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [
     authoredSrcDocBase,
@@ -10137,6 +10146,7 @@ function HtmlViewer({
     projectId,
     projectResourceReadBlocked,
     srcDocPreviewBaseIdentity,
+    srcDocPreviewBaseRetryKey,
     useUrlLoadPreview,
     workspaceActive,
     workspaceContext,
@@ -10419,6 +10429,14 @@ function HtmlViewer({
     // document (the effect re-runs when the set lands).
     if ((projectRootAssetRefs || scopedRelativeAssetRefs) && projectFilePathSet === null) return;
     if (!relativeProjectAssetRefs && !projectRootAssetRefs) return;
+    // Sandboxed iframe requests do not carry Workspace credentials. Do not
+    // publish rewritten asset URLs until the daemon has minted the opaque
+    // project-scoped navigation capability they can safely use.
+    if (
+      workspaceContext
+      && authoredSrcDocBase === false
+      && !effectiveScopedSrcDocPreviewBase
+    ) return;
     let cancelled = false;
     void inlineRelativeAssets(
       assetInliningSource,
@@ -10426,6 +10444,7 @@ function HtmlViewer({
       file.name,
       projectFilePathSet,
       workspaceContext,
+      effectiveScopedSrcDocPreviewBase,
     ).then((next) => {
       if (!cancelled) setInlinedSource(next);
     });
@@ -10443,6 +10462,8 @@ function HtmlViewer({
     scopedRelativeAssetRefs,
     projectFilePathSet,
     workspaceContext,
+    authoredSrcDocBase,
+    effectiveScopedSrcDocPreviewBase,
   ]);
 
   const srcDocBaseHref = rawToken
@@ -17773,9 +17794,24 @@ async function inlineRelativeAssets(
   fileName: string,
   projectFilePaths: ReadonlySet<string> | null = null,
   workspaceContext?: WorkspaceCollabContext | null,
+  previewBaseHref?: string | null,
 ): Promise<string> {
-  const toRawUrl = (projectPath: string) =>
-    projectRawUrl(projectId, projectPath, workspaceContext);
+  const toRawUrl = (projectPath: string) => {
+    if (previewBaseHref) {
+      const previewBase = new URL(previewBaseHref, 'http://open-design.local');
+      let scopeRoot = previewBase.pathname.replace(/\/$/, '');
+      const ownerDirDepth = baseDirFor(fileName).split('/').filter(Boolean).length;
+      for (let index = 0; index < ownerDirDepth; index += 1) {
+        scopeRoot = scopeRoot.slice(0, scopeRoot.lastIndexOf('/'));
+      }
+      const encodedProjectPath = projectPath
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/');
+      return `${scopeRoot}/${encodedProjectPath}`;
+    }
+    return projectRawUrl(projectId, projectPath, workspaceContext);
+  };
   // Root-relative project asset refs (confirmed against the real file list)
   // become owner-relative first, so the stylesheet/script inlining below and
   // the srcDoc <base href> rebasing treat them like any other relative ref.

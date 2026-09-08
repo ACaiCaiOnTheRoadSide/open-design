@@ -35,6 +35,13 @@ describe('rewriteSkillAssetUrls', () => {
     );
   });
 
+  it('attaches a preview scope to font and video asset URLs', () => {
+    const html = `<style>@font-face{src:url('./assets/font.woff2')}</style><video src="./assets/background.mp4"></video>`;
+    expect(rewriteSkillAssetUrls(html, 'motion', '?previewScope=scope-1')).toBe(
+      `<style>@font-face{src:url('/api/skills/motion/assets/font.woff2?previewScope=scope-1')}</style><video src="/api/skills/motion/assets/background.mp4?previewScope=scope-1"></video>`,
+    );
+  });
+
   it('returns non-string input unchanged', () => {
     expect(rewriteSkillAssetUrls('', 'foo')).toBe('');
   });

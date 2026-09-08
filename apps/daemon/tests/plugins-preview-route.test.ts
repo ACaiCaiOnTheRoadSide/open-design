@@ -144,6 +144,7 @@ describe('GET /api/plugins/:id/preview', () => {
     expect(resp.headers.get('content-type')).toMatch(/text\/html/);
     const csp = resp.headers.get('content-security-policy') ?? '';
     expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("font-src 'self' data:");
     expect(csp).toContain("connect-src 'none'");
     expect(resp.headers.get('x-content-type-options')).toBe('nosniff');
     const body = await resp.text();

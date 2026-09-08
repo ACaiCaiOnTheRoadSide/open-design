@@ -2237,6 +2237,7 @@ export function shouldReportRunCompletionTelemetryFallbackStatus(status: unknown
 
 const PROJECT_PREVIEW_SCOPE_TTL_MS = 60 * 60 * 1000;
 const PROJECT_PREVIEW_ASSET_PATH_RE = /^\/projects\/([^/]+)\/preview\/([^/]+)\/.+$/u;
+const SKILL_PREVIEW_ASSET_PATH_RE = /^\/skills\/([^/]+)\/assets\/.+$/u;
 const PROJECT_RUN_SCOPED_EXPORT_PATH_RE =
   /^\/projects\/[^/]+\/export(?:\/(?:pptx|pdf-image|image))?$/u;
 const MEDIA_GENERATE_PATH = MEDIA_GENERATE_TOOL_ENDPOINT.slice('/api'.length);
@@ -2291,6 +2292,50 @@ function createProjectPreviewScopeRegistry() {
         return undefined;
       }
       if (entry.projectId !== String(projectId)) return undefined;
+      return entry.workspace ?? null;
+    },
+  };
+}
+
+function createSkillPreviewScopeRegistry() {
+  const scopes = new Map();
+
+  function pruneExpired(now = Date.now()) {
+    for (const [scope, entry] of scopes) {
+      if (entry.expiresAt <= now) scopes.delete(scope);
+    }
+  }
+
+  return {
+    mint(skillId, workspace = null, options = {}) {
+      pruneExpired();
+      const scope = randomUUID();
+      scopes.set(scope, {
+        skillId: String(skillId),
+        workspace,
+        expiresAt: Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS),
+      });
+      return scope;
+    },
+    validate(skillId, scope) {
+      const key = String(scope || '');
+      const entry = scopes.get(key);
+      if (!entry) return false;
+      if (entry.expiresAt <= Date.now()) {
+        scopes.delete(key);
+        return false;
+      }
+      return entry.skillId === String(skillId);
+    },
+    resolve(skillId, scope) {
+      const key = String(scope || '');
+      const entry = scopes.get(key);
+      if (!entry) return undefined;
+      if (entry.expiresAt <= Date.now()) {
+        scopes.delete(key);
+        return undefined;
+      }
+      if (entry.skillId !== String(skillId)) return undefined;
       return entry.workspace ?? null;
     },
   };
@@ -2796,6 +2841,7 @@ export async function startServer({
   app.use('/api/brands/:id/extract-from-html', express.json({ limit: '32mb' }));
   app.use(express.json({ limit: '4mb' }));
   const projectPreviewScopes = createProjectPreviewScopeRegistry();
+  const skillPreviewScopes = createSkillPreviewScopeRegistry();
 
   // Plan §3.K1 — API-token middleware.
   //
@@ -2829,6 +2875,17 @@ export async function startServer({
           projectPreviewScopes.validate(previewAsset.projectId, previewAsset.scope)
         ) {
           return next();
+        }
+        const skillAsset = SKILL_PREVIEW_ASSET_PATH_RE.exec(req.path);
+        const skillPreviewScope = typeof req.query.previewScope === 'string'
+          ? req.query.previewScope
+          : '';
+        if (skillAsset && skillPreviewScope) {
+          try {
+            if (skillPreviewScopes.validate(decodeURIComponent(skillAsset[1]), skillPreviewScope)) {
+              return next();
+            }
+          } catch {}
         }
       }
       // Loopback short-circuit. We ignore the proxied X-Forwarded-For
@@ -3048,8 +3105,26 @@ export async function startServer({
     // Origin: null (sandboxed iframes).  Only allowed for safe, read-only
     // routes that set their own CORS headers for canvas drawing.
     if (origin === 'null') {
-      const isSafeReadOnly =
-        req.method === 'GET' && _NULL_ORIGIN_SAFE_GET_RE.test(req.path);
+      const skillAsset = SKILL_PREVIEW_ASSET_PATH_RE.exec(req.path);
+      const skillPreviewScope = typeof req.query.previewScope === 'string'
+        ? req.query.previewScope
+        : '';
+      const isScopedSkillAsset = Boolean(
+        skillAsset
+        && skillPreviewScope
+        && (() => {
+          try {
+            return skillPreviewScopes.validate(
+              decodeURIComponent(skillAsset[1]),
+              skillPreviewScope,
+            );
+          } catch {
+            return false;
+          }
+        })(),
+      );
+      const isSafeReadOnly = req.method === 'GET'
+        && (_NULL_ORIGIN_SAFE_GET_RE.test(req.path) || isScopedSkillAsset);
       if (!isSafeReadOnly) {
         return res.status(403).json({ error: 'Origin: null not allowed for this route' });
       }
@@ -8569,6 +8644,7 @@ export async function startServer({
     db,
     http: httpDeps,
     paths: pathDeps,
+    skillPreviewScopes,
     verifyWorkspaceReadAuthority,
     verifyWorkspaceRequestAuthority,
     teamResources: collab.teamResources,

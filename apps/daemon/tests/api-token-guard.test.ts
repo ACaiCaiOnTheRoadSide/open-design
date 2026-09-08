@@ -238,6 +238,40 @@ describe('browser authentication for non-loopback Docker peers', () => {
     // particular, it must not poison response headers or terminate the daemon.
     const healthAfterFailures = await fetch(`${baseUrl}/api/health`);
     expect(healthAfterFailures.status).toBe(200);
+
+    for (const skillId of [
+      'motionsites-mainframe-hero',
+      'motionsites-fastshot-hero',
+    ]) {
+      const example = await fetch(`${baseUrl}/api/skills/${skillId}/example`, {
+        headers: { authorization: `Basic ${credentials}` },
+      });
+      expect(example.status).toBe(200);
+      const html = await example.text();
+      const videoPath = html.match(/src=["']([^"']*background\.mp4[^"']*)["']/)?.[1];
+      const fontPath = html.match(/url\(["']?([^"')]*\.woff2[^"')]*?)["']?\)/)?.[1];
+      expect(videoPath).toMatch(
+        new RegExp(`^/api/skills/${skillId}/assets/background\\.mp4\\?previewScope=`),
+      );
+      expect(fontPath).toMatch(
+        new RegExp(`^/api/skills/${skillId}/assets/fonts/.+\\.woff2\\?previewScope=`),
+      );
+
+      const video = await fetch(`${baseUrl}${videoPath}`, {
+        headers: { origin: 'null', range: 'bytes=0-31' },
+      });
+      expect(video.status).toBe(206);
+      expect(video.headers.get('access-control-allow-origin')).toBe('*');
+      expect(video.headers.get('content-type')).toBe('video/mp4');
+      expect((await video.arrayBuffer()).byteLength).toBe(32);
+
+      const font = await fetch(`${baseUrl}${fontPath}`, {
+        headers: { origin: 'null' },
+      });
+      expect(font.status).toBe(200);
+      expect(font.headers.get('access-control-allow-origin')).toBe('*');
+      expect(font.headers.get('content-type')).toBe('font/woff2');
+    }
   });
 
   it('keeps the documented Docker browser host separate from powered previews', async () => {
