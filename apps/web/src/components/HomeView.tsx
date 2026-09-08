@@ -112,7 +112,10 @@ import {
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
-import { templateHandoffFromPageUrl } from '../runtime/ohmy-inspire-handoff';
+import {
+  templateHandoffFromPageUrl,
+  templateHandoffTrialPrompt,
+} from '../runtime/ohmy-inspire-handoff';
 import { navigate } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import { workspaceContextLinkedDirs } from './workspace-context';
@@ -673,6 +676,10 @@ export function HomeView({
     };
   }
   const restoredDraft = restoredDraftRef.current;
+  const templateTrialPrompt =
+    templateHandoff && !restoredDraft.prompt.trim()
+      ? templateHandoffTrialPrompt(locale)
+      : null;
   useEffect(() => {
     if (!templateHandoff) return;
     window.history.replaceState(window.history.state, '', templateHandoff.sanitizedUrl);
@@ -712,7 +719,7 @@ export function HomeView({
   }, []);
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
-  const [prompt, setPrompt] = useState(() => restoredDraft.prompt);
+  const [prompt, setPrompt] = useState(() => templateTrialPrompt ?? restoredDraft.prompt);
   const [templateRecommendations, setTemplateRecommendations] = useState<TemplateRecommendResponse | null>(null);
   const [templateRecommendLoading, setTemplateRecommendLoading] = useState(false);
   const [templateRecommendAvailable, setTemplateRecommendAvailable] = useState(

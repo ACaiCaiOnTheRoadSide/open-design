@@ -91,8 +91,7 @@ body::before {
 /* The dark scene matches design-prompt's textured WebGL globe. The app shell
    forms the content layer above it; the canvas itself never receives input. */
 .app-lunar-atmosphere,
-.app-lunar-video,
-.app-lunar-fallback {
+.app-lunar-video {
   position: fixed;
   inset: 0;
   z-index: 0;
@@ -108,9 +107,6 @@ body::before {
   object-fit: cover;
   object-position: top left;
   background: #020305;
-}
-.app-lunar-fallback {
-  background: #020305 url('/backgrounds/lunar-globe-fallback.jpg') top left / cover no-repeat;
 }
 .workspace-shell {
   position: relative;

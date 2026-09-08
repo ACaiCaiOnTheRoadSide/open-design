@@ -37,7 +37,7 @@ import { HomeView } from '../../src/components/HomeView';
 import { I18nProvider } from '../../src/i18n';
 import { ProjectCreateError } from '../../src/state/projects';
 import { writeHomeGuideStage } from '../../src/components/home-hero/firstRunGuide';
-import { setHomeHeroPrompt } from '../helpers/home-hero-lexical';
+import { homeHeroPromptText, setHomeHeroPrompt } from '../helpers/home-hero-lexical';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -131,6 +131,8 @@ describe('home composer sending state', () => {
     expect(onOpenProject).not.toHaveBeenCalled();
     expect(window.location.pathname).toBe('/workspace');
     expect(window.location.search).toBe('');
+    expect(homeHeroPromptText()).toContain('If SKILL.md is available, follow it first');
+    expect(homeHeroPromptText()).toContain('otherwise use the other available instructions and resources');
 
     const submit = screen.getByTestId('home-hero-submit') as HTMLButtonElement;
     await waitFor(() => expect(submit.disabled).toBe(false));
@@ -147,6 +149,21 @@ describe('home composer sending state', () => {
       );
     });
     expect(onOpenProject).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite an existing composer draft during template handoff', async () => {
+    const source = 'https://inspire.example.com/api/v1/catalog/handoff-download/signed';
+    window.localStorage.setItem('open-design:home-composer:prompt', 'Keep my existing draft');
+    window.history.replaceState(
+      {},
+      '',
+      `/workspace?template_url=${encodeURIComponent(source)}&template_id=landing-page`,
+    );
+
+    renderHome(vi.fn());
+
+    await screen.findByTestId('home-hero-input');
+    expect(homeHeroPromptText()).toBe('Keep my existing draft');
   });
 
   it('shows Sending… and swallows repeat clicks while creation is in flight', async () => {

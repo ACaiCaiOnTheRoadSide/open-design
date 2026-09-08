@@ -150,7 +150,7 @@ function useDarkTheme(theme?: AppTheme): boolean {
   return theme === 'dark' || (theme !== 'light' && systemDark);
 }
 
-type LunarFallback = 'video' | 'image' | null;
+type LunarFallback = 'video' | null;
 
 export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -162,7 +162,7 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
 
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     if (motionPreference.matches) {
-      setFallback('image');
+      setFallback('video');
       return;
     }
 
@@ -409,22 +409,7 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
     }
   }, [dark, fallback]);
 
-  React.useEffect(() => {
-    if (!dark || fallback !== 'video') return;
-
-    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const handleMotionPreference = () => {
-      if (motionPreference.matches) setFallback('image');
-    };
-    handleMotionPreference();
-    motionPreference.addEventListener('change', handleMotionPreference);
-    return () => motionPreference.removeEventListener('change', handleMotionPreference);
-  }, [dark, fallback]);
-
   if (!dark) return null;
-  if (fallback === 'image') {
-    return <div aria-hidden="true" className="app-lunar-fallback" />;
-  }
   if (fallback === 'video') {
     return (
       <video
@@ -433,13 +418,7 @@ export function LunarSceneBackground({ theme }: { theme?: AppTheme }) {
         className="app-lunar-video"
         loop
         muted
-        onCanPlay={(event) => {
-          const video = event.currentTarget;
-          void video.play().catch(() => setFallback('image'));
-        }}
-        onError={() => setFallback('image')}
         playsInline
-        poster="/backgrounds/lunar-globe-fallback.jpg"
         preload="auto"
         src="/backgrounds/lunar-globe-loop.mp4"
       />

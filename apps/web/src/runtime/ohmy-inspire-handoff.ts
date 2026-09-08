@@ -22,6 +22,12 @@ export function templateHandoffFromPageUrl(
   return { sourceUrl: templateUrl, templateId, sanitizedUrl: url.toString() };
 }
 
+export function templateHandoffTrialPrompt(locale: string): string {
+  return locale.startsWith('zh')
+    ? '请使用已选模板实现一个可运行的示例：如有 SKILL.md，请优先按照其中的要求实现；否则参考其他可用的说明文件与资源，并尽量还原模板中的设计与交互。'
+    : 'Build a working example from the selected template. If SKILL.md is available, follow it first; otherwise use the other available instructions and resources. Match the template’s design and interactions as closely as possible.';
+}
+
 export function projectInputForInstalledTemplate(skill: SkillSummary): {
   name: string;
   skillId: string;
