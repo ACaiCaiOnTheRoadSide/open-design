@@ -2238,6 +2238,7 @@ export function shouldReportRunCompletionTelemetryFallbackStatus(status: unknown
 const PROJECT_PREVIEW_SCOPE_TTL_MS = 60 * 60 * 1000;
 const PROJECT_PREVIEW_ASSET_PATH_RE = /^\/projects\/([^/]+)\/preview\/([^/]+)\/.+$/u;
 const SKILL_PREVIEW_ASSET_PATH_RE = /^\/skills\/([^/]+)\/assets\/.+$/u;
+const PLUGIN_PREVIEW_ASSET_PATH_RE = /^\/plugins\/([^/]+)\/asset\/.+$/u;
 const PROJECT_RUN_SCOPED_EXPORT_PATH_RE =
   /^\/projects\/[^/]+\/export(?:\/(?:pptx|pdf-image|image))?$/u;
 const MEDIA_GENERATE_PATH = MEDIA_GENERATE_TOOL_ENDPOINT.slice('/api'.length);
@@ -2297,7 +2298,7 @@ function createProjectPreviewScopeRegistry() {
   };
 }
 
-function createSkillPreviewScopeRegistry() {
+function createResourcePreviewScopeRegistry() {
   const scopes = new Map();
 
   function pruneExpired(now = Date.now()) {
@@ -2307,17 +2308,17 @@ function createSkillPreviewScopeRegistry() {
   }
 
   return {
-    mint(skillId, workspace = null, options = {}) {
+    mint(resourceId, workspace = null, options = {}) {
       pruneExpired();
       const scope = randomUUID();
       scopes.set(scope, {
-        skillId: String(skillId),
+        resourceId: String(resourceId),
         workspace,
         expiresAt: Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS),
       });
       return scope;
     },
-    validate(skillId, scope) {
+    validate(resourceId, scope) {
       const key = String(scope || '');
       const entry = scopes.get(key);
       if (!entry) return false;
@@ -2325,9 +2326,9 @@ function createSkillPreviewScopeRegistry() {
         scopes.delete(key);
         return false;
       }
-      return entry.skillId === String(skillId);
+      return entry.resourceId === String(resourceId);
     },
-    resolve(skillId, scope) {
+    resolve(resourceId, scope) {
       const key = String(scope || '');
       const entry = scopes.get(key);
       if (!entry) return undefined;
@@ -2335,7 +2336,7 @@ function createSkillPreviewScopeRegistry() {
         scopes.delete(key);
         return undefined;
       }
-      if (entry.skillId !== String(skillId)) return undefined;
+      if (entry.resourceId !== String(resourceId)) return undefined;
       return entry.workspace ?? null;
     },
   };
@@ -2841,7 +2842,18 @@ export async function startServer({
   app.use('/api/brands/:id/extract-from-html', express.json({ limit: '32mb' }));
   app.use(express.json({ limit: '4mb' }));
   const projectPreviewScopes = createProjectPreviewScopeRegistry();
-  const skillPreviewScopes = createSkillPreviewScopeRegistry();
+  const skillPreviewScopes = createResourcePreviewScopeRegistry();
+  const pluginPreviewScopes = createResourcePreviewScopeRegistry();
+
+  // Keep generated sandbox URLs valid when the daemon serves the web app
+  // directly (desktop/static builds). Production nginx performs the same narrow
+  // prefix rewrite before proxying to this process.
+  app.use((req, _res, next) => {
+    if (req.url.startsWith('/preview-assets/')) {
+      req.url = `/api/${req.url.slice('/preview-assets/'.length)}`;
+    }
+    next();
+  });
 
   // Plan §3.K1 — API-token middleware.
   //
@@ -2883,6 +2895,17 @@ export async function startServer({
         if (skillAsset && skillPreviewScope) {
           try {
             if (skillPreviewScopes.validate(decodeURIComponent(skillAsset[1]), skillPreviewScope)) {
+              return next();
+            }
+          } catch {}
+        }
+        const pluginAsset = PLUGIN_PREVIEW_ASSET_PATH_RE.exec(req.path);
+        const pluginPreviewScope = typeof req.query.previewScope === 'string'
+          ? req.query.previewScope
+          : '';
+        if (pluginAsset && pluginPreviewScope) {
+          try {
+            if (pluginPreviewScopes.validate(decodeURIComponent(pluginAsset[1]), pluginPreviewScope)) {
               return next();
             }
           } catch {}
@@ -3123,8 +3146,26 @@ export async function startServer({
           }
         })(),
       );
+      const pluginAsset = PLUGIN_PREVIEW_ASSET_PATH_RE.exec(req.path);
+      const pluginPreviewScope = typeof req.query.previewScope === 'string'
+        ? req.query.previewScope
+        : '';
+      const isScopedPluginAsset = Boolean(
+        pluginAsset
+        && pluginPreviewScope
+        && (() => {
+          try {
+            return pluginPreviewScopes.validate(
+              decodeURIComponent(pluginAsset[1]),
+              pluginPreviewScope,
+            );
+          } catch {
+            return false;
+          }
+        })(),
+      );
       const isSafeReadOnly = req.method === 'GET'
-        && (_NULL_ORIGIN_SAFE_GET_RE.test(req.path) || isScopedSkillAsset);
+        && (_NULL_ORIGIN_SAFE_GET_RE.test(req.path) || isScopedSkillAsset || isScopedPluginAsset);
       if (!isSafeReadOnly) {
         return res.status(403).json({ error: 'Origin: null not allowed for this route' });
       }
@@ -9420,6 +9461,7 @@ export async function startServer({
     db,
     verifyWorkspaceRequestAuthority,
     getWorkspacePlugin: getWorkspacePluginForRequest,
+    pluginPreviewScopes,
     pluginAssetCache,
     AssetCacheError,
     assetCacheRewriteUrl,

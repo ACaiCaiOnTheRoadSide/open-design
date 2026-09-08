@@ -325,7 +325,7 @@ describe('project preview containment routes', () => {
     const html = await rawResponse.text();
     const baseHref = html.match(/<base\s+href="([^"]+)"/i)?.[1];
     expect(baseHref).toMatch(
-      new RegExp(`^/api/projects/${projectId}/preview/[A-Za-z0-9_-]{8,128}/$`, 'u'),
+      new RegExp(`^/preview-assets/projects/${projectId}/preview/[A-Za-z0-9_-]{8,128}/$`, 'u'),
     );
 
     // The browser resolves runtime-created `img.src = "logos/mark.png"`
@@ -333,7 +333,7 @@ describe('project preview containment routes', () => {
     // resolution never inherits the document query string.
     const runtimeLogoUrl = new URL('logos/mark.png', new URL(baseHref!, baseUrl));
     expect(runtimeLogoUrl.search).toBe('');
-    expect(runtimeLogoUrl.pathname).toContain(`/api/projects/${projectId}/preview/`);
+    expect(runtimeLogoUrl.pathname).toContain(`/preview-assets/projects/${projectId}/preview/`);
     const logoResponse = await fetch(runtimeLogoUrl);
     expect(logoResponse.status).toBe(200);
     expect(await logoResponse.text()).toBe('brand-logo-bytes');

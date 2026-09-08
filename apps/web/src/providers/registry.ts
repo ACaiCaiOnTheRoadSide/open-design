@@ -2995,13 +2995,22 @@ export function signProjectRawUrlsInHtml(
   html: string,
   projectId: string,
   token: string | null,
+  applicationOrigin = typeof globalThis.location !== 'undefined' ? globalThis.location.origin : '',
 ): string {
   if (!token) return html;
   const plain = projectRawPrefix(projectId);
   const signed = projectRawSignedPrefix(projectId, token);
-  return html.replace(/(^|["'\s(])\/api\/projects\/[^/]+\/raw\//g, (match, boundary: string) => {
-    return match.slice(boundary.length) === plain ? `${boundary}${signed}` : match;
-  });
+  const escapeRegExp = (value: string): string =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rewrite = (source: string, prefix: string): string => source.replace(
+    new RegExp(`(^|["'\\s(])${escapeRegExp(prefix)}`, 'g'),
+    (_match, boundary: string) => `${boundary}${signed}`,
+  );
+  let rewritten = rewrite(html, plain);
+  if (applicationOrigin && applicationOrigin !== 'null') {
+    rewritten = rewrite(rewritten, `${applicationOrigin}${plain}`);
+  }
+  return rewritten;
 }
 
 export function designSystemStaticUrl(

@@ -1633,7 +1633,7 @@ export function rewriteSkillCssAssetUrls(
       const scopedQuery = navigationQuery
         ? `${queryPart}${queryPart ? '&' : '?'}${navigationQuery.slice(1)}`
         : queryPart;
-      const assetUrl = `/api/skills/${encodeURIComponent(skillId)}/assets/${resolvedPath}${scopedQuery}${fragment}`;
+      const assetUrl = `/preview-assets/skills/${encodeURIComponent(skillId)}/assets/${resolvedPath}${scopedQuery}${fragment}`;
       return `${prefix}${openQuote}${assetUrl}${closeQuote}${suffix}`;
     },
   );
@@ -1649,7 +1649,7 @@ export function rewriteSkillAssetUrls(
     const query = typeof workspaceQuery === 'function'
       ? workspaceQuery(resolvedSkillId)
       : workspaceQuery;
-    return `/api/skills/${encodeURIComponent(resolvedSkillId)}/assets/${relPath}${query}`;
+    return `/preview-assets/skills/${encodeURIComponent(resolvedSkillId)}/assets/${relPath}${query}`;
   };
   const withAttributes = html.replace(
     /(\s(?:src|href)\s*=\s*)(['"])((?:\.\.\/([^/'"#?]+)\/)?(?:\.\/)?assets\/([^'"#?]+))(\2)/gi,

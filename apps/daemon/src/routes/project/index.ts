@@ -6012,7 +6012,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     const dirSuffix = ownerDir === '.'
       ? ''
       : `${encodeProjectPathForUrl(ownerDir)}/`;
-    const baseTag = `<base href="/api/projects/${encodeURIComponent(projectId)}`
+    const baseTag = `<base href="/preview-assets/projects/${encodeURIComponent(projectId)}`
       + `/preview/${encodeURIComponent(scope)}/${dirSuffix}">`;
     const head = /<head\b[^>]*>/i;
     if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}`);

@@ -24,6 +24,16 @@ describe('sandbox raw asset signing', () => {
     expect(doc).not.toContain(`/api/projects/${PROJECT}/raw/`);
   });
 
+  it('signs absolute same-origin raw URLs emitted by saved artifacts', () => {
+    const origin = 'https://app.example.test';
+    const absolute = `${origin}${projectRawUrl(PROJECT, 'assets/font.woff2')}`;
+    const html = `<style>@font-face{src:url('${absolute}')}</style>`;
+    expect(signProjectRawUrlsInHtml(html, PROJECT, TOKEN, origin)).toContain(
+      "/raw-signed/secret%2Ftoken/proj-1/assets/font.woff2",
+    );
+    expect(signProjectRawUrlsInHtml(html, PROJECT, TOKEN, origin)).not.toContain(absolute);
+  });
+
   it('does not leak a token into external URLs containing an internal-looking query value', () => {
     const external = `https://example.com/view?next=${projectRawUrl(PROJECT, 'a.png')}`;
     const html = `<a href="${external}">outside</a>`;

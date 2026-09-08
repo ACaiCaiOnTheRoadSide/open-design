@@ -251,10 +251,10 @@ describe('browser authentication for non-loopback Docker peers', () => {
       const videoPath = html.match(/src=["']([^"']*background\.mp4[^"']*)["']/)?.[1];
       const fontPath = html.match(/url\(["']?([^"')]*\.woff2[^"')]*?)["']?\)/)?.[1];
       expect(videoPath).toMatch(
-        new RegExp(`^/api/skills/${skillId}/assets/background\\.mp4\\?previewScope=`),
+        new RegExp(`^/preview-assets/skills/${skillId}/assets/background\\.mp4\\?previewScope=`),
       );
       expect(fontPath).toMatch(
-        new RegExp(`^/api/skills/${skillId}/assets/fonts/.+\\.woff2\\?previewScope=`),
+        new RegExp(`^/preview-assets/skills/${skillId}/assets/fonts/.+\\.woff2\\?previewScope=`),
       );
 
       const video = await fetch(`${baseUrl}${videoPath}`, {

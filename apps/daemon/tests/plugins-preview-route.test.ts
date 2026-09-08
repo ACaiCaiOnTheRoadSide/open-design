@@ -56,6 +56,7 @@ beforeEach(async () => {
     path.join(folder, 'examples', 'wrapped', 'inner.html'),
     '<!DOCTYPE html><title>wrapped</title><img src="./hero.png"><p>wrapped body</p>',
   );
+  await writeFile(path.join(folder, 'examples', 'wrapped', 'hero.png'), 'png');
   await writeFile(
     path.join(folder, 'open-design.json'),
     JSON.stringify({
@@ -178,9 +179,15 @@ describe('GET /api/plugins/:id/example/:name', () => {
     const body = await resp.text();
     expect(body).toContain('wrapped body');
     expect(body).not.toContain('<iframe');
-    expect(body).toContain(
-      `/api/plugins/${encodeURIComponent(PLUGIN_ID)}/asset/examples/wrapped/hero.png`,
-    );
+    const assetPath = body.match(new RegExp(
+      `(/preview-assets/plugins/${encodeURIComponent(PLUGIN_ID)}/asset/examples/wrapped/hero\\.png\\?previewScope=[^"']+)`,
+    ))?.[1];
+    expect(assetPath).toBeTruthy();
+    const assetResponse = await fetch(`${baseUrl}${assetPath}`, {
+      headers: { Origin: 'null' },
+    });
+    expect(assetResponse.status).toBe(200);
+    expect(assetResponse.headers.get('access-control-allow-origin')).toBe('*');
   });
 
   it('rejects traversal segments with 400', async () => {

@@ -8,21 +8,21 @@ describe('rewriteSkillAssetUrls', () => {
   it('rewrites ./assets/<file> img sources to the daemon route', () => {
     const html = `<img src='./assets/hero.png' alt='' />`;
     expect(rewriteSkillAssetUrls(html, 'open-design-landing')).toBe(
-      `<img src='/api/skills/open-design-landing/assets/hero.png' alt='' />`,
+      `<img src='/preview-assets/skills/open-design-landing/assets/hero.png' alt='' />`,
     );
   });
 
   it('handles double quotes and the no-leading-dot variant', () => {
     const html = `<img src="assets/cta.png"><a href="./assets/diagram.svg"></a>`;
     expect(rewriteSkillAssetUrls(html, 'foo')).toBe(
-      `<img src="/api/skills/foo/assets/cta.png"><a href="/api/skills/foo/assets/diagram.svg"></a>`,
+      `<img src="/preview-assets/skills/foo/assets/cta.png"><a href="/preview-assets/skills/foo/assets/diagram.svg"></a>`,
     );
   });
 
   it('rewrites sibling skill asset references with scopes bound to each target', () => {
     const html = `<img src='../open-design-landing/assets/hero.png' /><a href="../skill-two/assets/guide.pdf"></a>`;
     expect(rewriteSkillAssetUrls(html, 'foo', (skillId) => `?previewScope=${skillId}-scope`)).toBe(
-      `<img src='/api/skills/open-design-landing/assets/hero.png?previewScope=open-design-landing-scope' /><a href="/api/skills/skill-two/assets/guide.pdf?previewScope=skill-two-scope"></a>`,
+      `<img src='/preview-assets/skills/open-design-landing/assets/hero.png?previewScope=open-design-landing-scope' /><a href="/preview-assets/skills/skill-two/assets/guide.pdf?previewScope=skill-two-scope"></a>`,
     );
   });
 
@@ -34,14 +34,14 @@ describe('rewriteSkillAssetUrls', () => {
   it('URL-encodes current and sibling skill ids in rewritten routes', () => {
     const html = `<img src='./assets/hero.png' /><img src="../foo bar/assets/hero.png" />`;
     expect(rewriteSkillAssetUrls(html, '../oops')).toBe(
-      `<img src='/api/skills/..%2Foops/assets/hero.png' /><img src="/api/skills/foo%20bar/assets/hero.png" />`,
+      `<img src='/preview-assets/skills/..%2Foops/assets/hero.png' /><img src="/preview-assets/skills/foo%20bar/assets/hero.png" />`,
     );
   });
 
   it('attaches a preview scope to font and video asset URLs', () => {
     const html = `<style>@font-face{src:url('./assets/font.woff2')}</style><video src="./assets/background.mp4"></video>`;
     expect(rewriteSkillAssetUrls(html, 'motion', '?previewScope=scope-1')).toBe(
-      `<style>@font-face{src:url('/api/skills/motion/assets/font.woff2?previewScope=scope-1')}</style><video src="/api/skills/motion/assets/background.mp4?previewScope=scope-1"></video>`,
+      `<style>@font-face{src:url('/preview-assets/skills/motion/assets/font.woff2?previewScope=scope-1')}</style><video src="/preview-assets/skills/motion/assets/background.mp4?previewScope=scope-1"></video>`,
     );
   });
 
@@ -59,7 +59,7 @@ describe('rewriteSkillCssAssetUrls', () => {
       'fonts/local.css',
       '?previewScope=scope-1',
     )).toBe(
-      `@font-face{src:url('/api/skills/motion/assets/fonts/inter/font.woff2?v=2&previewScope=scope-1#face')} .hero{background:url(/api/skills/motion/assets/images/hero.png?previewScope=scope-1)}`,
+      `@font-face{src:url('/preview-assets/skills/motion/assets/fonts/inter/font.woff2?v=2&previewScope=scope-1#face')} .hero{background:url(/preview-assets/skills/motion/assets/images/hero.png?previewScope=scope-1)}`,
     );
   });
 

@@ -21,6 +21,10 @@ export interface RegisterPluginAssetRoutesDeps {
   assetCacheRewriteUrl: (url: string) => string;
   isCacheableExternalUrl: (url: string) => boolean;
   assembleExample: (templateHtml: string, slidesHtml: string, title: string) => string;
+  pluginPreviewScopes?: {
+    mint: (pluginId: string, workspace?: WorkspaceCollabContext | null) => string;
+    resolve: (pluginId: string, scope: string) => WorkspaceCollabContext | null | undefined;
+  };
 }
 
 type PluginDbLike = BetterSqlite3.Database;
@@ -120,10 +124,15 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
     return getInstalledPlugin(db, id) as InstalledPluginLike | null;
   };
   const navigationScopeQuery = (
+    pluginId: string,
     authority: WorkspaceCollabContext | null,
-  ): string => authority
-    ? `?workspaceId=${encodeURIComponent(authority.workspaceId)}&workspaceMemberId=${encodeURIComponent(authority.workspaceMemberId)}`
-    : '';
+  ): string => {
+    const previewScope = deps.pluginPreviewScopes?.mint(pluginId, authority);
+    if (previewScope) return `?previewScope=${encodeURIComponent(previewScope)}`;
+    return authority
+      ? `?workspaceId=${encodeURIComponent(authority.workspaceId)}&workspaceMemberId=${encodeURIComponent(authority.workspaceMemberId)}`
+      : '';
+  };
 
   async function servePluginSandboxedHtml(req: Request, res: Response, pickCandidates: (plugin: InstalledPluginLike) => Promise<string[]> | string[]) {
     try {
@@ -195,7 +204,7 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'");
       res.setHeader('X-Content-Type-Options', 'nosniff');
       const ext = path.extname(contentPath).toLowerCase();
-      const ct = ext === '.html' ? 'text/html; charset=utf-8' : ext === '.js' ? 'application/javascript; charset=utf-8' : ext === '.css' ? 'text/css; charset=utf-8' : ext === '.json' ? 'application/json; charset=utf-8' : ext === '.md' || ext === '.markdown' ? 'text/markdown; charset=utf-8' : ext === '.svg' ? 'image/svg+xml' : ext === '.woff2' ? 'font/woff2' : ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'application/octet-stream';
+      const ct = ext === '.html' ? 'text/html; charset=utf-8' : ext === '.js' ? 'application/javascript; charset=utf-8' : ext === '.css' ? 'text/css; charset=utf-8' : ext === '.json' ? 'application/json; charset=utf-8' : ext === '.md' || ext === '.markdown' ? 'text/markdown; charset=utf-8' : ext === '.svg' ? 'image/svg+xml' : ext === '.woff2' ? 'font/woff2' : ext === '.woff' ? 'font/woff' : ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'application/octet-stream';
       res.setHeader('Content-Type', ct);
       if (ext === '.html' && typeof contentRel === 'string') {
         buf = Buffer.from(
@@ -203,7 +212,7 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
             buf.toString('utf8'),
             routeParam(req.params.id),
             path.posix.dirname(contentRel.replace(/\\/g, '/')),
-            navigationScopeQuery(authority),
+            navigationScopeQuery(routeParam(req.params.id), authority),
           ),
           'utf8',
         );
@@ -245,20 +254,40 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
         : `${suffix.slice(0, hashAt)}&${scope}${suffix.slice(hashAt)}`;
     };
     const safeBase = baseDir === '.' ? '' : baseDir;
+    const encodedPluginId = encodeURIComponent(pluginId);
+    const assetPrefix = `/preview-assets/plugins/${encodedPluginId}/asset/`;
+    const rewriteInternal = (rawValue: string): string | null => {
+      const value = rawValue.trim();
+      const splitAt = value.search(/[?#]/);
+      const rawPath = splitAt === -1 ? value : value.slice(0, splitAt);
+      const suffix = splitAt === -1 ? '' : value.slice(splitAt);
+      const apiPrefix = `/api/plugins/${encodedPluginId}/`;
+      let normalized: string;
+      if (rawPath.startsWith(`${apiPrefix}asset/`)) {
+        normalized = rawPath.slice(`${apiPrefix}asset/`.length);
+      } else if (rawPath.startsWith(`${apiPrefix}assets/`)) {
+        normalized = `assets/${rawPath.slice(`${apiPrefix}assets/`.length)}`;
+      } else {
+        if (!rawPath || rawPath.startsWith('/') || rawPath.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(rawPath)) return null;
+        normalized = path.posix.normalize(path.posix.join(safeBase, rawPath));
+      }
+      if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) return null;
+      return `${assetPrefix}${normalized}${scopeAssetSuffix(suffix)}`;
+    };
     const withAttrs = html.replace(/(\s(?:src|href|poster)\s*=\s*)(['"])([^'"]+)(\2)/gi, (match, attr, quote, rawValue, closeQuote) => {
       const value = String(rawValue).trim();
+      const internal = rewriteInternal(value);
+      if (internal) return `${attr}${quote}${internal}${closeQuote}`;
       if (/^https?:\/\//i.test(value) && !/\bhref\b/i.test(String(attr)) && isCacheableExternalUrl(value)) {
         return `${attr}${quote}${assetCacheRewriteUrl(value)}${closeQuote}`;
       }
-      if (!value || value.startsWith('#') || value.startsWith('/') || value.startsWith('//') || value.includes('\0') || /^[a-z][a-z0-9+.-]*:/i.test(value)) return match;
-      const splitAt = value.search(/[?#]/);
-      const rel = splitAt === -1 ? value : value.slice(0, splitAt);
-      const suffix = splitAt === -1 ? '' : value.slice(splitAt);
-      const normalized = path.posix.normalize(path.posix.join(safeBase, rel));
-      if (normalized === '.' || normalized === '..' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) return match;
-      return `${attr}${quote}/api/plugins/${encodeURIComponent(pluginId)}/asset/${normalized}${scopeAssetSuffix(suffix)}${closeQuote}`;
+      return match;
     });
-    const withQuoted = withAttrs.replace(/(['"])(https?:\/\/[^'"]+)\1/g, (match, quote, rawValue) => {
+    const withInternalCss = withAttrs.replace(/(url\(\s*)(['"]?)([^)'"\s]+)(\2)(\s*\))/gi, (match, prefix, quote, rawValue, closeQuote, suffix) => {
+      const internal = rewriteInternal(String(rawValue));
+      return internal ? `${prefix}${quote}${internal}${closeQuote}${suffix}` : match;
+    });
+    const withQuoted = withInternalCss.replace(/(['"])(https?:\/\/[^'"]+)\1/g, (match, quote, rawValue) => {
       const value = String(rawValue).trim();
       return isCacheableExternalUrl(value) ? `${quote}${assetCacheRewriteUrl(value)}${quote}` : match;
     });
@@ -335,9 +364,21 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
   });
   app.get('/api/plugins/:id/asset/*splat', async (req, res) => {
     try {
-      const authority = await resolveWorkspaceAuthority(req, res);
+      const pluginId = routeParam(req.params.id);
+      const previewScope = typeof req.query.previewScope === 'string'
+        ? req.query.previewScope
+        : '';
+      const scopedAuthority = previewScope
+        ? deps.pluginPreviewScopes?.resolve(pluginId, previewScope)
+        : undefined;
+      if (previewScope && scopedAuthority === undefined) {
+        return res.status(401).type('text/plain').send('invalid preview scope');
+      }
+      const authority = previewScope
+        ? scopedAuthority!
+        : await resolveWorkspaceAuthority(req, res);
       if (authority === undefined) return;
-      const plugin = await resolvePlugin(routeParam(req.params.id), authority);
+      const plugin = await resolvePlugin(pluginId, authority);
       if (!plugin) return res.status(404).json({ error: 'plugin not found' });
       const splatParam = req.params.splat;
       const relpath = Array.isArray(splatParam) ? splatParam.join('/') : String(splatParam ?? '');
@@ -372,9 +413,25 @@ export function registerPluginAssetRoutes(app: Express, deps: RegisterPluginAsse
       try { buf = await fsp.readFile(resolved); } catch { return res.status(404).json({ error: 'asset not found' }); }
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'");
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      if (req.headers.origin === 'null') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+      }
       const ext = path.extname(resolved).toLowerCase();
-      const ct = ext === '.html' ? 'text/html; charset=utf-8' : ext === '.js' ? 'application/javascript; charset=utf-8' : ext === '.css' ? 'text/css; charset=utf-8' : ext === '.json' ? 'application/json; charset=utf-8' : ext === '.md' || ext === '.markdown' ? 'text/markdown; charset=utf-8' : ext === '.svg' ? 'image/svg+xml' : ext === '.woff2' ? 'font/woff2' : ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'application/octet-stream';
+      const ct = ext === '.html' ? 'text/html; charset=utf-8' : ext === '.js' ? 'application/javascript; charset=utf-8' : ext === '.css' ? 'text/css; charset=utf-8' : ext === '.json' ? 'application/json; charset=utf-8' : ext === '.md' || ext === '.markdown' ? 'text/markdown; charset=utf-8' : ext === '.svg' ? 'image/svg+xml' : ext === '.woff2' ? 'font/woff2' : ext === '.woff' ? 'font/woff' : ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'application/octet-stream';
       res.setHeader('Content-Type', ct);
+      if (ext === '.html' || ext === '.css') {
+        const scopeQuery = previewScope
+          ? `?previewScope=${encodeURIComponent(previewScope)}`
+          : authority
+            ? `?workspaceId=${encodeURIComponent(authority.workspaceId)}&workspaceMemberId=${encodeURIComponent(authority.workspaceMemberId)}`
+            : '';
+        buf = Buffer.from(rewritePluginAssetUrls(
+          buf.toString('utf8'),
+          pluginId,
+          path.posix.dirname(relpath),
+          scopeQuery,
+        ));
+      }
       res.send(buf);
     } catch (err) {
       res.status(500).json({ error: String(err) });
