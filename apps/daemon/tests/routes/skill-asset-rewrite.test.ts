@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { rewriteSkillAssetUrls } from '../../src/server.js';
+import {
+  rewriteSkillAssetUrls,
+  rewriteSkillCssAssetUrls,
+} from '../../src/routes/static-resource.js';
 
 describe('rewriteSkillAssetUrls', () => {
   it('rewrites ./assets/<file> img sources to the daemon route', () => {
@@ -16,10 +19,10 @@ describe('rewriteSkillAssetUrls', () => {
     );
   });
 
-  it('rewrites sibling skill asset references', () => {
+  it('rewrites sibling skill asset references with scopes bound to each target', () => {
     const html = `<img src='../open-design-landing/assets/hero.png' /><a href="../skill-two/assets/guide.pdf"></a>`;
-    expect(rewriteSkillAssetUrls(html, 'foo')).toBe(
-      `<img src='/api/skills/open-design-landing/assets/hero.png' /><a href="/api/skills/skill-two/assets/guide.pdf"></a>`,
+    expect(rewriteSkillAssetUrls(html, 'foo', (skillId) => `?previewScope=${skillId}-scope`)).toBe(
+      `<img src='/api/skills/open-design-landing/assets/hero.png?previewScope=open-design-landing-scope' /><a href="/api/skills/skill-two/assets/guide.pdf?previewScope=skill-two-scope"></a>`,
     );
   });
 
@@ -44,5 +47,24 @@ describe('rewriteSkillAssetUrls', () => {
 
   it('returns non-string input unchanged', () => {
     expect(rewriteSkillAssetUrls('', 'foo')).toBe('');
+  });
+});
+
+describe('rewriteSkillCssAssetUrls', () => {
+  it('scopes nested relative resources against the stylesheet directory', () => {
+    const css = `@font-face{src:url('./inter/font.woff2?v=2#face')} .hero{background:url(../images/hero.png)}`;
+    expect(rewriteSkillCssAssetUrls(
+      css,
+      'motion',
+      'fonts/local.css',
+      '?previewScope=scope-1',
+    )).toBe(
+      `@font-face{src:url('/api/skills/motion/assets/fonts/inter/font.woff2?v=2&previewScope=scope-1#face')} .hero{background:url(/api/skills/motion/assets/images/hero.png?previewScope=scope-1)}`,
+    );
+  });
+
+  it('leaves absolute, data, and escaping URLs untouched', () => {
+    const css = `.a{src:url(data:font/woff2;base64,AAAA)}.b{src:url('/fonts/x.woff2')}.c{src:url('../../../secret')}`;
+    expect(rewriteSkillCssAssetUrls(css, 'motion', 'fonts/local.css', '?previewScope=x')).toBe(css);
   });
 });

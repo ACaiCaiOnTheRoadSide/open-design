@@ -1,6 +1,6 @@
 import express from 'express';
 import type http from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
@@ -67,6 +67,7 @@ async function fixture() {
     dir: string;
     source: 'user';
   }>();
+  await writeFile(path.join(root, 'outside.txt'), 'outside-bytes');
   for (const workspaceId of ['workspace-a', 'workspace-b']) {
     const dir = path.join(root, workspaceId);
     await mkdir(path.join(dir, 'assets'), { recursive: true });
@@ -75,6 +76,9 @@ async function fixture() {
       `<img src="./assets/secret.txt"><p>${workspaceId}</p>`,
     );
     await writeFile(path.join(dir, 'assets', 'secret.txt'), `${workspaceId}-bytes`);
+    if (workspaceId === 'workspace-a') {
+      await symlink(path.join(root, 'outside.txt'), path.join(dir, 'assets', 'leak.txt'));
+    }
     entries.set(workspaceId, {
       id: 'same-skill',
       name: 'Same skill',
@@ -203,6 +207,16 @@ describe('Skill example and asset Workspace authority', () => {
     ]);
     expect(await assetA.text()).toBe('workspace-a-bytes');
     expect(await assetB.text()).toBe('workspace-b-bytes');
+  });
+
+  it('rejects asset symlinks that escape the skill assets directory', async () => {
+    const baseUrl = await fixture();
+    const response = await fetch(
+      `${baseUrl}/api/skills/same-skill/assets/leak.txt?workspaceId=workspace-a&workspaceMemberId=member-a`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('invalid asset path');
   });
 
   it.each(['workspace-removed', 'workspace-outage'] as const)(

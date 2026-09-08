@@ -977,12 +977,17 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       const workspaceQuery = authority
         ? `workspaceId=${encodeURIComponent(authority.workspaceId)}&workspaceMemberId=${encodeURIComponent(authority.workspaceMemberId)}`
         : '';
+      const assetQueries = new Map<string, string>();
       const scopedAssetQuery = (skillId: string): string => {
+        const cached = assetQueries.get(skillId);
+        if (cached !== undefined) return cached;
         const previewScope = ctx.skillPreviewScopes?.mint(skillId, authority);
         const assetQuery = previewScope
           ? `previewScope=${encodeURIComponent(previewScope)}`
           : workspaceQuery;
-        return assetQuery ? `?${assetQuery}` : '';
+        const query = assetQuery ? `?${assetQuery}` : '';
+        assetQueries.set(skillId, query);
+        return query;
       };
 
       // 1. Derived `<parent>:<child>` id — resolve straight to the matching
@@ -1004,7 +1009,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           const html = await fs.promises.readFile(candidate, 'utf8');
           return res
             .type('text/html')
-            .send(rewriteSkillAssetUrls(html, parent.id, scopedAssetQuery(parent.id)));
+            .send(rewriteSkillAssetUrls(html, parent.id, scopedAssetQuery));
         }
         return res
           .status(404)
@@ -1022,7 +1027,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
         const html = await fs.promises.readFile(baked, 'utf8');
         return res
           .type('text/html')
-          .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery(skill.id)));
+          .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery));
       }
 
       const tpl = path.join(skill.dir, 'assets', 'template.html');
@@ -1034,7 +1039,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
           const assembled = assembleExample(tplHtml, slidesHtml, skill.name);
           return res
             .type('text/html')
-            .send(rewriteSkillAssetUrls(assembled, skill.id, scopedAssetQuery(skill.id)));
+            .send(rewriteSkillAssetUrls(assembled, skill.id, scopedAssetQuery));
         } catch {
           // Fall through to raw template on read failure.
         }
@@ -1043,14 +1048,14 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
         const html = await fs.promises.readFile(tpl, 'utf8');
         return res
           .type('text/html')
-          .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery(skill.id)));
+          .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery));
       }
       const idx = path.join(skill.dir, 'assets', 'index.html');
       if (fs.existsSync(idx)) {
         const html = await fs.promises.readFile(idx, 'utf8');
         return res
           .type('text/html')
-          .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery(skill.id)));
+          .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery));
       }
 
       // Friendly fallback for skills that aggregate examples in a sibling
@@ -1078,7 +1083,7 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
             const html = await fs.promises.readFile(direct, 'utf8');
             return res
               .type('text/html')
-              .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery(skill.id)));
+              .send(rewriteSkillAssetUrls(html, skill.id, scopedAssetQuery));
           } catch {
             continue;
           }
@@ -1138,8 +1143,21 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       if (target !== assetsRoot && !target.startsWith(assetsRoot + path.sep)) {
         return res.status(400).type('text/plain').send('invalid asset path');
       }
-      if (!fs.existsSync(target)) {
+      let realAssetsRoot: string;
+      let realTarget: string;
+      try {
+        [realAssetsRoot, realTarget] = await Promise.all([
+          fs.promises.realpath(assetsRoot),
+          fs.promises.realpath(target),
+        ]);
+      } catch {
         return res.status(404).type('text/plain').send('asset not found');
+      }
+      if (
+        realTarget !== realAssetsRoot
+        && !realTarget.startsWith(realAssetsRoot + path.sep)
+      ) {
+        return res.status(400).type('text/plain').send('invalid asset path');
       }
       // The example HTML is rendered inside a sandboxed iframe (Origin: null).
       // Mirror the project /raw route's allowance so the iframe can fetch the
@@ -1147,10 +1165,27 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
       if (req.headers.origin === 'null') {
         res.header('Access-Control-Allow-Origin', '*');
       }
-      const contentType = path.extname(target).toLowerCase() === '.woff2'
+      const extension = path.extname(realTarget).toLowerCase();
+      const contentType = extension === '.woff2'
         ? 'font/woff2'
-        : mimeFor(target);
-      await res.type(contentType).sendFile(target);
+        : mimeFor(realTarget);
+      const navigationQuery = previewScope
+        ? `?previewScope=${encodeURIComponent(previewScope)}`
+        : authority
+          ? `?workspaceId=${encodeURIComponent(authority.workspaceId)}&workspaceMemberId=${encodeURIComponent(authority.workspaceMemberId)}`
+          : '';
+      if (extension === '.css' && navigationQuery) {
+        const css = await fs.promises.readFile(realTarget, 'utf8');
+        return res
+          .type(contentType)
+          .send(rewriteSkillCssAssetUrls(
+            css,
+            skill.id,
+            relPath,
+            navigationQuery,
+          ));
+      }
+      await res.type(contentType).sendFile(realTarget);
     } catch (err: any) {
       res.status(500).type('text/plain').send(String(err));
     }
@@ -1569,14 +1604,53 @@ export function assembleExample(templateHtml: string, slidesHtml: string, title:
     .replace(/<title>.*?<\/title>/, () => `<title>${title} | OpenDesign Example</title>`);
 }
 
+export function rewriteSkillCssAssetUrls(
+  css: string,
+  skillId: string,
+  cssRelativePath: string,
+  navigationQuery = '',
+): string {
+  if (typeof css !== 'string' || css.length === 0) return css;
+  const cssDirectory = path.posix.dirname(cssRelativePath.replaceAll('\\', '/'));
+  return css.replace(
+    /(url\(\s*)(['"]?)([^'"\s)]+)(\2)(\s*\))/gi,
+    (match, prefix, openQuote, rawUrl, closeQuote, suffix) => {
+      if (
+        rawUrl.startsWith('/')
+        || rawUrl.startsWith('#')
+        || /^[a-z][a-z0-9+.-]*:/iu.test(rawUrl)
+      ) {
+        return match;
+      }
+      const suffixIndex = rawUrl.search(/[?#]/u);
+      const relativeAssetPath = suffixIndex >= 0 ? rawUrl.slice(0, suffixIndex) : rawUrl;
+      const originalSuffix = suffixIndex >= 0 ? rawUrl.slice(suffixIndex) : '';
+      const resolvedPath = path.posix.normalize(path.posix.join(cssDirectory, relativeAssetPath));
+      if (resolvedPath === '..' || resolvedPath.startsWith('../')) return match;
+      const hashIndex = originalSuffix.indexOf('#');
+      const queryPart = hashIndex >= 0 ? originalSuffix.slice(0, hashIndex) : originalSuffix;
+      const fragment = hashIndex >= 0 ? originalSuffix.slice(hashIndex) : '';
+      const scopedQuery = navigationQuery
+        ? `${queryPart}${queryPart ? '&' : '?'}${navigationQuery.slice(1)}`
+        : queryPart;
+      const assetUrl = `/api/skills/${encodeURIComponent(skillId)}/assets/${resolvedPath}${scopedQuery}${fragment}`;
+      return `${prefix}${openQuote}${assetUrl}${closeQuote}${suffix}`;
+    },
+  );
+}
+
 export function rewriteSkillAssetUrls(
   html: string,
   skillId: string,
-  workspaceQuery = '',
+  workspaceQuery: string | ((resolvedSkillId: string) => string) = '',
 ) {
   if (typeof html !== 'string' || html.length === 0) return html;
-  const assetUrl = (resolvedSkillId: string, relPath: string): string =>
-    `/api/skills/${encodeURIComponent(resolvedSkillId)}/assets/${relPath}${workspaceQuery}`;
+  const assetUrl = (resolvedSkillId: string, relPath: string): string => {
+    const query = typeof workspaceQuery === 'function'
+      ? workspaceQuery(resolvedSkillId)
+      : workspaceQuery;
+    return `/api/skills/${encodeURIComponent(resolvedSkillId)}/assets/${relPath}${query}`;
+  };
   const withAttributes = html.replace(
     /(\s(?:src|href)\s*=\s*)(['"])((?:\.\.\/([^/'"#?]+)\/)?(?:\.\/)?assets\/([^'"#?]+))(\2)/gi,
     (_match, attr, openQuote, _fullPath, siblingSkillId, relPath, closeQuote) =>
