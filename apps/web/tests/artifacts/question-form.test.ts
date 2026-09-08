@@ -349,6 +349,18 @@ describe('splitOnQuestionForms', () => {
     warn.mockRestore();
   });
 
+  it('reports the same malformed persisted form only once across repeated renders', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const input = '<question-form>dedupe-invalid-payload</question-form>';
+
+    splitOnQuestionForms(input);
+    splitOnQuestionForms(input);
+    splitOnQuestionForms(input);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
   it('keeps unterminated tags as prose without swallowing trailing text', () => {
     const out = splitOnQuestionForms(`leading <ask-question>${VALID_BODY}`);
     expect(out).toHaveLength(1);

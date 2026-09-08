@@ -135,6 +135,8 @@ const INVALID_QUESTION_FORM_FALLBACK =
 // own close-tag string. Treat the lookup case-insensitively at scan
 // time so `<Question-Form>` and `<ASK-QUESTION>` still parse.
 const OPEN_RE = /<(question-form|ask-question)\b([^>]*)>/i;
+const MAX_REPORTED_PARSE_FAILURES = 100;
+const reportedParseFailures = new Set<string>();
 
 export function splitOnQuestionForms(input: string): FormSegment[] {
   const out: FormSegment[] = [];
@@ -738,11 +740,31 @@ function recordQuestionFormParseFailure(
   tagName: string,
   body: string,
 ): void {
+  const normalizedReason = reason ?? 'unsupported-payload';
+  const fingerprint = `${normalizedReason}:${tagName}:${body.length}:${hashString(body)}`;
+  if (reportedParseFailures.has(fingerprint)) return;
+
+  // Parsing runs from several render-derived selectors. Keep diagnostics useful
+  // without logging the same persisted malformed message on every React render.
+  if (reportedParseFailures.size >= MAX_REPORTED_PARSE_FAILURES) {
+    const oldest = reportedParseFailures.values().next().value;
+    if (oldest !== undefined) reportedParseFailures.delete(oldest);
+  }
+  reportedParseFailures.add(fingerprint);
   console.warn('[question-form] failed to render inline question form', {
-    reason: reason ?? 'unsupported-payload',
+    reason: normalizedReason,
     tagName,
     bodyLength: body.length,
   });
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function parseNumberAttr(raw: unknown): number | undefined {
