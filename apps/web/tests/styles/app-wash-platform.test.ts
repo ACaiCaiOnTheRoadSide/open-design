@@ -16,19 +16,17 @@ const lunarSceneSource = readFileSync(
 const appSource = readFileSync(new URL('../../src/App.tsx', import.meta.url), 'utf8');
 
 describe('desktop app wash platform contract', () => {
-  it('uses the design-prompt lunar globe only for explicit or system dark mode', () => {
-    expect(existsSync(new URL('../../public/backgrounds/lunar-surface.jpg', import.meta.url))).toBe(true);
+  it('uses only the lunar video for explicit or system dark mode', () => {
     expect(existsSync(new URL('../../public/backgrounds/lunar-globe-loop.mp4', import.meta.url))).toBe(true);
+    expect(existsSync(new URL('../../public/backgrounds/lunar-globe-fallback.jpg', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../../public/backgrounds/lunar-smoke-dark.png', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../../public/backgrounds/lunar-surface.jpg', import.meta.url))).toBe(false);
     expect(appSource).toContain("import { LunarSceneBackground } from './components/LunarSceneBackground'");
     expect(appSource).toContain('<LunarSceneBackground theme={config.theme} />');
-    expect(lunarSceneSource).toContain("image.src = '/backgrounds/lunar-surface.jpg'");
-    expect(lunarSceneSource).toContain("className=\"app-lunar-atmosphere\"");
     expect(lunarSceneSource).toContain("className=\"app-lunar-video\"");
-    expect(lunarSceneSource).toContain("setFallback('video')");
-    expect(lunarSceneSource).not.toContain("setFallback('image')");
+    expect(lunarSceneSource).toContain('src="/backgrounds/lunar-globe-loop.mp4"');
+    expect(lunarSceneSource).not.toContain('canvas');
     expect(lunarSceneSource).not.toContain('poster=');
-    expect(lunarSceneSource).toContain('portrait ? -0.2 : -0.52');
-    expect(lunarSceneSource).toContain('Math.min(0.98, aspect * 0.78)');
     expect(appWashCss).toMatch(/\[data-theme='dark'\]\s*{\s*--app-wash: var\(--dark-lunar-wash\)/);
     expect(appWashCss).toMatch(/html:not\(\[data-theme\]\)\s*{\s*--app-wash: var\(--dark-lunar-wash\)/);
     expect(homeHeroCss).toMatch(/\[data-theme='dark'\] body:has\(> \.home-view__pearl-fluid\)\s*{\s*--app-wash: var\(--dark-lunar-wash\)/);

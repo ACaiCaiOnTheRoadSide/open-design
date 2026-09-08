@@ -88,9 +88,8 @@ body::before {
   background-repeat: no-repeat;
 }
 
-/* The dark scene matches design-prompt's textured WebGL globe. The app shell
-   forms the content layer above it; the canvas itself never receives input. */
-.app-lunar-atmosphere,
+/* The dark scene is a single video layer. The app shell forms the content
+   layer above it; the video itself never receives input. */
 .app-lunar-video {
   position: fixed;
   inset: 0;
@@ -98,10 +97,6 @@ body::before {
   width: 100%;
   height: 100%;
   pointer-events: none;
-}
-.app-lunar-atmosphere {
-  opacity: 1;
-  mix-blend-mode: normal;
 }
 .app-lunar-video {
   object-fit: cover;
