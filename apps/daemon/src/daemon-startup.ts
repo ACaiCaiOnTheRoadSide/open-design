@@ -166,7 +166,10 @@ export function createDaemonSignalStop(
     logError?: (message: string, error: unknown) => void;
   } = {},
 ): () => Promise<void> {
-  const exit = options.exit ?? ((code: number) => process.exit(code));
+  // Let Node drain native addon cleanup hooks after the graceful barrier.
+  // A forced process.exit() can tear down the Environment while native
+  // wrappers (for example better-sqlite3 Statements) are still finalizing.
+  const exit = options.exit ?? ((code: number) => { process.exitCode = code; });
   const logError = options.logError ?? ((message: string, error: unknown) => console.error(message, error));
   let signalStopPromise: Promise<void> | undefined;
 

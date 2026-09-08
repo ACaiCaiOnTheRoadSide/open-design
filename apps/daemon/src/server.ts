@@ -15830,6 +15830,7 @@ export async function startServer({
 
           await attempt('plugin intents', () => pluginIntentReconciler?.shutdown());
           await attempt('active runs', () => design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() }));
+          await attempt('collab publish watcher', async () => collabPublishWatcher.dispose());
           await attempt('terminals', () => terminalService.shutdownActive());
           await attempt('browser sessions', () => browserSessionService.shutdownActive());
           // Active run teardown may perform the final project writes. Flush
@@ -15843,6 +15844,9 @@ export async function startServer({
           stopMemoryHistoryOutbox();
           setBusinessProjectFactsSink(null);
           await attempt('business facts', () => businessFactsOutbox.stop());
+          if (!server?.listening) {
+            await attempt('SQLite database', async () => closeDatabase());
+          }
           if (daemonDbConfig.kind === 'postgres') {
             await attempt('PostgreSQL pool', () => closePool());
           }

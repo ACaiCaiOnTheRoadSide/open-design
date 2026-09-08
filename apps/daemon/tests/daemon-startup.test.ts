@@ -64,6 +64,18 @@ describe('daemon runtime shutdown ordering', () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it('does not force process exit after graceful shutdown', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const onSignal = createDaemonSignalStop({ stop: async () => undefined });
+
+    await onSignal();
+    await Promise.resolve();
+
+    expect(process.exitCode).toBe(0);
+    process.exitCode = previousExitCode;
+  });
+
   it('propagates a graceful service barrier failure after HTTP drain', async () => {
     const server = {
       listening: true,
