@@ -15896,8 +15896,14 @@ export async function startServer({
         daemonShutdownPromise = (async () => {
           const failures: Array<{ stage: string; error: unknown }> = [];
           const attempt = async (stage: string, work: () => Promise<unknown> | undefined) => {
+            const startedAt = Date.now();
+            console.error('[od] graceful shutdown stage started', { stage });
             try {
               await work();
+              console.error('[od] graceful shutdown stage completed', {
+                stage,
+                durationMs: Date.now() - startedAt,
+              });
             } catch (error) {
               failures.push({ stage, error });
               console.error(`[od] graceful shutdown stage failed: ${stage}`, error);

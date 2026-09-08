@@ -43,25 +43,35 @@ describe('daemon runtime shutdown ordering', () => {
     ]);
   });
 
-  it('a second termination signal waits for the same graceful stop', async () => {
+  it('logs the first termination signal and waits for one graceful stop', async () => {
     let finishStop!: () => void;
     const pendingStop = new Promise<void>((resolve) => { finishStop = resolve; });
     const stop = vi.fn(() => pendingStop);
     const exit = vi.fn();
-    const onSignal = createDaemonSignalStop({ stop }, { exit });
+    const logInfo = vi.fn();
+    const onSignal = createDaemonSignalStop({ stop }, { exit, logInfo });
 
-    const first = onSignal();
-    const second = onSignal();
+    const first = onSignal('SIGTERM');
+    const second = onSignal('SIGINT');
 
     expect(second).toBe(first);
     expect(stop).toHaveBeenCalledTimes(1);
     expect(exit).not.toHaveBeenCalled();
+    expect(logInfo).toHaveBeenCalledTimes(1);
+    expect(logInfo).toHaveBeenCalledWith(
+      '[od] termination signal received',
+      expect.objectContaining({ signal: 'SIGTERM', pid: process.pid }),
+    );
 
     finishStop();
     await first;
     await Promise.resolve();
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(0);
+    expect(logInfo).toHaveBeenLastCalledWith(
+      '[od] graceful shutdown completed',
+      expect.objectContaining({ signal: 'SIGTERM', pid: process.pid }),
+    );
   });
 
   it('does not force process exit after graceful shutdown', async () => {

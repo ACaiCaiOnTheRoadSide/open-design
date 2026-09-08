@@ -164,20 +164,36 @@ export function createDaemonSignalStop(
   options: {
     exit?: (code: number) => void;
     logError?: (message: string, error: unknown) => void;
+    logInfo?: (message: string, details: Record<string, unknown>) => void;
   } = {},
-): () => Promise<void> {
+): (signal?: NodeJS.Signals) => Promise<void> {
   // Let Node drain native addon cleanup hooks after the graceful barrier.
   // A forced process.exit() can tear down the Environment while native
   // wrappers (for example better-sqlite3 Statements) are still finalizing.
   const exit = options.exit ?? ((code: number) => { process.exitCode = code; });
   const logError = options.logError ?? ((message: string, error: unknown) => console.error(message, error));
+  const logInfo = options.logInfo ?? ((message: string, details: Record<string, unknown>) => console.error(message, details));
   let signalStopPromise: Promise<void> | undefined;
 
-  return () => {
+  return (signal) => {
     if (!signalStopPromise) {
+      const startedAt = Date.now();
+      logInfo('[od] termination signal received', {
+        signal: signal ?? 'unknown',
+        pid: process.pid,
+        uptimeSeconds: Math.round(process.uptime()),
+        memory: process.memoryUsage(),
+      });
       signalStopPromise = runtime.stop();
       void signalStopPromise.then(
-        () => exit(0),
+        () => {
+          logInfo('[od] graceful shutdown completed', {
+            signal: signal ?? 'unknown',
+            pid: process.pid,
+            durationMs: Date.now() - startedAt,
+          });
+          exit(0);
+        },
         (error) => {
           logError('daemon graceful shutdown failed', error);
           exit(1);
@@ -207,7 +223,15 @@ export async function runDaemonCliStartup(argv: string[], options: { printHelp?:
     openBrowser: open,
     port,
   });
+  console.error('[od] process diagnostics', {
+    pid: process.pid,
+    ppid: process.ppid,
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    database: (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase(),
+  });
   const stop = createDaemonSignalStop(runtime);
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
+  process.on('SIGINT', () => { void stop('SIGINT'); });
+  process.on('SIGTERM', () => { void stop('SIGTERM'); });
 }

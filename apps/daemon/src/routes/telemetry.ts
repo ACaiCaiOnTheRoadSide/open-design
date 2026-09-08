@@ -592,6 +592,16 @@ function installFatalTelemetryHandlers({
   ): void => {
     if (fatalShuttingDown) return;
     fatalShuttingDown = true;
+    // Fatal handlers previously reported only to analytics. If process.exit()
+    // then trips a native add-on teardown assertion, Kubernetes logs show only
+    // that secondary crash and hide the JavaScript fault that initiated exit.
+    console.error('[od] fatal process event', {
+      eventName,
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      memory: process.memoryUsage(),
+      ...properties,
+    });
     const flushSequence = (async () => {
       try {
         await analyticsService.captureSafety({
