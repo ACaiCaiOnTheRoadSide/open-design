@@ -4,7 +4,9 @@ import {
   composeTemplateSkillInstructions,
   downloadTemplateArchive,
   isTemplateHandoffUrl,
+  nextTemplateImportFolderName,
   prepareTemplateArchive,
+  prepareTemplateArchiveBuffer,
 } from '../src/services/template-import.js';
 
 describe('template archive import', () => {
@@ -37,6 +39,25 @@ describe('template archive import', () => {
     ]);
     expect(files.find((file) => file.name === 'DESIGN.md')?.content.toString('utf8'))
       .toBe('# Design');
+  });
+
+  it('allocates a new folder instead of overwriting an existing template', async () => {
+    const occupied = new Set(['template', 'template-2']);
+    await expect(nextTemplateImportFolderName(
+      'template',
+      async (candidate) => occupied.has(candidate),
+    )).resolves.toBe('template-3');
+  });
+
+  it('prepares an uploaded ZIP with the same path safety checks', async () => {
+    const zip = new JSZip();
+    zip.file('template.json', JSON.stringify({ id: 'catalog-template' }));
+    zip.file('index.html', '<main />');
+    const archive = await zip.generateAsync({ type: 'nodebuffer' });
+
+    const prepared = await prepareTemplateArchiveBuffer(archive);
+    expect(prepared.templateId).toBe('catalog-template');
+    expect(prepared.files.map((file) => file.name)).toEqual(['index.html']);
   });
 
   it.each([

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { load } from 'cheerio';
-import type { Express, Request, Response } from 'express';
+import { raw, type Express, type Request, type Response } from 'express';
 import type { LintArtifactRequest, LintArtifactResponse } from '@open-design/contracts';
 import {
   PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
@@ -68,7 +68,9 @@ import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
 import {
   downloadTemplateArchive,
+  nextTemplateImportFolderName,
   prepareTemplateArchive,
+  prepareTemplateArchiveBuffer,
 } from '../../services/template-import.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId, ProjectDirectoryRollbackError } from '../../projects.js';
@@ -4267,91 +4269,144 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     }
   });
 
-  app.post('/api/projects/:id/template-import', async (req, res) => {
-    const project = getProject(db, req.params.id);
-    if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
-    if (!await enforceWorkspaceProjectMutation(
-      req,
-      res,
-      sendApiError,
-      getWorkspaceProject,
-      getWorkspaceProjectByProjectId,
-      db,
-      project.id,
-      'writeFiles',
-    )) return;
-    const source = typeof req.body?.templateUrl === 'string' ? req.body.templateUrl.trim() : '';
-    if (!source) return sendApiError(res, 400, 'BAD_REQUEST', 'templateUrl is required');
-    if (typeof project.metadata?.baseDir === 'string') {
-      return sendApiError(res, 400, 'BAD_REQUEST', 'template import requires a managed project');
-    }
-    await mkdir(PROJECTS_DIR, { recursive: true });
-    const destination = path.join(PROJECTS_DIR, project.id);
-    if (await lstat(destination).then(() => true).catch(() => false)) {
-      return sendApiError(res, 409, 'PROJECT_NOT_EMPTY', 'template import requires a new project');
-    }
-    let stageRoot: string | undefined;
-    try {
-      const archive = prepareTemplateArchive(await downloadTemplateArchive(source));
-      stageRoot = await mkdtemp(path.join(PROJECTS_DIR, '.template-import-'));
-      await ensureProject(stageRoot, project.id, project.metadata);
-      for (const file of archive.files) {
-        await writeProjectFile(
-          stageRoot,
-          project.id,
-          file.name,
-          file.content,
-          { overwrite: false },
-          project.metadata,
-        );
-      }
-      await rename(path.join(stageRoot, project.id), destination);
-      const hasSkill = archive.skillPath !== null;
-      const hasFiles = archive.files.some((file) => file.name !== archive.skillPath);
-      const existingPrompt = typeof project.pendingPrompt === 'string'
-        ? project.pendingPrompt.trim()
-        : '';
-      const importedPendingPrompt = archive.prompt
-        ? existingPrompt
-          ? `${existingPrompt}\n\nSelected template brief:\n${archive.prompt}`
-          : archive.prompt
-        : existingPrompt || (hasSkill || hasFiles
-          ? 'Create a design using the selected template.'
-          : project.pendingPrompt);
-      updateProject(db, project.id, {
-        pendingPrompt: importedPendingPrompt,
-        metadata: {
-          ...project.metadata,
-          templateHandoff: {
-            ...(archive.templateId ? { templateId: archive.templateId } : {}),
-            ...(archive.title ? { title: archive.title } : {}),
-            ...(archive.skillPath ? { skillPath: archive.skillPath } : {}),
-          },
-        },
-      });
-      res.json({
-        projectId: project.id,
-        fileCount: archive.files.length,
-        capabilities: {
-          hasFiles,
-          hasSkill,
-          hasPrompt: archive.prompt !== null,
-        },
-        ...(archive.prompt ? { prompt: archive.prompt } : {}),
-        ...(archive.title ? { title: archive.title } : {}),
-      });
-    } catch (error) {
-      sendApiError(
+  app.post(
+    '/api/projects/:id/template-import',
+    raw({ type: ['application/zip', 'application/octet-stream'], limit: '50mb' }),
+    async (req, res) => {
+      const project = getProject(db, req.params.id);
+      if (!project) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+      if (!await enforceWorkspaceProjectMutation(
+        req,
         res,
-        400,
-        'TEMPLATE_IMPORT_FAILED',
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      if (stageRoot) {
-        await rm(stageRoot, { recursive: true, force: true }).catch(() => undefined);
+        sendApiError,
+        getWorkspaceProject,
+        getWorkspaceProjectByProjectId,
+        db,
+        project.id,
+        'writeFiles',
+      )) return;
+      const uploadedArchive = Buffer.isBuffer(req.body) ? req.body : null;
+      const source = typeof req.body?.templateUrl === 'string' ? req.body.templateUrl.trim() : '';
+      const append = uploadedArchive !== null || req.body?.append === true;
+      if (!source && !uploadedArchive) {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'templateUrl or ZIP archive is required');
       }
-    }
+      if (typeof project.metadata?.baseDir === 'string') {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'template import requires a managed project');
+      }
+      await mkdir(PROJECTS_DIR, { recursive: true });
+      const destination = path.join(PROJECTS_DIR, project.id);
+      if (!append && await lstat(destination).then(() => true).catch(() => false)) {
+        return sendApiError(res, 409, 'PROJECT_NOT_EMPTY', 'template import requires a new project');
+      }
+      let stageRoot: string | undefined;
+      try {
+        const archive = uploadedArchive
+          ? await prepareTemplateArchiveBuffer(uploadedArchive)
+          : prepareTemplateArchive(await downloadTemplateArchive(source));
+        stageRoot = await mkdtemp(path.join(PROJECTS_DIR, '.template-import-'));
+        await ensureProject(stageRoot, project.id, project.metadata);
+        if (append) {
+          await ensureProject(PROJECTS_DIR, project.id, project.metadata);
+          const baseName = (archive.templateId || archive.title || 'template')
+            .trim()
+            .replace(/[^a-zA-Z0-9._-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 80) || 'template';
+          const folderName = await nextTemplateImportFolderName(
+            baseName,
+            (candidate) => lstat(path.join(destination, 'templates', candidate))
+              .then(() => true)
+              .catch(() => false),
+          );
+          const importPrefix = path.posix.join('templates', folderName);
+          for (const file of archive.files) {
+            await writeProjectFile(
+              stageRoot,
+              project.id,
+              path.posix.join(importPrefix, file.name),
+              file.content,
+              { overwrite: false },
+              project.metadata,
+            );
+          }
+          const stagedImport = path.join(stageRoot, project.id, importPrefix);
+          const importedDestination = path.join(destination, importPrefix);
+          await mkdir(path.dirname(importedDestination), { recursive: true });
+          await rename(stagedImport, importedDestination);
+          const entry = archive.files.find((file) => /(^|\/)index\.html?$/i.test(file.name))
+            ?? archive.files.find((file) => /(^|\/)example\.html?$/i.test(file.name))
+            ?? archive.files.find((file) => /\.html?$/i.test(file.name));
+          return res.json({
+            projectId: project.id,
+            fileCount: archive.files.length,
+            capabilities: {
+              hasFiles: archive.files.length > 0,
+              hasSkill: archive.skillPath !== null,
+              hasPrompt: archive.prompt !== null,
+            },
+            ...(entry ? { entryFile: path.posix.join(importPrefix, entry.name) } : {}),
+            ...(archive.prompt ? { prompt: archive.prompt } : {}),
+            ...(archive.title ? { title: archive.title } : {}),
+          });
+        }
+        for (const file of archive.files) {
+          await writeProjectFile(
+            stageRoot,
+            project.id,
+            file.name,
+            file.content,
+            { overwrite: false },
+            project.metadata,
+          );
+        }
+        await rename(path.join(stageRoot, project.id), destination);
+        const hasSkill = archive.skillPath !== null;
+        const hasFiles = archive.files.some((file) => file.name !== archive.skillPath);
+        const existingPrompt = typeof project.pendingPrompt === 'string'
+          ? project.pendingPrompt.trim()
+          : '';
+        const importedPendingPrompt = archive.prompt
+          ? existingPrompt
+            ? `${existingPrompt}\n\nSelected template brief:\n${archive.prompt}`
+            : archive.prompt
+          : existingPrompt || (hasSkill || hasFiles
+            ? 'Create a design using the selected template.'
+            : project.pendingPrompt);
+        updateProject(db, project.id, {
+          pendingPrompt: importedPendingPrompt,
+          metadata: {
+            ...project.metadata,
+            templateHandoff: {
+              ...(archive.templateId ? { templateId: archive.templateId } : {}),
+              ...(archive.title ? { title: archive.title } : {}),
+              ...(archive.skillPath ? { skillPath: archive.skillPath } : {}),
+            },
+          },
+        });
+        res.json({
+          projectId: project.id,
+          fileCount: archive.files.length,
+          capabilities: {
+            hasFiles,
+            hasSkill,
+            hasPrompt: archive.prompt !== null,
+          },
+          ...(archive.prompt ? { prompt: archive.prompt } : {}),
+          ...(archive.title ? { title: archive.title } : {}),
+        });
+      } catch (error) {
+        sendApiError(
+          res,
+          400,
+          'TEMPLATE_IMPORT_FAILED',
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        if (stageRoot) {
+          await rm(stageRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+      }
   });
 
   app.post('/api/projects/:id/duplicate', async (req, res) => {

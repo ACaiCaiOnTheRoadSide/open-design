@@ -74,6 +74,17 @@ export function prepareTemplateArchive(
   };
 }
 
+export async function nextTemplateImportFolderName(
+  baseName: string,
+  exists: (folderName: string) => Promise<boolean>,
+): Promise<string> {
+  for (let suffix = 1; suffix <= 10_000; suffix += 1) {
+    const candidate = suffix === 1 ? baseName : `${baseName}-${suffix}`;
+    if (!await exists(candidate)) return candidate;
+  }
+  throw new Error('could not allocate a collision-free template folder');
+}
+
 export function isTemplateHandoffUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
@@ -188,6 +199,15 @@ async function readZipFiles(archive: Buffer): Promise<TemplateArchiveFile[]> {
   }
   if (files.length === 0) throw new Error('template archive contains no files');
   return files;
+}
+
+export async function prepareTemplateArchiveBuffer(
+  archive: Buffer,
+): Promise<PreparedTemplateArchive> {
+  if (archive.length > MAX_ARCHIVE_BYTES) {
+    throw new Error('template archive exceeds 50 MiB');
+  }
+  return prepareTemplateArchive(await readZipFiles(archive));
 }
 
 export async function downloadTemplateArchive(

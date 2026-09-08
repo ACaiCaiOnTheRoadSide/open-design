@@ -2654,6 +2654,7 @@ export async function deletePreviewComment(
 export interface TemplateImportResult {
   projectId: string;
   fileCount: number;
+  entryFile?: string;
   capabilities: {
     hasFiles: boolean;
     hasSkill: boolean;
@@ -2667,6 +2668,7 @@ export async function importTemplateIntoProject(
   projectId: string,
   templateUrl: string,
   workspaceContext?: WorkspaceCollabContext | null,
+  options?: { append?: boolean },
 ): Promise<TemplateImportResult> {
   const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/template-import`,
@@ -2676,7 +2678,32 @@ export async function importTemplateIntoProject(
         'Content-Type': 'application/json',
         ...(workspaceContext ? workspaceProjectHeaders(workspaceContext) : {}),
       },
-      body: JSON.stringify({ templateUrl }),
+      body: JSON.stringify({ templateUrl, ...(options?.append ? { append: true } : {}) }),
+    },
+  );
+  if (!response.ok) {
+    const error = await readApiErrorBody(response);
+    throw new Error(error.message || response.statusText || 'Could not import template.');
+  }
+  const result = await response.json() as TemplateImportResult;
+  invalidateProjectFilesCache(projectId, workspaceContext);
+  return result;
+}
+
+export async function importTemplateArchiveIntoProject(
+  projectId: string,
+  archive: Blob,
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<TemplateImportResult> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/template-import`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/zip',
+        ...(workspaceContext ? workspaceProjectHeaders(workspaceContext) : {}),
+      },
+      body: archive,
     },
   );
   if (!response.ok) {

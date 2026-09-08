@@ -33,6 +33,7 @@ import {
   fetchProjectFolders,
   fetchPluginExampleHtml,
   fetchPluginPreviewHtml,
+  importTemplateArchiveIntoProject,
   projectFileUrl,
   projectRawUrl,
   applyLibraryAsset,
@@ -67,6 +68,15 @@ import { latestTodosFromEvents, type TodoItem } from '../runtime/todos';
 import { deliverableSlideNavForActiveFile, isSlideNavDeliverableNow } from '../runtime/slide-nav';
 import { buildSrcdoc } from '../runtime/srcdoc';
 import { removeSpeakerNotesFromHtml } from '../runtime/speaker-notes';
+import {
+  downloadOhMyInspireTemplate,
+  fetchOhMyInspireTemplates,
+  OhMyInspireCatalogError,
+  ohMyInspireCatalogPreviewUrl,
+  ohMyInspireTemplateDescription,
+  ohMyInspireTemplateTitle,
+  type OhMyInspireCatalogTemplate,
+} from '../runtime/ohmy-inspire-catalog';
 import { useDesignKit, hostnameOf, type KitColor } from '../runtime/design-kit';
 import { useKitModuleUpload } from '../runtime/kit-upload';
 import {
@@ -487,7 +497,7 @@ type ProjectPageKind =
   | 'liveArtifact';
 type ProjectPageCategoryId = 'recommended' | ProjectPageKind;
 type ProjectPagePresetId = string;
-type ProjectPagePresetSource = 'blank' | 'community';
+type ProjectPagePresetSource = 'blank' | 'community' | 'ohmyinspire';
 interface ProjectPagePreset {
   id: ProjectPagePresetId;
   category: ProjectPageKind;
@@ -501,6 +511,7 @@ interface ProjectPagePreset {
   plugin?: InstalledPluginRecord;
   pluginPreview?: PluginPreviewSpec;
   pluginHtmlPreview?: PluginPreviewSpec;
+  catalogTemplate?: OhMyInspireCatalogTemplate;
   featured?: boolean;
 }
 type PagePresetPreviewAvailability = Record<ProjectPagePresetId, 'ok' | 'missing'>;
@@ -1496,6 +1507,7 @@ export function FileWorkspace({
     useState<ProjectPagePresetId>(() => defaultPagePresetId(projectKind));
   const [pageCreating, setPageCreating] = useState(false);
   const [communityPluginPresets, setCommunityPluginPresets] = useState<ProjectPagePreset[]>([]);
+  const [ohMyInspirePresets, setOhMyInspirePresets] = useState<ProjectPagePreset[]>([]);
   // Transient feedback when a launcher "create" action (e.g. New Terminal)
   // fails on the daemon side, so the click is never a silent no-op.
   const [launcherToast, setLauncherToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
@@ -1656,9 +1668,10 @@ export function FileWorkspace({
   const projectPagePresets = useMemo(
     () => [
       ...BLANK_PAGE_PRESETS,
+      ...ohMyInspirePresets,
       ...(communityPluginPresets.length > 0 ? communityPluginPresets : COMMUNITY_PAGE_PRESETS),
     ],
-    [communityPluginPresets],
+    [communityPluginPresets, ohMyInspirePresets],
   );
   const sketchFiles = useMemo(
     () => visibleFiles.filter((file) => isSketchName(file.name)),
@@ -1669,6 +1682,19 @@ export function FileWorkspace({
     setPageCreatorCategory('slides');
     setPageCreatorPreviewId(defaultPagePresetId(projectKind));
   }, [projectId, projectKind]);
+
+  useEffect(() => {
+    if (!pageCreatorOpen) return;
+    const controller = new AbortController();
+    void fetchOhMyInspireTemplates(controller.signal)
+      .then((templates) => {
+        setOhMyInspirePresets(ohMyInspirePagePresets(templates, locale));
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) console.warn('[pages] OhMyInspire catalog request failed:', error);
+      });
+    return () => controller.abort();
+  }, [pageCreatorOpen, locale]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2731,6 +2757,39 @@ export function FileWorkspace({
     const target = nextHtmlPagePath(visibleFiles, pagePresetFileBaseName(preset, t, locale));
     setPageCreating(true);
     try {
+      if (preset.catalogTemplate) {
+        let archive: Blob;
+        try {
+          archive = await downloadOhMyInspireTemplate(preset.catalogTemplate.id);
+        } catch (error) {
+          if (!(error instanceof OhMyInspireCatalogError)
+            || error.code !== 'PAYMENT_CONFIRMATION_REQUIRED') throw error;
+          const chargeConfirmed = await confirm({
+            message: locale.startsWith('zh')
+              ? '首次导入该模板将消耗 5 积分，是否继续？当天重复导入同一模板不重复扣费。'
+              : 'Importing this template for the first time costs 5 credits. Re-importing it today is free. Continue?',
+            confirmLabel: locale.startsWith('zh') ? '消耗 5 积分并导入' : 'Spend 5 credits and import',
+            cancelLabel: t('common.cancel'),
+          });
+          if (!chargeConfirmed) return;
+          archive = await downloadOhMyInspireTemplate(preset.catalogTemplate.id, true);
+        }
+        const imported = await importTemplateArchiveIntoProject(
+          projectId,
+          archive,
+          workspaceContext,
+        );
+        if (!imported.entryFile) {
+          throw new Error('OhMyInspire template contains no HTML entry file.');
+        }
+        setPageCreatorOpen(false);
+        setPageCreatorQuery('');
+        setPageCreatorCategory('slides');
+        await onRefreshFiles();
+        await refreshProjectFolders();
+        openFile(imported.entryFile, { forcePersist: true });
+        return;
+      }
       const content = await contentForPagePreset(
         target,
         preset,
@@ -2755,7 +2814,12 @@ export function FileWorkspace({
       openFile(file.name, { forcePersist: true });
     } catch (err) {
       console.error('[pages] create blank page failed:', err);
-      setLauncherToast({ message: t('workspace.pageCreateFailed'), tone: 'error' });
+      setLauncherToast({
+        message: preset.catalogTemplate && err instanceof Error
+          ? err.message
+          : t('workspace.pageCreateFailed'),
+        tone: 'error',
+      });
     } finally {
       setPageCreating(false);
     }
@@ -6687,7 +6751,9 @@ function pageCreatorPresetVisible(preset: ProjectPagePreset): boolean {
 }
 
 function pagePresetSourceLabel(preset: ProjectPagePreset, t: TranslateFn): string {
-  return preset.source === 'blank' ? t('workspace.newBlankPage') : t('pluginsHome.title');
+  if (preset.source === 'blank') return t('workspace.newBlankPage');
+  if (preset.source === 'ohmyinspire') return 'OhMyInspire';
+  return t('pluginsHome.title');
 }
 
 function pagePresetRemotePreviewUrl(preset: ProjectPagePreset): string | null {
@@ -6835,6 +6901,68 @@ function communityPluginPagePresets(
       }
       return a.fileBaseName.localeCompare(b.fileBaseName);
     });
+}
+
+function projectPageKindForOhMyInspireTemplate(
+  template: OhMyInspireCatalogTemplate,
+): ProjectPageKind | null {
+  switch (template.mode || template.category) {
+    case 'deck':
+      return 'slides';
+    case 'prototype':
+    case 'webgl':
+      return 'prototype';
+    case 'document':
+      return 'document';
+    case 'live':
+      return 'liveArtifact';
+    case 'image':
+      return 'image';
+    case 'video':
+      return 'video';
+    case 'audio':
+      return 'audio';
+    default:
+      return null;
+  }
+}
+
+function ohMyInspirePagePresets(
+  templates: OhMyInspireCatalogTemplate[],
+  locale: Locale,
+): ProjectPagePreset[] {
+  return templates.flatMap((template, index) => {
+    const category = projectPageKindForOhMyInspireTemplate(template);
+    const previewUrl = ohMyInspireCatalogPreviewUrl(template.preview_url);
+    if (!category || !previewUrl) return [];
+    const title = ohMyInspireTemplateTitle(template, locale);
+    const description = ohMyInspireTemplateDescription(template, locale);
+    const preview: PluginPreviewSpec = {
+      kind: 'html',
+      src: previewUrl,
+      label: title,
+      source: 'preview',
+    };
+    return [{
+      id: `ohmyinspire-${template.id}`,
+      category,
+      title: pageText(
+        template.localizedName?.en?.trim() || template.name,
+        template.localizedName?.zh?.trim() || template.name,
+      ),
+      description: pageText(
+        template.localizedDescription?.en?.trim() || template.description,
+        template.localizedDescription?.zh?.trim() || template.description,
+      ),
+      icon: iconForPageKind(category),
+      fileBaseName: slugifyPageFileBaseName(title, template.id),
+      source: 'ohmyinspire' as const,
+      pluginPreview: preview,
+      pluginHtmlPreview: preview,
+      catalogTemplate: template,
+      featured: index < 6,
+    }];
+  });
 }
 
 function pagePresetFileBaseName(
