@@ -689,7 +689,7 @@ export function EntryTopRightCluster({
   // mount, so shells without an open menu spend zero requests on it.
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
   useEffect(() => {
-    if (!accountOpen) return;
+    if (WHITE_LABEL_SAAS || !accountOpen) return;
     // Refetch on EVERY open (the previous value stays visible while the read
     // is in flight, so there is no flicker). A fetch-once cache here went
     // stale the moment the user switched vela accounts mid-session — the menu
@@ -969,24 +969,26 @@ export function EntryTopRightCluster({
                     >
                       <Icon name="settings" size={15} /> {t('entry.accountSettings')}
                     </button>
-                    <button
-                      type="button"
-                      className="entry-nav-rail__menu-item"
-                      role="menuitem"
-                      aria-haspopup="dialog"
-                      aria-expanded={messageCenterOpen}
-                      data-testid="account-menu-message-center"
-                      onClick={() => {
-                        trackAccountAction('message_center');
-                        setAccountOpen(false);
-                        setMessageCenterOpen(true);
-                      }}
-                    >
-                      <Icon name="bell" size={15} /> {t('messageCenter.title')}
-                      {messageUnreadCount > 0 ? (
-                        <span className="entry-nav-rail__menu-item-dot" aria-hidden />
-                      ) : null}
-                    </button>
+                    {!WHITE_LABEL_SAAS ? (
+                      <button
+                        type="button"
+                        className="entry-nav-rail__menu-item"
+                        role="menuitem"
+                        aria-haspopup="dialog"
+                        aria-expanded={messageCenterOpen}
+                        data-testid="account-menu-message-center"
+                        onClick={() => {
+                          trackAccountAction('message_center');
+                          setAccountOpen(false);
+                          setMessageCenterOpen(true);
+                        }}
+                      >
+                        <Icon name="bell" size={15} /> {t('messageCenter.title')}
+                        {messageUnreadCount > 0 ? (
+                          <span className="entry-nav-rail__menu-item-dot" aria-hidden />
+                        ) : null}
+                      </button>
+                    ) : null}
                     {/* #5517's account menu goes 设置 → GitHub 帮助 → 功能建议 → 社交行,
                         with no theme row, no language submenu, and no divider in
                         between. Both controls still have a home in 设置·通用 (theme
@@ -1111,7 +1113,7 @@ export function EntryTopRightCluster({
           Signed-out shells have no account module — `EntryNavRail` mounts its
           own MessageCenter for that branch, so this one is context-gated to
           keep exactly one instance (and one unread poller) alive. */}
-      {context ? (
+      {context && !WHITE_LABEL_SAAS ? (
         <MessageCenter
           hideTrigger
           returnFocusRef={accountTriggerRef}
@@ -1793,23 +1795,24 @@ export function EntryNavRail({
             >
               <Icon name="settings" size={16} />
             </NavButton>
-            {/* Signed-out has no account menu (where the 消息中心 row lives when
-                signed in), which left the message panel with no opener at all.
-                It rides here as the rail item under 设置. */}
-            <NavButton
-              ariaLabel={t('messageCenter.title')}
-              label={t('messageCenter.title')}
-              onClick={() => setMessageCenterOpen(true)}
-              testId="entry-nav-message-center"
-              buttonRef={messageCenterRailRef}
-              ariaHasPopup="dialog"
-              ariaExpanded={messageCenterOpen}
-            >
-              <Icon name="bell" size={16} />
-              {messageUnreadCount > 0 ? (
-                <span className="entry-nav-rail__btn-dot" aria-hidden />
-              ) : null}
-            </NavButton>
+            {/* Vela owns this message center. Hosted white-label SaaS omits
+                both its opener and poller because it has no Vela account. */}
+            {!WHITE_LABEL_SAAS ? (
+              <NavButton
+                ariaLabel={t('messageCenter.title')}
+                label={t('messageCenter.title')}
+                onClick={() => setMessageCenterOpen(true)}
+                testId="entry-nav-message-center"
+                buttonRef={messageCenterRailRef}
+                ariaHasPopup="dialog"
+                ariaExpanded={messageCenterOpen}
+              >
+                <Icon name="bell" size={16} />
+                {messageUnreadCount > 0 ? (
+                  <span className="entry-nav-rail__btn-dot" aria-hidden />
+                ) : null}
+              </NavButton>
+            ) : null}
           </>
         )}
       </div>
@@ -1832,7 +1835,7 @@ export function EntryNavRail({
           item above is its opener). Signed-in mounts move into
           `EntryTopRightCluster` — context-gating both sides is what keeps
           exactly one panel (and one unread poller) alive. */}
-      {context ? null : (
+      {!context && !WHITE_LABEL_SAAS ? (
         <MessageCenter
           hideTrigger
           returnFocusRef={messageCenterRailRef}
@@ -1841,7 +1844,7 @@ export function EntryNavRail({
           onUnreadCountChange={setMessageUnreadCount}
           onOpenNotificationSettings={onOpenSettings ? () => onOpenSettings('notifications') : undefined}
         />
-      )}
+      ) : null}
 
       <InviteDialog
         open={inviteOpen}

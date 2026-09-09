@@ -18,6 +18,7 @@ import type { WorkspaceCollabContext } from '@open-design/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EntryNavRail, resetWorkspaceDirectoryCache } from '../../src/components/EntryNavRail';
+import { WHITE_LABEL_SAAS } from '../../src/features/whiteLabel';
 import { I18nProvider } from '../../src/i18n';
 
 function teamContext(): WorkspaceCollabContext {
@@ -79,7 +80,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('EntryNavRail message-center openers', () => {
+describe.skipIf(WHITE_LABEL_SAAS)('EntryNavRail message-center openers', () => {
   it('returns focus to the account trigger when the panel close button is clicked', async () => {
     renderRail(teamContext());
     const accountTrigger = screen.getByTestId('entry-nav-account');
@@ -136,5 +137,21 @@ describe('EntryNavRail message-center openers', () => {
     const menuRow = screen.getByTestId('account-menu-message-center');
     expect(menuRow.getAttribute('aria-haspopup')).toBe('dialog');
     expect(menuRow.getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+describe.runIf(WHITE_LABEL_SAAS)('white-label SaaS message center', () => {
+  it('does not render or request Vela message-center surfaces', async () => {
+    const signedIn = renderRail(teamContext());
+    fireEvent.click(screen.getByTestId('entry-nav-account'));
+    expect(screen.queryByTestId('account-menu-message-center')).toBeNull();
+    signedIn.unmount();
+
+    renderRail(null);
+    expect(screen.queryByTestId('entry-nav-message-center')).toBeNull();
+    await Promise.resolve();
+
+    const fetchMock = vi.mocked(fetch);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/integrations/vela/'))).toBe(false);
   });
 });
