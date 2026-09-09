@@ -97,9 +97,13 @@ describe('project preview containment routes', () => {
     await writeProjectFile(
       projectId,
       'pages/index.html',
-      '<!doctype html><title>Preview</title><link rel="stylesheet" href="../styles/app.css">',
+      '<!doctype html><html><head><title>Preview</title>'
+        + '<link rel="stylesheet" href="../styles/app.css"></head><body>'
+        + '<img src="/assets/hero.png"><script>const logo = "assets/runtime.png";</script>'
+        + '</body></html>',
     );
     await writeProjectFile(projectId, 'styles/app.css', 'body { color: black; }');
+    await writeProjectFile(projectId, 'assets/hero.png', 'root-image-bytes');
 
     const urlResponse = await fetch(
       `${baseUrl}/api/projects/${projectId}/preview-url?file=${encodeURIComponent('pages/index.html')}`,
@@ -135,10 +139,15 @@ describe('project preview containment routes', () => {
     expect(csp).toContain('sandbox allow-scripts allow-forms');
     expect(csp).toContain("connect-src 'none'");
     expect(csp).not.toContain('allow-same-origin');
-    expect(await previewResponse.text()).toContain('<title>Preview</title>');
-
     const scope = body.url.match(/\/preview\/([^/]+)\//u)?.[1];
     expect(scope).toBeTruthy();
+    const previewHtml = await previewResponse.text();
+    const previewRoot = `/api/projects/${projectId}/preview/${scope}/`;
+    expect(previewHtml).toContain('<title>Preview</title>');
+    expect(previewHtml).toContain(`<base href="${previewRoot}pages/">`);
+    expect(previewHtml).toContain(`<img src="${previewRoot}assets/hero.png">`);
+    expect(previewHtml).toContain('<script>const logo = "assets/runtime.png";</script>');
+    expect(previewHtml).toContain('data-od-url-root-navigation-bridge');
     const assetResponse = await fetch(
       `${baseUrl}/api/projects/${projectId}/preview/${scope}/styles/app.css`,
       { headers: { Origin: 'null' } },
@@ -147,6 +156,13 @@ describe('project preview containment routes', () => {
     expect(assetResponse.headers.get('access-control-allow-origin')).toBe('*');
     expect(assetResponse.headers.get('content-type')).toContain('text/css');
     expect(await assetResponse.text()).toContain('color: black');
+
+    const rootImageResponse = await fetch(
+      `${baseUrl}${previewRoot}assets/hero.png`,
+      { headers: { Origin: 'null' } },
+    );
+    expect(rootImageResponse.status).toBe(200);
+    expect(await rootImageResponse.text()).toBe('root-image-bytes');
   });
 
   it('preserves script contents while rewriting workspace-scoped asset URLs', async () => {

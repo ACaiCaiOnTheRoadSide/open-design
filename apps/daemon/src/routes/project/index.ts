@@ -578,6 +578,7 @@ const URL_PREVIEW_ROOT_NAVIGATION_BRIDGE = `<script data-od-url-root-navigation-
       var base = new URL(document.baseURI || window.location.href);
       var match = base.pathname.match(/^(.*\\/preview-assets\\/projects\\/[^/]+\\/preview\\/[^/]+\\/)/)
         || base.pathname.match(/^(.*\\/raw-signed\\/[^/]+\\/[^/]+\\/)/)
+        || base.pathname.match(/^(.*\\/api\\/projects\\/[^/]+\\/preview\\/[^/]+\\/)/)
         || base.pathname.match(/^(.*\\/api\\/projects\\/[^/]+\\/raw\\/)/);
       if (!match || base.origin !== window.location.origin) return null;
       var rootPath = value === '/' || value.indexOf('/?') === 0 || value.indexOf('/#') === 0
@@ -6130,9 +6131,8 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
   function injectProjectPreviewBase(
     html: string,
-    projectId: string,
     ownerFilePath: string,
-    scope: string,
+    projectRoot: string,
   ): string {
     // Respect an artifact-authored base URL. Only generated documents without
     // one need the containment base that keeps runtime-created relative URLs
@@ -6142,8 +6142,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     const dirSuffix = ownerDir === '.'
       ? ''
       : `${encodeProjectPathForUrl(ownerDir)}/`;
-    const baseTag = `<base href="/preview-assets/projects/${encodeURIComponent(projectId)}`
-      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}">`;
+    const baseTag = `<base href="${projectRoot}${dirSuffix}">`;
     const head = /<head\b[^>]*>/i;
     if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}`);
     return `${baseTag}${html}`;
@@ -6717,14 +6716,28 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         relPath,
         project.metadata,
         () => setProjectPreviewHeaders(res),
-        async (file) => maybeResolveVitePreviewHtml({
-          file,
-          projectId: project.id,
-          relPath,
-          metadata: project.metadata,
-          projectsRoot: PROJECTS_DIR,
-          readProjectFile,
-        }),
+        async (file) => {
+          const transformed = await maybeResolveVitePreviewHtml({
+            file,
+            projectId: project.id,
+            relPath,
+            metadata: project.metadata,
+            projectsRoot: PROJECTS_DIR,
+            readProjectFile,
+          });
+          if (!/^text\/html(?:;|$)/i.test(file.mime)) return transformed;
+          let html = Buffer.isBuffer(transformed) ? transformed.toString('utf8') : String(transformed);
+          html = injectBeforeBodyClose(
+            html,
+            'data-od-url-root-navigation-bridge',
+            URL_PREVIEW_ROOT_NAVIGATION_BRIDGE,
+          );
+          const hasAuthoredBase = /<base\b/i.test(html);
+          const projectRoot = `/api/projects/${encodeURIComponent(project.id)}`
+            + `/preview/${encodeURIComponent(scope)}/`;
+          const based = injectProjectPreviewBase(html, relPath, projectRoot);
+          return hasAuthoredBase ? based : rewriteProjectRootRelativeHtmlUrls(based, projectRoot);
+        },
       );
     } catch (err: any) {
       const status = err && err.code === 'ENOENT' ? 404 : 400;
@@ -6843,12 +6856,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           const hasAuthoredBase = /<base\b/i.test(html);
           const projectRoot = `/preview-assets/projects/${encodeURIComponent(projectId)}`
             + `/preview/${encodeURIComponent(scope)}/`;
-          const based = injectProjectPreviewBase(
-            html,
-            projectId,
-            relPath,
-            scope,
-          );
+          const based = injectProjectPreviewBase(html, relPath, projectRoot);
           return hasAuthoredBase ? based : rewriteProjectRootRelativeHtmlUrls(based, projectRoot);
         },
         true, // revalidate: emit ETag/Last-Modified so covers/preview/export reuse cached assets
