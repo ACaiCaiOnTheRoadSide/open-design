@@ -160,7 +160,11 @@ class WorkspaceBillingInterestRegistry {
           },
     )
       .then(async (response) => {
-        if (response.status === 404 || response.status === 405) {
+        if (
+          response.status === 404 ||
+          response.status === 405 ||
+          response.status === 501
+        ) {
           this.unsupported = true;
           this.clearRenewTimer();
           return;

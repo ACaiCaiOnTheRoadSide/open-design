@@ -939,6 +939,52 @@ describe('useWorkspaceBilling explicit scope', () => {
     );
   }, 7_000);
 
+  it('stops requesting an unsupported billing endpoint after a 501 response', async () => {
+    vi.useFakeTimers();
+    let billingCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === '/api/workspace/directory') {
+          return workspaceDirectoryResponse(teamContext('workspace-a'));
+        }
+        if (url === '/api/workspace/context') {
+          return new Response(JSON.stringify({ context: teamContext('workspace-a') }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        const interest = billingInterestResponse(input, init);
+        if (interest) return interest;
+        if (url.startsWith('/api/workspace/billing?')) {
+          billingCalls += 1;
+          return new Response(JSON.stringify({ error: 'not_implemented' }), {
+            status: 501,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+
+    renderHook(() => useWorkspaceBillingResponse());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(billingCalls).toBe(1);
+
+    act(() => {
+      notifyWorkspaceBillingRefresh();
+      window.dispatchEvent(new Event('focus'));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(billingCalls).toBe(1);
+  });
+
   it('backs off exponentially while billing keeps failing and re-arms at the base delay after a success', async () => {
     // Packaged-client regression (first-open loading spin): the od:// proxy
     // answers billing with synthetic 502s under bursty first-open load, and a

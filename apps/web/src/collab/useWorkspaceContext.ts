@@ -1141,6 +1141,7 @@ function workspaceContextIdentity(context: WorkspaceCollabContext | null): strin
 }
 
 const cachedWorkspaceBillingResponses = new Map<string, WorkspaceBillingResponse>();
+const unsupportedWorkspaceBillingScopes = new Set<string>();
 const MAX_BROWSER_TIMER_DELAY_MS = 2_147_483_647;
 
 function workspaceBillingRuntimeProjectionIsUsable(
@@ -1182,6 +1183,7 @@ class WorkspaceBillingHttpError extends Error {
 /** Test seam: clear last-good workspace billing snapshots between tests. */
 export function resetWorkspaceBillingCache(): void {
   cachedWorkspaceBillingResponses.clear();
+  unsupportedWorkspaceBillingScopes.clear();
   resetWorkspaceBillingInterestRegistry();
   resetWorkspaceBillingRetrySchedules();
 }
@@ -1319,6 +1321,7 @@ export function useWorkspaceBillingResponse(
       if (clearOnFailure && mountedRef.current) setState(null);
       return;
     }
+    if (unsupportedWorkspaceBillingScopes.has(billingScopeKey)) return;
     const scopeKey = billingScopeKey;
     const requestKey = billingRequestKey;
     const fetchKey = invalidationToken
@@ -1371,6 +1374,7 @@ export function useWorkspaceBillingResponse(
         activeRequestKeyRef.current === requestKey
       ) {
         runtimeManagedRef.current = Boolean(response.workspaceRuntime);
+        unsupportedWorkspaceBillingScopes.delete(scopeKey);
         clearWorkspaceBillingRetryFailures(requestKey);
         cachedWorkspaceBillingResponses.set(scopeKey, response);
         setState({ scopeKey, response });
@@ -1386,6 +1390,13 @@ export function useWorkspaceBillingResponse(
         const revoked =
           error instanceof WorkspaceBillingHttpError &&
           error.status === 403;
+        const unsupported =
+          error instanceof WorkspaceBillingHttpError &&
+          (error.status === 404 || error.status === 405 || error.status === 501);
+        if (unsupported) {
+          unsupportedWorkspaceBillingScopes.add(scopeKey);
+          clearWorkspaceBillingRetryFailures(requestKey);
+        }
         if (revoked) {
           cachedWorkspaceBillingResponses.delete(scopeKey);
           runtimeManagedRef.current = false;
@@ -1404,10 +1415,10 @@ export function useWorkspaceBillingResponse(
             },
           });
         }
-        // A revoked read (403) fails closed and must not retry. Everything
-        // else — including the packaged client's synthetic proxy 502s —
-        // retries on the shared, exponentially backed-off schedule.
-        if (!revoked) scheduleWorkspaceBillingRetry(requestKey);
+        // Authorization failures and unsupported endpoints are terminal for
+        // this scope. Transient failures, including packaged proxy 502s, use
+        // the shared exponentially backed-off retry schedule.
+        if (!revoked && !unsupported) scheduleWorkspaceBillingRetry(requestKey);
       }
     }
   }, [

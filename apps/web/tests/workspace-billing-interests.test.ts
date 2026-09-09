@@ -99,15 +99,18 @@ describe('workspace billing renderer interest registry', () => {
     expect(methods).toEqual(['PUT', 'DELETE']);
   });
 
-  it('degrades additively when an old daemon has no interest endpoint', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
-    vi.stubGlobal('fetch', fetchMock);
-    retainWorkspaceBillingInterest('surface', SCOPE_A);
-    await ensureWorkspaceBillingInterestDeclared();
-    await ensureWorkspaceBillingInterestDeclared();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(workspaceBillingInterestHeaders(SCOPE_A)).toEqual({});
-  });
+  it.each([404, 405, 501])(
+    'stops requesting when the daemon reports unsupported status %s',
+    async (status) => {
+      const fetchMock = vi.fn(async () => new Response(null, { status }));
+      vi.stubGlobal('fetch', fetchMock);
+      retainWorkspaceBillingInterest('surface', SCOPE_A);
+      await ensureWorkspaceBillingInterestDeclared();
+      await ensureWorkspaceBillingInterestDeclared();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(workspaceBillingInterestHeaders(SCOPE_A)).toEqual({});
+    },
+  );
 
   it('does not expose an unaccepted generation and recovers a failed full-set PUT', async () => {
     const requests: Array<{ generation: string; interests: unknown[] }> = [];
