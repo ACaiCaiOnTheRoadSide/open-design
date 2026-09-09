@@ -124,7 +124,7 @@ describe('home composer sending state', () => {
       </I18nProvider>,
     );
 
-    expect((await screen.findByTestId('home-hero-active-skill')).textContent)
+    expect((await screen.findByTestId('home-hero-active-template')).textContent)
       .toContain('landing-page');
     expect(fetchMock.mock.calls.some(([url]) => url === '/api/skills/install')).toBe(false);
     expect(onSubmit).not.toHaveBeenCalled();

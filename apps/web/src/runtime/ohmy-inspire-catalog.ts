@@ -6,6 +6,7 @@ export interface OhMyInspireCatalogTemplate {
   localizedDescription?: { en?: string; zh?: string };
   mode?: string;
   category?: string;
+  preview?: { type?: string; path?: string };
   preview_type?: string;
   preview_url?: string;
 }
@@ -55,12 +56,38 @@ async function requestCatalog<T>(path: string, signal?: AbortSignal): Promise<T>
   return catalogData(payload);
 }
 
+interface OhMyInspireCatalogPage {
+  items?: OhMyInspireCatalogTemplate[];
+  total_pages?: number;
+}
+
 export async function fetchOhMyInspireTemplates(signal?: AbortSignal): Promise<OhMyInspireCatalogTemplate[]> {
-  const page = await requestCatalog<{ items?: OhMyInspireCatalogTemplate[] }>(
+  const page = await requestCatalog<OhMyInspireCatalogPage>(
     '/templates?mode=all&page=1&page_size=20',
     signal,
   );
   return Array.isArray(page.items) ? page.items : [];
+}
+
+export async function fetchAllOhMyInspireTemplates(signal?: AbortSignal): Promise<OhMyInspireCatalogTemplate[]> {
+  const pageSize = 100;
+  const firstPage = await requestCatalog<OhMyInspireCatalogPage>(
+    `/templates?mode=all&page=1&page_size=${pageSize}`,
+    signal,
+  );
+  if (!Array.isArray(firstPage.items)) {
+    throw new Error('OhMyInspire catalog response is missing items.');
+  }
+  const totalPages = Math.max(1, Math.min(50, Math.trunc(firstPage.total_pages ?? 1)));
+  const remainingPages = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, index) => requestCatalog<OhMyInspireCatalogPage>(
+      `/templates?mode=all&page=${index + 2}&page_size=${pageSize}`,
+      signal,
+    )),
+  );
+  return [firstPage, ...remainingPages].flatMap((page) => (
+    Array.isArray(page.items) ? page.items : []
+  ));
 }
 
 export function fetchOhMyInspireTemplateDetail(
@@ -99,8 +126,15 @@ export async function downloadOhMyInspireTemplate(
 
 export function ohMyInspireCatalogPreviewUrl(value: string | undefined): string | null {
   const trimmed = value?.trim();
-  if (!trimmed || !trimmed.startsWith('/api/v1/catalog/')) return null;
-  return trimmed;
+  if (!trimmed) return null;
+  if (trimmed.startsWith('/api/v1/catalog/')) return trimmed;
+  if (trimmed.startsWith('/openapi/v1/catalog/')) {
+    return `/api/v1/catalog/${trimmed.slice('/openapi/v1/catalog/'.length)}`;
+  }
+  if (/^\/gpt-image-2\/[A-Za-z0-9._-]+\.webp$/.test(trimmed)) {
+    return `/api/v1/catalog/raw-preview${trimmed}`;
+  }
+  return null;
 }
 
 export function ohMyInspireTemplateTitle(template: OhMyInspireCatalogTemplate, locale: string): string {

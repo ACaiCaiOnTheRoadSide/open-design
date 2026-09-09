@@ -293,6 +293,7 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   pluginSource?: string;
   skillCatalogScope?: PluginLoopSubmit['skillCatalogScope'];
   templateHandoff?: PluginLoopSubmit['templateHandoff'];
+  templateArchive?: PluginLoopSubmit['templateArchive'];
   designSystemCatalogScope?: PluginLoopSubmit['designSystemCatalogScope'];
   pluginType?: string;
   appliedPluginSnapshotId?: string;
@@ -1423,8 +1424,8 @@ export function EntryShell({
         examplePromptTitle: payload.examplePromptContext.title,
         examplePromptBrief: payload.examplePromptContext.brief,
       } : {}),
-      ...(payload.templateHandoff?.templateId
-        ? { templateId: payload.templateHandoff.templateId }
+      ...(payload.templateHandoff?.templateId || payload.templateArchive?.templateId
+        ? { templateId: payload.templateHandoff?.templateId ?? payload.templateArchive?.templateId }
         : {}),
     };
     const createInput: EntryCreateProjectInput = {
@@ -1440,6 +1441,7 @@ export function EntryShell({
       metadata,
       pendingPrompt: payload.prompt,
       ...(payload.templateHandoff ? { templateHandoff: payload.templateHandoff } : {}),
+      ...(payload.templateArchive ? { templateArchive: payload.templateArchive } : {}),
       ...(payload.pluginId ? { pluginId: payload.pluginId } : {}),
       ...(payload.pluginSource ? { pluginSource: payload.pluginSource } : {}),
       ...(payload.pluginType ? { pluginType: payload.pluginType } : {}),

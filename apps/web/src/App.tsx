@@ -91,6 +91,7 @@ import {
   invalidateProjectFilesCache,
   fetchPromptTemplates,
   fetchSkills,
+  importTemplateArchiveIntoProject,
   importTemplateIntoProject,
   openExternalUrl,
   uploadProjectFiles,
@@ -243,6 +244,7 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   pluginSource?: string;
   skillCatalogScope?: LocalCatalogScope | null;
   templateHandoff?: { sourceUrl: string; templateId: string | null } | null;
+  templateArchive?: { archive: Blob; templateId: string } | null;
   designSystemCatalogScope?: LocalCatalogScope | null;
   pluginType?: string;
   appliedPluginSnapshotId?: string;
@@ -2874,7 +2876,7 @@ function AppInner() {
       const kind = metadata?.kind ?? null;
       const fidelity = fidelityToTracking(metadata?.fidelity ?? null);
       const creationSource: 'blank' | 'template' | 'zip' | 'folder' =
-        input.templateHandoff || kind === 'template' ? 'template' : 'blank';
+        input.templateHandoff || input.templateArchive || kind === 'template' ? 'template' : 'blank';
       let createWorkspaceContext: WorkspaceCollabContext | null = null;
       let optimisticProjectId: string | null = null;
       let result;
@@ -2903,7 +2905,7 @@ function AppInner() {
         // real ProjectView unmounted until the response settles; the pending
         // surface is deliberately read-free so an unpersisted project cannot
         // fan out unauthorized conversation/file/presence requests.
-        if (input.autoSendFirstMessage) {
+        if (input.autoSendFirstMessage && !input.templateArchive) {
           optimisticProjectId = randomUUID();
           const now = Date.now();
           const optimisticProject: Project = {
@@ -2963,12 +2965,18 @@ function AppInner() {
           ...(input.pluginInputs ? { pluginInputs: input.pluginInputs } : {}),
           workspaceContext: createWorkspaceContext,
         });
-        if (input.templateHandoff) {
-          const templateImport = await importTemplateIntoProject(
-            result.project.id,
-            input.templateHandoff.sourceUrl,
-            createWorkspaceContext,
-          );
+        if (input.templateHandoff || input.templateArchive) {
+          const templateImport = input.templateArchive
+            ? await importTemplateArchiveIntoProject(
+                result.project.id,
+                input.templateArchive.archive,
+                createWorkspaceContext,
+              )
+            : await importTemplateIntoProject(
+                result.project.id,
+                input.templateHandoff!.sourceUrl,
+                createWorkspaceContext,
+              );
           const templatePrompt = templateImport.prompt?.trim();
           const userPrompt = derivedPendingPrompt?.trim();
           if (templatePrompt) {
@@ -3006,10 +3014,13 @@ function AppInner() {
           },
           { requestId: input.requestId },
         );
+        const failedTemplateProjectId = result?.project?.id && (input.templateHandoff || input.templateArchive)
+          ? result.project.id
+          : null;
+        if (failedTemplateProjectId) {
+          await deleteProjectApi(failedTemplateProjectId, createWorkspaceContext).catch(() => undefined);
+        }
         if (optimisticProjectId) {
-          if (result?.project?.id && input.templateHandoff) {
-            await deleteProjectApi(result.project.id, createWorkspaceContext).catch(() => undefined);
-          }
           clearLocalProject(optimisticProjectId);
           removeWorkspaceProjectTabs(optimisticProjectId);
           setProjects((current) => current.filter((project) => project.id !== optimisticProjectId));

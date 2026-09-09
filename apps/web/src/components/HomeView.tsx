@@ -116,6 +116,14 @@ import {
   templateHandoffFromPageUrl,
   templateHandoffTrialPrompt,
 } from '../runtime/ohmy-inspire-handoff';
+import {
+  downloadOhMyInspireTemplate,
+  fetchOhMyInspireTemplateDetail,
+  OhMyInspireCatalogError,
+  ohMyInspireTemplateTitle,
+  type OhMyInspireCatalogTemplate,
+} from '../runtime/ohmy-inspire-catalog';
+import { confirm } from './confirm-dialog-host';
 import { navigate } from '../router';
 import { setPendingDesignSystemCreateEntry } from '../analytics/ds-create-entry';
 import { workspaceContextLinkedDirs } from './workspace-context';
@@ -631,6 +639,10 @@ export function HomeView({
       ? null
       : templateHandoffFromPageUrl(window.location.href),
   );
+  const [selectedTemplateTitle, setSelectedTemplateTitle] = useState<string | null>(
+    () => templateHandoff?.templateId ?? null,
+  );
+  const [selectedCatalogTemplate, setSelectedCatalogTemplate] = useState<{ id: string } | null>(null);
   // A placeholder-carousel scenario submitted on an empty composer. Seed
   // first, then submit after state has committed.
   const [pendingCarouselSubmit, setPendingCarouselSubmit] = useState<{
@@ -2356,6 +2368,8 @@ export function HomeView({
     setFallbackProjectKind(null);
     setFallbackProjectMetadata(null);
     setTemplateHandoff(null);
+    setSelectedCatalogTemplate(null);
+    setSelectedTemplateTitle(null);
     setActiveSkill(skill);
     setActiveSkillCatalogScope(localCatalogScopeFromWorkspaceContext(workspaceContext));
     setError(null);
@@ -2365,6 +2379,32 @@ export function HomeView({
       setPromptEditedByUser(false);
     }
     focusPromptAtEnd();
+  }
+
+  async function useOhMyInspireTemplate(template: OhMyInspireCatalogTemplate): Promise<boolean> {
+    try {
+      const detail = await fetchOhMyInspireTemplateDetail(template.id);
+      activePluginApplyRequestRef.current += 1;
+      setActive(null);
+      setActiveSkill(null);
+      setActiveSkillCatalogScope(null);
+      setPendingChipId(null);
+      setPendingApplyId(null);
+      setFallbackProjectKind(null);
+      setFallbackProjectMetadata(null);
+      setTemplateHandoff(null);
+      setSelectedCatalogTemplate({ id: detail.id });
+      setSelectedTemplateTitle(ohMyInspireTemplateTitle(detail, locale));
+      setPromptEditedByUser(false);
+      setError(null);
+      focusPromptAtEnd();
+      return true;
+    } catch (error) {
+      setError(error instanceof Error && error.message.trim()
+        ? error.message
+        : t('home.createFailed'));
+      return false;
+    }
   }
 
   function useMcpServer(_server: McpServerConfig, nextPrompt: string) {
@@ -2702,7 +2742,7 @@ export function HomeView({
     // path lands here directly — swallow re-entry during the in-flight window.
     if (sending) return;
     const trimmed = prompt.trim();
-    if (!trimmed && stagedFiles.length === 0 && !templateHandoff) return;
+    if (!trimmed && stagedFiles.length === 0 && !templateHandoff && !selectedCatalogTemplate) return;
     // P0 ui_click area=chat_composer element=send_button. Fires before the
     // async plugin-apply roundtrip so the click count reflects user intent
     // even when the run is rejected (missing inputs, apply failure). The
@@ -2856,6 +2896,42 @@ export function HomeView({
         examplePromptInfoRef.current != null && localStorage.getItem(examplePromptKey) == null
           ? examplePromptInfoRef.current
           : null;
+      let templateArchiveForSubmit: PluginLoopSubmit['templateArchive'] = null;
+      if (selectedCatalogTemplate) {
+        try {
+          let archive: Blob;
+          try {
+            archive = await downloadOhMyInspireTemplate(selectedCatalogTemplate.id);
+          } catch (error) {
+            if (!(error instanceof OhMyInspireCatalogError)
+              || error.code !== 'PAYMENT_CONFIRMATION_REQUIRED') throw error;
+            const chargeConfirmed = await confirm({
+              message: locale.startsWith('zh')
+                ? `首次使用“${selectedTemplateTitle ?? selectedCatalogTemplate.id}”将消耗 5 积分；当天重复使用同一模板不重复扣费。可在右上角积分入口查看明细。`
+                : `Using “${selectedTemplateTitle ?? selectedCatalogTemplate.id}” for the first time costs 5 credits. Reusing it today is free. View details from the credits entry in the top-right corner.`,
+              confirmLabel: locale.startsWith('zh') ? '消耗 5 积分并继续' : 'Spend 5 credits and continue',
+              cancelLabel: t('common.cancel'),
+            });
+            if (!chargeConfirmed) return;
+            archive = await downloadOhMyInspireTemplate(selectedCatalogTemplate.id, true);
+          }
+          templateArchiveForSubmit = {
+            archive,
+            templateId: selectedCatalogTemplate.id,
+          };
+        } catch (error) {
+          const insufficient = error instanceof OhMyInspireCatalogError
+            && (error.code === 'INSUFFICIENT_BALANCE'
+              || error.code === 'INSUFFICIENT_CREDITS'
+              || /insufficient|余额不足|积分不足/i.test(error.message));
+          setError(insufficient
+            ? (locale.startsWith('zh')
+                ? '积分不足，模板尚未扣费，任务和已选模板已保留。请通过右上角积分入口查看明细或充值。'
+                : 'Insufficient credits. No template charge was made, and your task and selection were preserved. Use the credits entry in the top-right corner for details or top-up.')
+            : (error instanceof Error && error.message.trim() ? error.message : t('home.createFailed')));
+          return;
+        }
+      }
       const accepted = await onSubmit({
         prompt: trimmed,
         pluginId: routedPluginId,
@@ -2872,6 +2948,7 @@ export function HomeView({
               },
             }
           : {}),
+        ...(templateArchiveForSubmit ? { templateArchive: templateArchiveForSubmit } : {}),
         ...(resolvedSkillId && activeSkillCatalogScope
           ? { skillCatalogScope: activeSkillCatalogScope }
           : resolvedSkillId && lastSettledLocalCatalogScopeRef.current
@@ -3041,11 +3118,8 @@ export function HomeView({
         activePluginIsExplicit={activePluginIsExplicit}
         activePluginRecord={active?.record ?? null}
         activeSkillId={activeSkill?.id ?? null}
-        activeSkillTitle={
-          activeSkill
-            ? localizeSkillName(locale, activeSkill)
-            : templateHandoff?.templateId ?? null
-        }
+        activeSkillTitle={activeSkill ? localizeSkillName(locale, activeSkill) : null}
+        activeTemplateTitle={selectedTemplateTitle}
         activeSkillRecord={activeSkill}
         activeChipId={active?.chipId ?? null}
         hiddenTemplateChipIds={HIDDEN_NATIVE_VISUAL_CHIP_IDS}
@@ -3056,7 +3130,11 @@ export function HomeView({
         onClearActiveSkill={() => {
           setActiveSkill(null);
           setActiveSkillCatalogScope(null);
+        }}
+        onClearActiveTemplate={() => {
           setTemplateHandoff(null);
+          setSelectedCatalogTemplate(null);
+          setSelectedTemplateTitle(null);
         }}
         selectedPluginContexts={selectedPluginContexts.map((item) => item.record)}
         selectedMcpContexts={selectedMcpContexts.map((item) => item.server)}
@@ -3112,7 +3190,7 @@ export function HomeView({
         connectorOptions={connectors.filter((connector) => connector.status === 'connected')}
         pendingPluginId={pendingApplyId}
         pendingChipId={pendingChipId}
-        allowEmptySubmit={templateHandoff !== null}
+        allowEmptySubmit={templateHandoff !== null || selectedCatalogTemplate !== null}
         submitDisabled={
           (defaultChipSeedPending && !hasExplicitSubmitRoute) ||
           Boolean(pendingChipRestore) ||
@@ -3127,6 +3205,7 @@ export function HomeView({
         onPickPlugin={(record, nextPrompt) => addPluginContext(record, nextPrompt)}
         onPickExamplePlugin={useExamplePlugin}
         onPickSkill={useSkill}
+        onPickOhMyInspireTemplate={useOhMyInspireTemplate}
         onPickMcp={useMcpServer}
         onPickConnector={useConnector}
         onPickChip={pickChip}

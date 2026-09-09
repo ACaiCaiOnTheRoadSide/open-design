@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   downloadOhMyInspireTemplate,
+  fetchAllOhMyInspireTemplates,
   fetchOhMyInspireTemplateDetail,
   fetchOhMyInspireTemplates,
   isOhMyInspireHandoffUrl,
@@ -20,6 +21,29 @@ describe('OhMyInspire catalog client', () => {
     await expect(fetchOhMyInspireTemplates()).resolves.toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/catalog/templates?mode=all&page=1&page_size=20',
+      { credentials: 'include' },
+    );
+  });
+
+  it('loads every catalog page for the home taxonomy', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: { items: [{ id: 'one', name: 'One', description: '' }], total_pages: 2 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: { items: [{ id: 'two', name: 'Two', description: '' }], total_pages: 2 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAllOhMyInspireTemplates()).resolves.toHaveLength(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(1,
+      '/api/v1/catalog/templates?mode=all&page=1&page_size=100',
+      { credentials: 'include' },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2,
+      '/api/v1/catalog/templates?mode=all&page=2&page_size=100',
       { credentials: 'include' },
     );
   });
@@ -48,6 +72,13 @@ describe('OhMyInspire catalog client', () => {
     expect(ohMyInspireCatalogPreviewUrl('/api/v1/catalog/templates/deck/preview')).toBe(
       '/api/v1/catalog/templates/deck/preview',
     );
+    expect(ohMyInspireCatalogPreviewUrl(
+      '/openapi/v1/catalog/previews/deck/preview.webp',
+    )).toBe('/api/v1/catalog/previews/deck/preview.webp');
+    expect(ohMyInspireCatalogPreviewUrl('/gpt-image-2/case544.webp')).toBe(
+      '/api/v1/catalog/raw-preview/gpt-image-2/case544.webp',
+    );
+    expect(ohMyInspireCatalogPreviewUrl('/gpt-image-2/../secret.webp')).toBeNull();
     expect(ohMyInspireCatalogPreviewUrl('https://tracker.example/preview')).toBeNull();
   });
 

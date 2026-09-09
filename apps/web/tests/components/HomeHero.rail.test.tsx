@@ -8,7 +8,7 @@
 //   - The active + pending UI states light up the right chip and
 //     disable all chips while a plugin is mid-apply.
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InstalledPluginRecord } from '@open-design/contracts';
 
@@ -313,7 +313,7 @@ describe('HomeHero intent rail', () => {
     expect(screen.queryByTestId('home-hero-plugin-presets')).toBeNull();
   });
 
-  it('shows matching plugin presets in the example prompt area for the selected tab', () => {
+  it('shows matching plugin presets in the example prompt area for the selected tab', async () => {
     const deckPlugin = makePlugin('example-deck-a', 'deck', 'Investor deck');
     const imagePlugin = makePlugin('example-image-a', 'image', 'Product image');
     const { onPickExamplePlugin, onOpenPluginDetails } = renderHero({
@@ -321,7 +321,7 @@ describe('HomeHero intent rail', () => {
       pluginOptions: [deckPlugin, imagePlugin],
     });
 
-    const presets = screen.getAllByTestId('home-hero-plugin-preset');
+    const presets = await screen.findAllByTestId('home-hero-plugin-preset');
     expect(presets).toHaveLength(1);
     expect(presets[0]?.textContent).toContain('Investor deck');
 
@@ -339,24 +339,24 @@ describe('HomeHero intent rail', () => {
     );
   });
 
-  it('does not fill an empty selected category with templates from other categories', () => {
+  it('does not fill an empty selected category with templates from other categories', async () => {
     renderHero({ activeChipId: 'live-artifact', pluginOptions: [] });
 
     expect(screen.queryByTestId('home-hero-sidebar-prompt-example')).toBeNull();
-    expect(document.querySelector('.home-hero__template-empty')).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('.home-hero__template-empty')).toBeTruthy());
   });
 
-  it('shows the complete category catalog instead of the capped prompt showcase', () => {
+  it('shows the complete category catalog instead of the capped prompt showcase', async () => {
     const plugins = Array.from({ length: 20 }, (_, index) =>
       makePlugin(`example-dashboard-${index}`, 'prototype', `Dashboard ${index}`, ['dashboard']),
     );
     renderHero({ activeChipId: 'prototype', pluginOptions: plugins });
 
-    expect(screen.getAllByTestId('home-hero-plugin-preset')).toHaveLength(20);
+    expect(await screen.findAllByTestId('home-hero-plugin-preset')).toHaveLength(20);
     expect(screen.queryByTestId('home-hero-sidebar-prompt-example')).toBeNull();
   });
 
-  it('narrows the current first-level template list when a second-level category is selected', () => {
+  it('narrows the current first-level template list when a second-level category is selected', async () => {
     const dashboard = makePlugin('example-dashboard', 'prototype', 'Analytics dashboard', ['dashboard']);
     const landing = makePlugin('example-landing', 'prototype', 'Marketing landing page', ['landing-page']);
     renderHero({
@@ -364,7 +364,7 @@ describe('HomeHero intent rail', () => {
       pluginOptions: [dashboard, landing],
     });
 
-    expect(screen.getAllByTestId('home-hero-plugin-preset')).toHaveLength(2);
+    expect(await screen.findAllByTestId('home-hero-plugin-preset')).toHaveLength(2);
     fireEvent.click(screen.getByTestId('home-hero-subtype-landing-marketing'));
 
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
@@ -393,7 +393,7 @@ describe('HomeHero intent rail', () => {
     expect(findChip('worker')).toBeUndefined();
   });
 
-  it('orders curated example presets first for the selected artifact type', () => {
+  it('orders curated example presets first for the selected artifact type', async () => {
     const ordinaryDeck = makePlugin('example-ordinary-deck', 'deck', 'Ordinary deck');
     const capsule = makePlugin(
       'example-html-ppt-zhangzara-capsule',
@@ -410,7 +410,7 @@ describe('HomeHero intent rail', () => {
       pluginOptions: [ordinaryDeck, capsule, creativeMode],
     });
 
-    const presets = screen.getAllByTestId('home-hero-plugin-preset');
+    const presets = await screen.findAllByTestId('home-hero-plugin-preset');
     expect(presets.map((preset) => preset.getAttribute('data-plugin-id'))).toEqual([
       'example-html-ppt-zhangzara-creative-mode',
       'example-html-ppt-zhangzara-capsule',
@@ -418,7 +418,7 @@ describe('HomeHero intent rail', () => {
     ]);
   });
 
-  it('keeps curated presets even when they rely on fallback prompt text', () => {
+  it('keeps curated presets even when they rely on fallback prompt text', async () => {
     const otakuDance = makePlugin(
       'image-template-infographic-otaku-dance-choreography-breakdown-gokurakujodo-16-panels',
       'image',
@@ -437,13 +437,13 @@ describe('HomeHero intent rail', () => {
       pluginOptions: [ordinaryImage, otakuDance],
     });
 
-    const presets = screen.getAllByTestId('home-hero-plugin-preset');
+    const presets = await screen.findAllByTestId('home-hero-plugin-preset');
     expect(presets[0]?.getAttribute('data-plugin-id')).toBe(
       'image-template-infographic-otaku-dance-choreography-breakdown-gokurakujodo-16-panels',
     );
   });
 
-  it('keeps Hatch Pet at the end of the image example presets', () => {
+  it('keeps Hatch Pet at the end of the image example presets', async () => {
     const hatchPet = makePlugin('example-hatch-pet', 'image', 'Hatch Pet');
     const imagePoster = makePlugin('image-template-poster', 'image', 'Image Poster');
     const stoneInfographic = makePlugin('image-template-stone', 'image', 'Stone Infographic');
@@ -452,7 +452,7 @@ describe('HomeHero intent rail', () => {
       pluginOptions: [hatchPet, imagePoster, stoneInfographic],
     });
 
-    const presets = screen.getAllByTestId('home-hero-plugin-preset');
+    const presets = await screen.findAllByTestId('home-hero-plugin-preset');
     expect(presets.map((preset) => preset.textContent)).toEqual([
       expect.stringContaining('Image Poster'),
       expect.stringContaining('Stone Infographic'),
@@ -460,7 +460,7 @@ describe('HomeHero intent rail', () => {
     ]);
   });
 
-  it('moves live artifact presets out of Image and into Live artifact examples', () => {
+  it('moves live artifact presets out of Image and into Live artifact examples', async () => {
     const imagePoster = makePlugin('image-template-poster', 'image', 'Image Poster');
     const liveDashboard = makePlugin(
       'example-live-dashboard',
@@ -497,7 +497,7 @@ describe('HomeHero intent rail', () => {
       pluginOptions: [imagePoster, liveDashboard, notionDashboard],
     });
 
-    let presets = screen.getAllByTestId('home-hero-plugin-preset');
+    let presets = await screen.findAllByTestId('home-hero-plugin-preset');
     expect(presets).toHaveLength(1);
     expect(presets[0]?.textContent).toContain('Image Poster');
 
@@ -514,7 +514,7 @@ describe('HomeHero intent rail', () => {
       ],
     });
 
-    presets = screen.getAllByTestId('home-hero-plugin-preset');
+    presets = await screen.findAllByTestId('home-hero-plugin-preset');
     // Order within a facet is now usage/sink-driven (OPEND-449); this test is
     // about which presets route into Live Artifact, so assert membership only.
     expect(presets.map((preset) => preset.getAttribute('data-plugin-id')).sort()).toEqual([

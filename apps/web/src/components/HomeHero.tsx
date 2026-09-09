@@ -24,6 +24,7 @@ import type {
   DragEvent as ReactDragEvent,
   ReactNode,
   RefObject,
+  UIEvent as ReactUIEvent,
 } from 'react';
 import type {
   ChatSessionMode,
@@ -82,7 +83,11 @@ import {
   localizeSkillName,
 } from '../i18n/content';
 import { PreviewSurface } from './plugins-home/cards/PreviewSurface';
-import { pluginCategoryLabel } from './plugins-home/categoryLabel';
+import {
+  commercialCategoryLabel,
+  isCommercialCategoryId,
+  pluginCategoryLabel,
+} from './plugins-home/categoryLabel';
 import { readHomeGuideStage, writeHomeGuideStage } from './home-hero/firstRunGuide';
 import { curatedPluginPriorityForChip } from './plugins-home/curatedPriority';
 import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
@@ -102,6 +107,15 @@ import { LibraryPicker } from './LibraryPicker';
 import { ComposerModePicker } from './ComposerModePicker';
 import { assetTitle } from './LibraryAssetMeta';
 import { libraryAssetRawUrl } from '../providers/registry';
+import {
+  fetchAllOhMyInspireTemplates,
+  fetchOhMyInspireTemplateDetail,
+  ohMyInspireCatalogPreviewUrl,
+  ohMyInspireTemplateDescription,
+  ohMyInspireTemplateTitle,
+  type OhMyInspireCatalogTemplate,
+  type OhMyInspireCatalogTemplateDetail,
+} from '../runtime/ohmy-inspire-catalog';
 
 import type { LibraryAsset } from '@open-design/contracts';
 import { WorkingDirPicker } from './WorkingDirPicker';
@@ -179,6 +193,8 @@ interface Props {
   activeSkillTitle?: string | null;
   activeSkillRecord?: SkillSummary | null;
   onClearActiveSkill?: () => void;
+  activeTemplateTitle?: string | null;
+  onClearActiveTemplate?: () => void;
   selectedPluginContexts?: InstalledPluginRecord[];
   selectedMcpContexts?: McpServerConfig[];
   selectedConnectorContexts?: ConnectorDetail[];
@@ -237,6 +253,7 @@ interface Props {
   onPickPlugin: (record: InstalledPluginRecord, nextPrompt: string | null) => void;
   onPickExamplePlugin?: (record: InstalledPluginRecord, chipId: string, promptText: string) => void;
   onPickSkill?: (skill: SkillSummary, nextPrompt: string | null) => void;
+  onPickOhMyInspireTemplate?: (template: OhMyInspireCatalogTemplate) => Promise<boolean>;
   onPickMcp?: (server: McpServerConfig, nextPrompt: string) => void;
   onPickConnector?: (connector: ConnectorDetail, nextPrompt: string) => void;
   onPickChip: (chip: HomeHeroChip) => void;
@@ -322,11 +339,13 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     activeSkillId = null,
     activeSkillTitle = null,
     activeSkillRecord = null,
+    activeTemplateTitle = null,
     activeChipId,
     hiddenTemplateChipIds = [],
     onClearActivePlugin,
     onClearActiveChip = onClearActivePlugin,
     onClearActiveSkill = () => undefined,
+    onClearActiveTemplate = () => undefined,
     selectedPluginContexts = EMPTY_PLUGIN_CONTEXTS,
     contextOnlyPlugins = EMPTY_PLUGIN_CONTEXTS,
     contextOnlyMcpServers = EMPTY_MCP_OPTIONS,
@@ -369,6 +388,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     onPickPlugin,
     onPickExamplePlugin = () => undefined,
     onPickSkill = () => undefined,
+    onPickOhMyInspireTemplate = async () => true,
     onPickMcp = () => undefined,
     onPickConnector = () => undefined,
     onPickChip,
@@ -401,7 +421,38 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   const [figmaHelpOpen, setFigmaHelpOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [templateLibraryExpanded, setTemplateLibraryExpanded] = useState(false);
+  const [ohMyInspireTemplates, setOhMyInspireTemplates] = useState<OhMyInspireCatalogTemplate[]>([]);
+  const [ohMyInspireStatus, setOhMyInspireStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [ohMyInspireMode, setOhMyInspireMode] = useState<string | null>(null);
+  const [ohMyInspireCategory, setOhMyInspireCategory] = useState<string | null>(null);
+  const [ohMyInspirePreviewTemplate, setOhMyInspirePreviewTemplate] = useState<OhMyInspireCatalogTemplate | null>(null);
+  const [ohMyInspireTemplateDetail, setOhMyInspireTemplateDetail] = useState<OhMyInspireCatalogTemplateDetail | null>(null);
+  const [pendingOhMyInspireTemplateId, setPendingOhMyInspireTemplateId] = useState<string | null>(null);
   const homeHeroRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchAllOhMyInspireTemplates(controller.signal).then((templates) => {
+      setOhMyInspireTemplates(templates);
+      setOhMyInspireStatus('success');
+    }).catch(() => {
+      if (!controller.signal.aborted) setOhMyInspireStatus('error');
+    });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!ohMyInspirePreviewTemplate) {
+      setOhMyInspireTemplateDetail(null);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setOhMyInspireTemplateDetail(null);
+    void fetchOhMyInspireTemplateDetail(ohMyInspirePreviewTemplate.id, controller.signal)
+      .then(setOhMyInspireTemplateDetail)
+      .catch(() => {});
+    return () => controller.abort();
+  }, [ohMyInspirePreviewTemplate]);
 
   useEffect(() => {
     if (!templateLibraryExpanded) return undefined;
@@ -466,7 +517,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     return stagedFiles.find((file, index) => homeFileKey(file, index) === previewHomeFileKey) ?? null;
   }, [previewHomeFileKey, stagedFiles]);
   const previewHomeFileUrl = previewHomeFileKey ? stagedFilePreviewUrls.get(previewHomeFileKey) ?? null : null;
-  const placeholder = activePluginTitle || activeSkillTitle
+  const placeholder = activePluginTitle || activeSkillTitle || activeTemplateTitle
     ? t('homeHero.placeholderActive')
     : t('homeHero.placeholder');
   const mentionActive = Boolean(mentionTrigger);
@@ -528,6 +579,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     prompt.trim().length === 0 &&
     stagedFiles.length === 0 &&
     !activeSkillTitle &&
+    !activeTemplateTitle &&
     !activePluginIsExplicit &&
     !mentionActive &&
     carouselScenarios.length > 0;
@@ -745,6 +797,26 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     ),
     [hiddenTemplateChipIds],
   );
+  const ohMyInspireModes = useMemo(() => Array.from(new Set(
+    ohMyInspireTemplates.map((template) => template.mode?.trim()).filter((mode): mode is string => Boolean(mode)),
+  )).sort(compareOhMyInspireModes), [ohMyInspireTemplates]);
+  const activeOhMyInspireMode = ohMyInspireMode && ohMyInspireModes.includes(ohMyInspireMode)
+    ? ohMyInspireMode
+    : ohMyInspireModes[0] ?? null;
+  const ohMyInspireCategories = useMemo(() => Array.from(new Set(
+    ohMyInspireTemplates
+      .filter((template) => template.mode === activeOhMyInspireMode)
+      .map((template) => template.category?.trim())
+      .filter((category): category is string => Boolean(category)),
+  )), [activeOhMyInspireMode, ohMyInspireTemplates]);
+  const activeOhMyInspireCategory = ohMyInspireCategory
+    && ohMyInspireCategories.includes(ohMyInspireCategory)
+    ? ohMyInspireCategory
+    : null;
+  const filteredOhMyInspireTemplates = useMemo(() => ohMyInspireTemplates.filter((template) => (
+    template.mode === activeOhMyInspireMode
+    && (!activeOhMyInspireCategory || template.category === activeOhMyInspireCategory)
+  )), [activeOhMyInspireCategory, activeOhMyInspireMode, ohMyInspireTemplates]);
   const railActiveChipId = railSelectedChipId ?? activeChipId ?? templateChips[0]?.id ?? null;
   // A surface outside the hero (e.g. the workspace tabs-bar) can hand off a
   // template pick through this window event; apply the chip exactly as if it
@@ -815,7 +887,6 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
       subcategory: facetSubcategory,
     }));
   }, [catalogPlugins, categoryTemplatePlugins, railActiveChipId, selectedSubcategory]);
-
   // First-run guide, beat 1: pulse the Prototype chip for brand-new users only
   // when Home could not bind a default type. A successfully seeded default has
   // already completed that choice, so skip the redundant pulse and let beat 2
@@ -1262,6 +1333,24 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     triggerSendAttention();
   }
 
+  async function useOhMyInspireTemplate(template: OhMyInspireCatalogTemplate) {
+    if (pendingOhMyInspireTemplateId) return;
+    setPendingOhMyInspireTemplateId(template.id);
+    try {
+      const selected = await onPickOhMyInspireTemplate(template);
+      if (selected) {
+        const templatePrompt = ohMyInspireTemplateDescription(template, locale);
+        onPromptChange(templatePrompt);
+        editorRef.current?.setText(templatePrompt);
+        requestAnimationFrame(() => editorRef.current?.focus());
+        triggerSendAttention();
+      }
+      return selected;
+    } finally {
+      setPendingOhMyInspireTemplateId(null);
+    }
+  }
+
   function pickExamplePluginPreset(record: InstalledPluginRecord, chipId: string, promptText: string) {
     trackHomeChatComposerClick(analytics.track, {
       page_name: 'home',
@@ -1327,6 +1416,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     stagedFiles.length > 0 ||
     showActivePluginRow ||
     Boolean(activeSkillTitle) ||
+    Boolean(activeTemplateTitle) ||
     contextOnlyPlugins.length > 0 ||
     contextOnlyMcpServers.length > 0 ||
     contextOnlyConnectors.length > 0 ||
@@ -1357,16 +1447,70 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         </button>
       </div>
       <div className="home-hero__template-catalogs">
-        <TypePillRow
-          chips={templateChips}
-          activeChipId={railActiveChipId}
-          disabled={pendingChipId !== null || pendingPluginId !== null}
-          labelFor={(id) => homeHeroChipLabel(id, t)}
-          onPick={handlePickTaskChip}
-          vertical
-        />
+        {ohMyInspireStatus === 'success' ? (
+          <div
+            className="home-hero__category-strip home-hero__category-strip--primary"
+            role="listbox"
+            aria-label={t('homeHero.templatePicker.projectTypes')}
+            data-testid="home-hero-ohmyinspire-modes"
+          >
+            {ohMyInspireModes.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                role="option"
+                aria-selected={mode === activeOhMyInspireMode}
+                className={`home-hero__category-tab${mode === activeOhMyInspireMode ? ' is-active' : ''}`}
+                onClick={() => {
+                  setOhMyInspireMode(mode);
+                  setOhMyInspireCategory(null);
+                }}
+              >
+                <span>{catalogFacetLabel(mode, locale, t)}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <TypePillRow
+            chips={templateChips}
+            activeChipId={railActiveChipId}
+            disabled={pendingChipId !== null || pendingPluginId !== null}
+            labelFor={(id) => homeHeroChipLabel(id, t)}
+            onPick={handlePickTaskChip}
+            vertical
+          />
+        )}
         <div className="home-hero__secondary-category-row">
-          {activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
+          {ohMyInspireStatus === 'success' ? (
+            <div
+              className="home-hero__category-strip home-hero__category-strip--secondary"
+              role="listbox"
+              aria-label="OhMyInspire categories"
+              data-testid="home-hero-ohmyinspire-categories"
+            >
+              <button
+                type="button"
+                role="option"
+                aria-selected={!activeOhMyInspireCategory}
+                className={`home-hero__category-tab${!activeOhMyInspireCategory ? ' is-active' : ''}`}
+                onClick={() => setOhMyInspireCategory(null)}
+              >
+                {t('common.all')}
+              </button>
+              {ohMyInspireCategories.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  role="option"
+                  aria-selected={category === activeOhMyInspireCategory}
+                  className={`home-hero__category-tab${category === activeOhMyInspireCategory ? ' is-active' : ''}`}
+                  onClick={() => setOhMyInspireCategory(category)}
+                >
+                  {catalogFacetLabel(category, locale, t)}
+                </button>
+              ))}
+            </div>
+          ) : activeSubChips.length > 0 && isSubChipParent(railActiveChipId) ? (
             <SubTypeRow
               subChips={activeSubChips}
               selectedSlug={selectedSubcategory}
@@ -1400,7 +1544,22 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     <aside className="home-hero__template-rail" aria-label={t('homeHero.promptExamples')}>
       <div className="home-hero__template-rail-body">
         <div className="home-hero__template-curve" aria-label={t('homeHero.promptExamples')}>
-        {pluginsLoading ? (
+        {ohMyInspireStatus === 'loading' ? (
+          <PluginPromptPresetsLoading />
+        ) : ohMyInspireStatus === 'success' ? (
+          filteredOhMyInspireTemplates.length > 0 && activeOhMyInspireMode ? (
+            <OhMyInspirePromptPresets
+              key={`${activeOhMyInspireMode}:${activeOhMyInspireCategory ?? 'all'}`}
+              templates={filteredOhMyInspireTemplates}
+              locale={locale}
+              onPreview={setOhMyInspirePreviewTemplate}
+              pendingTemplateId={pendingOhMyInspireTemplateId}
+              onPick={(template) => void useOhMyInspireTemplate(template)}
+            />
+          ) : (
+            <div className="home-hero__template-empty">{t('newproj.noTemplatesTitle')}</div>
+          )
+        ) : pluginsLoading ? (
           <PluginPromptPresetsLoading />
         ) : filteredExamplePlugins.length > 0 && railActiveChipId ? (
           <PluginPromptPresets
@@ -1437,6 +1596,22 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
             document.body,
           )
         : templateLibrary}
+      {ohMyInspirePreviewTemplate && typeof document !== 'undefined'
+        ? createPortal(
+            <OhMyInspireTemplatePreviewModal
+              template={ohMyInspireTemplateDetail ?? ohMyInspirePreviewTemplate}
+              locale={locale}
+              onClose={() => setOhMyInspirePreviewTemplate(null)}
+              pending={pendingOhMyInspireTemplateId === ohMyInspirePreviewTemplate.id}
+              onUse={() => void useOhMyInspireTemplate(
+                ohMyInspireTemplateDetail ?? ohMyInspirePreviewTemplate,
+              ).then((selected) => {
+                if (selected) setOhMyInspirePreviewTemplate(null);
+              })}
+            />,
+            document.body,
+          )
+        : null}
 
       {/* #5517 wraps the input card + workdir row into one visible composer
           card so they read as a single surface. */}
@@ -1575,6 +1750,31 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                     <Icon name="close" size={9} />
                   </button>
                 )}
+              </span>
+            ) : null}
+            {activeTemplateTitle ? (
+              <span
+                className="home-hero__active-chip home-hero__active-chip--skill"
+                data-testid="home-hero-active-template"
+              >
+                <span className="home-hero__active-chip-body">
+                  <span className="home-hero__active-icon" aria-hidden>
+                    <Icon name="sparkles" size={12} />
+                  </span>
+                  <span className="home-hero__active-label">
+                    {t('newproj.templateLabel')}: {activeTemplateTitle}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="home-hero__active-clear od-tooltip"
+                  onClick={onClearActiveTemplate}
+                  aria-label={t('common.clear')}
+                  title={t('common.clear')}
+                  data-tooltip={t('common.clear')}
+                >
+                  <Icon name="close" size={9} />
+                </button>
               </span>
             ) : null}
             {activeSkillTitle ? (
@@ -2326,6 +2526,407 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     </section>
   );
 });
+
+const OHMYINSPIRE_MODE_ORDER = [
+  'prototype', 'deck', 'document', 'image', 'video', 'live', 'audio', 'webgl',
+];
+
+function compareOhMyInspireModes(left: string, right: string): number {
+  const leftRank = OHMYINSPIRE_MODE_ORDER.indexOf(left);
+  const rightRank = OHMYINSPIRE_MODE_ORDER.indexOf(right);
+  if (leftRank >= 0 || rightRank >= 0) {
+    return (leftRank < 0 ? Number.MAX_SAFE_INTEGER : leftRank)
+      - (rightRank < 0 ? Number.MAX_SAFE_INTEGER : rightRank);
+  }
+  return left.localeCompare(right);
+}
+
+const OHMYINSPIRE_ZH_LABELS: Record<string, string> = {
+  prototype: '原型',
+  deck: '幻灯片',
+  document: '文档',
+  image: '图片',
+  video: '视频',
+  live: '动态作品',
+  audio: '音频',
+  webgl: 'WebGL',
+  'academic-research': '学术研究',
+  advertising: '广告',
+  'ai-literacy': 'AI 素养',
+  'ai-product': 'AI 产品',
+  ambient: '氛围',
+  anime: '动漫',
+  'architecture-spaces': '建筑与空间',
+  'b2b-sales': 'B2B 销售',
+  'brand-logos': '品牌与标志',
+  'brand-page': '品牌页面',
+  career: '职业发展',
+  'characters-people': '角色与人物',
+  'charts-infographics': '图表与信息图',
+  cinematic: '电影感',
+  commerce: '商业',
+  community: '社区',
+  consulting: '咨询',
+  content: '内容',
+  conversion: '转化',
+  'corporate-strategy': '企业战略',
+  dashboard: '仪表盘',
+  'data-finance': '数据与金融',
+  'data-viz': '数据可视化',
+  'design-craft': '设计与工艺',
+  'documents-publishing': '文档与出版',
+  education: '教育',
+  entertainment: '娱乐',
+  environmental: '环境',
+  explainer: '解说',
+  finance: '金融',
+  'fundraising-pitch': '融资路演',
+  general: '通用',
+  'government-policy': '政府与政策',
+  'history-classical': '历史与古典',
+  'illustration-art': '插画与艺术',
+  'intro-outro': '片头与片尾',
+  life: '生活',
+  marketing: '市场营销',
+  'marketing-gtm': '营销与市场进入',
+  'mobile-app': '移动应用',
+  'motion-graphics': '动态图形',
+  'other-use-cases': '其他场景',
+  'photography-realism': '摄影与写实',
+  portfolio: '作品集',
+  'posters-typography': '海报与字体',
+  presentation: '演示文稿',
+  product: '产品',
+  'product-demo': '产品演示',
+  'product-management': '产品管理',
+  'products-ecommerce': '商品与电商',
+  'professional-training': '专业培训',
+  saas: 'SaaS',
+  'scenes-storytelling': '场景与叙事',
+  security: '安全',
+  'social-meme': '社交梗图',
+  'social-shorts': '社交短视频',
+  'student-coursework': '学生作业',
+  travel: '旅行',
+  'ui-interfaces': 'UI 与界面',
+  utility: '实用工具',
+  'vfx-fantasy': '视觉特效与奇幻',
+  wellness: '健康生活',
+  wireframe: '线框图',
+};
+
+function catalogFacetLabel(
+  value: string,
+  locale: Locale,
+  t: ReturnType<typeof useT>,
+): string {
+  switch (value) {
+    case 'prototype': return t('homeHero.chip.prototype');
+    case 'deck': return t('homeHero.chip.deck');
+    case 'document': return t('homeHero.chip.document');
+    case 'image': return t('homeHero.chip.image');
+    case 'video': return t('homeHero.chip.video');
+    case 'live': return t('homeHero.chip.liveArtifact');
+    case 'audio': return t('homeHero.chip.audio');
+    case 'webgl': return t('homeHero.chip.webgl');
+  }
+  if (isCommercialCategoryId(value)) return commercialCategoryLabel(value, t);
+  switch (value) {
+    case 'advertising': return t('connectors.category.advertising');
+    case 'commerce': return t('connectors.category.commerce');
+    case 'community': return t('community.title');
+    case 'content': return t('manualEdit.sectionContent');
+    case 'dashboard': return t('entry.navDashboard');
+    case 'data-viz': return t('mcp.categoryDataViz');
+    case 'education': return t('brandPicker.categoryEducation');
+    case 'finance': return t('brandPicker.categoryFinance');
+    case 'general': return t('browserUse.category.general');
+    case 'marketing': return t('examples.scenarioMarketing');
+    case 'mobile-app': return t('homeHero.chip.mobile');
+    case 'presentation': return t('fileViewer.shareMenuPresentation');
+    case 'product': return t('examples.scenarioProduct');
+    case 'security': return t('connectors.category.security');
+    case 'travel': return t('brandPicker.categoryTravel');
+    case 'wellness': return t('brandPicker.categoryWellness');
+    case 'wireframe': return t('newproj.fidelityWireframe');
+  }
+  if (locale.startsWith('zh')) return OHMYINSPIRE_ZH_LABELS[value] ?? value;
+  return value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function ohMyInspirePreviewType(template: OhMyInspireCatalogTemplate): string {
+  const declared = (template.preview?.type ?? template.preview_type ?? '').toLowerCase();
+  if (declared) return declared;
+  const path = template.preview_url?.split(/[?#]/, 1)[0]?.toLowerCase() ?? '';
+  if (/\.html?$/.test(path)) return 'html';
+  if (/\.(?:mp4|webm|mov)$/.test(path)) return 'video';
+  if (/\.(?:mp3|wav|ogg|m4a)$/.test(path)) return 'audio';
+  if (/\.(?:png|jpe?g|gif|webp|avif|svg)$/.test(path)) return 'image';
+  return '';
+}
+
+function OhMyInspireCardPreview({
+  template,
+  title,
+}: {
+  template: OhMyInspireCatalogTemplate;
+  title: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const url = ohMyInspireCatalogPreviewUrl(template.preview_url);
+  const type = ohMyInspirePreviewType(template);
+  useEffect(() => setFailed(false), [url]);
+  if (!url || failed) return <div className="home-hero__plugin-preset-loading-preview" />;
+  if (type === 'html') {
+    return (
+      <div className="plugins-home__preview plugins-home__html">
+        <div className="plugins-home__html-frame">
+          <iframe
+            className="plugins-home__html-iframe"
+            src={url}
+            title={`${title} preview`}
+            sandbox="allow-scripts"
+            loading="eager"
+            tabIndex={-1}
+          />
+        </div>
+      </div>
+    );
+  }
+  if (type === 'video') {
+    return (
+      <div className="plugins-home__preview plugins-home__preview--media">
+        <div className="plugins-home__media">
+          <video
+            className="plugins-home__media-video"
+            src={url}
+            autoPlay
+            muted
+            playsInline
+            loop
+            preload="auto"
+            disablePictureInPicture
+            tabIndex={-1}
+            onError={() => setFailed(true)}
+          />
+        </div>
+      </div>
+    );
+  }
+  if (type === 'audio') {
+    return (
+      <div className="plugins-home__preview plugins-home__preview--media">
+        <div className="plugins-home__media">
+          <audio src={url} preload="metadata" onError={() => setFailed(true)} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="plugins-home__preview plugins-home__preview--media">
+      <div className="plugins-home__media">
+        <img
+          className="plugins-home__media-img"
+          src={url}
+          alt={`${title} preview`}
+          loading="eager"
+          decoding="async"
+          onError={() => setFailed(true)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function OhMyInspirePromptPresets({
+  templates,
+  locale,
+  pendingTemplateId,
+  onPick,
+  onPreview,
+}: {
+  templates: OhMyInspireCatalogTemplate[];
+  locale: Locale;
+  pendingTemplateId: string | null;
+  onPick: (template: OhMyInspireCatalogTemplate) => void;
+  onPreview: (template: OhMyInspireCatalogTemplate) => void;
+}) {
+  const { t } = useI18n();
+  const pageSize = 24;
+  const [visibleCount, setVisibleCount] = useState(pageSize);
+  useEffect(() => {
+    setVisibleCount(pageSize);
+  }, [templates]);
+  const visibleTemplates = templates.slice(0, visibleCount);
+  const edgeScroll = useEdgeAutoScroll(visibleTemplates.length);
+  const loadNextPageNearEnd = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
+    if (visibleCount >= templates.length) return;
+    const node = event.currentTarget;
+    const nearVerticalEnd = node.scrollHeight > node.clientHeight + 1
+      && node.scrollTop + node.clientHeight >= node.scrollHeight - 240;
+    const nearHorizontalEnd = node.scrollWidth > node.clientWidth + 1
+      && node.scrollLeft + node.clientWidth >= node.scrollWidth - 480;
+    if (nearVerticalEnd || nearHorizontalEnd) {
+      setVisibleCount((count) => Math.min(count + pageSize, templates.length));
+    }
+  }, [templates.length, visibleCount]);
+  return (
+    <div
+      className="home-hero__prompt-examples home-hero__plugin-presets-wrap"
+      data-testid="home-hero-ohmyinspire-presets"
+    >
+      <div className="home-hero__prompt-examples-title">{t('homeHero.promptExamples')}</div>
+      <div className="home-hero__rail-scroller">
+        <div
+          ref={edgeScroll.scrollRef}
+          className="home-hero__plugin-presets"
+          role="list"
+          data-visible-count={visibleTemplates.length}
+          data-total-count={templates.length}
+          onScroll={loadNextPageNearEnd}
+        >
+          {visibleTemplates.map((template) => {
+            const title = ohMyInspireTemplateTitle(template, locale);
+            return (
+              <span className="home-hero__plugin-preset-cell" role="listitem" key={template.id}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="home-hero__plugin-preset"
+                  data-testid="home-hero-ohmyinspire-preset"
+                  data-template-id={template.id}
+                  onClick={() => onPreview(template)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') onPreview(template);
+                  }}
+                  aria-label={title}
+                >
+                  <div className="home-hero__plugin-preset-preview" aria-hidden>
+                    <OhMyInspireCardPreview template={template} title={title} />
+                    <button
+                      type="button"
+                      className="home-hero__plugin-preset-preview-action"
+                      disabled={pendingTemplateId !== null}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onPick(template);
+                      }}
+                    >
+                      {pendingTemplateId === template.id ? t('common.loading') : t('pluginCard.use')}
+                    </button>
+                  </div>
+                  <span className="home-hero__plugin-preset-meta">
+                    <span className="home-hero__plugin-preset-title">{title}</span>
+                    {template.category ? (
+                      <span className="home-hero__plugin-preset-category">
+                        {catalogFacetLabel(template.category, locale, t)}
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              </span>
+            );
+          })}
+        </div>
+        <EdgeScrollZones {...edgeScroll} />
+      </div>
+    </div>
+  );
+}
+
+function OhMyInspireDetailPreview({
+  type,
+  url,
+  title,
+}: {
+  type: string;
+  url: string;
+  title: string;
+}) {
+  if (type === 'video') {
+    return (
+      <div className="community-template-preview__frame ohmyinspire-detail-media">
+        <video src={url} controls autoPlay muted playsInline preload="auto" />
+      </div>
+    );
+  }
+  if (type === 'audio') {
+    return (
+      <div className="community-template-preview__frame ohmyinspire-detail-media">
+        <audio src={url} controls preload="metadata" />
+      </div>
+    );
+  }
+  if (type === 'image') {
+    return (
+      <div className="community-template-preview__frame ohmyinspire-detail-media">
+        <img src={url} alt={`${title} preview`} />
+      </div>
+    );
+  }
+  return (
+    <iframe
+      title={`${title} preview`}
+      className="community-template-preview__frame"
+      src={url}
+      sandbox="allow-scripts"
+    />
+  );
+}
+
+function OhMyInspireTemplatePreviewModal({
+  template,
+  locale,
+  onClose,
+  onUse,
+  pending,
+}: {
+  template: OhMyInspireCatalogTemplate;
+  locale: Locale;
+  onClose: () => void;
+  onUse: () => void;
+  pending: boolean;
+}) {
+  const { t } = useI18n();
+  const title = ohMyInspireTemplateTitle(template, locale);
+  const previewUrl = ohMyInspireCatalogPreviewUrl(template.preview_url);
+  return (
+    <div className="community-template-preview" role="presentation" onMouseDown={onClose}>
+      <section
+        className="community-template-preview__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ohmyinspire-template-preview-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="community-template-preview__head">
+          <div>
+            <h2 id="ohmyinspire-template-preview-title">{title}</h2>
+            <p>{ohMyInspireTemplateDescription(template, locale)}</p>
+          </div>
+          <button type="button" aria-label={t('community.closePreview')} onClick={onClose}>
+            <Icon name="close" size={17} />
+          </button>
+        </header>
+        {previewUrl ? (
+          <OhMyInspireDetailPreview
+            type={ohMyInspirePreviewType(template)}
+            url={previewUrl}
+            title={title}
+          />
+        ) : (
+          <div className="community-template-preview__frame" />
+        )}
+        <footer className="community-template-preview__foot">
+          <span>{template.category ? catalogFacetLabel(template.category, locale, t) : ''}</span>
+          <button type="button" disabled={pending} onClick={onUse}>
+            {pending ? t('common.loading') : t('pluginCard.use')}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
 
 function PluginPromptPresetsLoading() {
   const { t } = useI18n();
