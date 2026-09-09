@@ -199,6 +199,20 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     );
     await writeFile(path.join(dir, 'body.html'), Buffer.from('<html><body><main>Preview</main></body></html>'));
     await writeFile(
+      path.join(dir, 'contained.html'),
+      Buffer.from('<html><head><style>@import "/styles/theme.css";.hero{background:url(/images/hero.png)}</style></head><body>'
+        + '<a href="/workflow.html">Workflow</a><a href="/../../../../../api/health">Unsafe</a>'
+        + '<form action="/send.html"><button formaction="/confirm.html">Send</button></form>'
+        + '<img data-unquoted src=/images/plain.png><img src="/images/logo.png" '
+        + 'srcset="/images/logo.png 1x, /images/logo@2x.png 2x"><a href="//example.com">External</a>'
+        + '<a href="/api/status">API</a><script>const sample = \'href="/do-not-rewrite.html"\';</script>'
+        + '</body></html>'),
+    );
+    await writeFile(
+      path.join(dir, 'authored-base.html'),
+      Buffer.from('<html><head><base href="https://cdn.example/site/"></head><body><img src="/logo.png"></body></html>'),
+    );
+    await writeFile(
       path.join(dir, 'bridged.html'),
       Buffer.from('<html><body><script data-od-url-scroll-bridge></script><main>Preview</main></body></html>'),
     );
@@ -360,6 +374,12 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(bridged.status).toBe(200);
     const html = await bridged.text();
     expect(html).toContain('data-od-url-scroll-bridge');
+    expect(html).toContain('data-od-url-root-navigation-bridge');
+    const navigationBridge = html.match(/<script data-od-url-root-navigation-bridge>([\s\S]*?)<\/script>/)?.[1];
+    expect(navigationBridge).toBeTruthy();
+    expect(() => new Function(navigationBridge!)).not.toThrow();
+    expect(navigationBridge).toContain("window.navigation.addEventListener('navigate'");
+    expect(navigationBridge).toContain('window.open = function(url)');
     expect(html).toContain("type: 'od:preview-scroll'");
     expect(html).toContain("type: 'od:preview-content-size'");
     expect(html).toContain('od:preview-content-size-request');
@@ -369,6 +389,34 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain("get('odPreviewEpoch')");
     expect(html).toContain('scrollWidth: size && size.scrollWidth');
     expect(html).toContain('clientWidth: size && size.clientWidth');
+  });
+
+  it('contains root-relative navigation and asset URLs inside the project preview', async () => {
+    const res = await fetch(`${rawUrl('contained.html')}?odPreviewBridge=scroll`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const root = html.match(/\/preview-assets\/projects\/[^/]+\/preview\/[^/]+\//)?.[0];
+    expect(root).toBeTruthy();
+    expect(html).toContain(`href="${root}workflow.html"`);
+    expect(html).toContain('href="#od-invalid-project-path"');
+    expect(html).toContain(`src=${root}images/plain.png`);
+    expect(html).toContain(`action="${root}send.html"`);
+    expect(html).toContain(`formaction="${root}confirm.html"`);
+    expect(html).toContain(`src="${root}images/logo.png"`);
+    expect(html).toContain(`srcset="${root}images/logo.png 1x, ${root}images/logo@2x.png 2x"`);
+    expect(html).toContain(`url(${root}images/hero.png)`);
+    expect(html).toContain(`@import "${root}styles/theme.css"`);
+    expect(html).toContain('href="//example.com"');
+    expect(html).toContain('href="/api/status"');
+    expect(html).toContain('const sample = \'href="/do-not-rewrite.html"\';');
+  });
+
+  it('respects an authored base URL in URL-load previews', async () => {
+    const res = await fetch(`${rawUrl('authored-base.html')}?odPreviewBridge=scroll`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('<base href="https://cdn.example/site/">');
+    expect(html).toContain('<img src="/logo.png">');
   });
 
   it('injects the URL preview scroll bridge before the closing body tag', async () => {

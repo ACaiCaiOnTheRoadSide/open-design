@@ -401,6 +401,7 @@ export function buildSrcdoc(
   const withSafeTitle = sanitizeTitleInDoc(wrapped);
   const withOdIds = annotateMissingOdIds(withSafeTitle);
   const withSourcePaths = options.editBridge ? annotateManualEditSourcePaths(withOdIds) : withOdIds;
+  const hasAuthoredBase = htmlHasAuthoredBase(withSourcePaths);
   const withBase = options.baseHref ? injectBaseHref(withSourcePaths, options.baseHref) : withSourcePaths;
   const withDeferredFonts = options.deferFontStylesheets
     ? deferTrustedFontStylesheets(withBase)
@@ -476,6 +477,8 @@ export function buildSrcdoc(
         withReloadKey,
         options.rawAssetSigning.projectId,
         options.rawAssetSigning.token,
+        undefined,
+        !hasAuthoredBase,
       )
     : withReloadKey;
 }
@@ -1748,6 +1751,44 @@ function injectSandboxShim(doc: string): string {
   }
   shimHistoryMethod('pushState');
   shimHistoryMethod('replaceState');
+  function containedProjectUrl(value){
+    if (!value || value.charAt(0) !== '/' || value.charAt(1) === '/') return null;
+    if (/^\\/(?:api|raw-signed|preview-assets)(?:\\/|[?#]|$)/i.test(value)) return null;
+    try {
+      var rawPath = value.slice(1).split(/[?#]/, 1)[0];
+      var decodedPath = decodeURIComponent(rawPath);
+      if (decodedPath.split(/[\\\\/]/).some(function(segment){ return segment === '.' || segment === '..'; })) {
+        return '#od-invalid-project-path';
+      }
+      var base = new URL(document.baseURI);
+      var match = base.pathname.match(/^(.*\\/raw-signed\\/[^/]+\\/[^/]+\\/)/)
+        || base.pathname.match(/^(.*\\/api\\/projects\\/[^/]+\\/raw\\/)/);
+      if (!match) return null;
+      var rootPath = value === '/' || value.indexOf('/?') === 0 || value.indexOf('/#') === 0
+        ? 'index.html' + value.slice(1)
+        : value.slice(1);
+      return new URL(match[1] + rootPath, base.origin).href;
+    } catch (_) { return null; }
+  }
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+    window.navigation.addEventListener('navigate', function(event){
+      try {
+        var next = new URL(event.destination.url);
+        var base = new URL(document.baseURI);
+        if (next.origin !== base.origin) return;
+        var destination = containedProjectUrl(next.pathname + next.search + next.hash);
+        if (!destination || !event.cancelable) return;
+        event.preventDefault();
+        window.location.replace(destination);
+      } catch (_) {}
+    });
+  }
+  var originalOpen = window.open;
+  window.open = function(url){
+    var args = Array.prototype.slice.call(arguments);
+    if (typeof url === 'string') args[0] = containedProjectUrl(url) || url;
+    return originalOpen.apply(window, args);
+  };
   document.addEventListener('click', (e) => {
     if (!e.target || !(e.target instanceof Element)) return;
     var link = e.target.closest('a[href]');

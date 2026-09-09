@@ -562,6 +562,74 @@ export async function ensureReferencedProjectDir(
   await ensureProject(projectsRoot, project.id, project.metadata);
 }
 
+const URL_PREVIEW_ROOT_NAVIGATION_BRIDGE = `<script data-od-url-root-navigation-bridge>
+(function(){
+  if (window.__odUrlRootNavigationBridge) return;
+  window.__odUrlRootNavigationBridge = true;
+  function containedUrl(value){
+    if (!value || value.charAt(0) !== '/' || value.charAt(1) === '/') return null;
+    if (/^\\/(?:api|raw-signed|preview-assets)(?:\\/|[?#]|$)/i.test(value)) return null;
+    try {
+      var rawPath = value.slice(1).split(/[?#]/, 1)[0];
+      var decodedPath = decodeURIComponent(rawPath);
+      if (decodedPath.split(/[\\\\/]/).some(function(segment){ return segment === '.' || segment === '..'; })) {
+        return window.location.href.split('#')[0] + '#od-invalid-project-path';
+      }
+      var base = new URL(document.baseURI || window.location.href);
+      var match = base.pathname.match(/^(.*\\/preview-assets\\/projects\\/[^/]+\\/preview\\/[^/]+\\/)/)
+        || base.pathname.match(/^(.*\\/raw-signed\\/[^/]+\\/[^/]+\\/)/)
+        || base.pathname.match(/^(.*\\/api\\/projects\\/[^/]+\\/raw\\/)/);
+      if (!match || base.origin !== window.location.origin) return null;
+      var rootPath = value === '/' || value.indexOf('/?') === 0 || value.indexOf('/#') === 0
+        ? 'index.html' + value.slice(1)
+        : value.slice(1);
+      var destination = new URL(match[1] + rootPath, window.location.origin);
+      var current = new URL(window.location.href);
+      var carriesPreviewBridge = destination.searchParams.has('odPreviewBridge');
+      current.searchParams.forEach(function(paramValue, key){
+        if (key === 'odPreviewBridge' && !carriesPreviewBridge) destination.searchParams.append(key, paramValue);
+      });
+      return destination.href;
+    } catch (_) { return null; }
+  }
+  document.addEventListener('click', function(ev){
+    if (ev.defaultPrevented || (ev.button !== undefined && ev.button !== 0)) return;
+    var target = ev.target;
+    var anchor = target && target.closest ? target.closest('a[href],area[href]') : null;
+    if (!anchor) return;
+    var destination = containedUrl(anchor.getAttribute('href') || '');
+    if (destination) anchor.href = destination;
+  }, true);
+  document.addEventListener('submit', function(ev){
+    if (ev.defaultPrevented) return;
+    var form = ev.target;
+    if (!form || !form.getAttribute) return;
+    var submitter = ev.submitter;
+    var actionOwner = submitter && submitter.getAttribute && submitter.hasAttribute('formaction') ? submitter : form;
+    var destination = containedUrl(actionOwner.getAttribute(actionOwner === form ? 'action' : 'formaction') || '');
+    if (destination) actionOwner.setAttribute(actionOwner === form ? 'action' : 'formaction', destination);
+  }, true);
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+    window.navigation.addEventListener('navigate', function(ev){
+      try {
+        var next = new URL(ev.destination.url);
+        if (next.origin !== window.location.origin) return;
+        var destination = containedUrl(next.pathname + next.search + next.hash);
+        if (!destination || !ev.cancelable) return;
+        ev.preventDefault();
+        window.location.replace(destination);
+      } catch (_) {}
+    });
+  }
+  var originalOpen = window.open;
+  window.open = function(url){
+    var args = Array.prototype.slice.call(arguments);
+    if (typeof url === 'string') args[0] = containedUrl(url) || url;
+    return originalOpen.apply(window, args);
+  };
+})();
+</script>`;
+
 const URL_PREVIEW_SCROLL_BRIDGE = `<script data-od-url-scroll-bridge>
 (function(){
   if (window.__odUrlScrollBridge) return;
@@ -1750,6 +1818,13 @@ function applyUrlPreviewBridgesToHtml(
   }
 
   let html = Buffer.isBuffer(transformed) ? transformed.toString('utf8') : transformed;
+  // Root-relative links in generated sites (for example /workflow.html) would
+  // otherwise escape the signed project-file path and hit the daemon itself.
+  html = injectBeforeBodyClose(
+    html,
+    'data-od-url-root-navigation-bridge',
+    URL_PREVIEW_ROOT_NAVIGATION_BRIDGE,
+  );
   // Sanitize the <title> so Cmd+P -> "Save as PDF" produces a Teams-safe
   // filename. URL-load iframes cannot rely on the host rewriting the document
   // title after load, and powered previews are intentionally cross-origin.
@@ -6074,6 +6149,65 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     return `${baseTag}${html}`;
   }
 
+  function rewriteProjectRootRelativeHtmlUrls(html: string, projectRoot: string): string {
+    const urlAttr = /(\s)(href|src|poster|data-src|data|action|formaction|xlink:href)(\s*=\s*)(?:(["'])([^"']*)\4|([^\s"'=<>`]+))/gi;
+    const srcsetAttr = /(\ssrcset\s*=\s*)(?:(["'])([^"']*)\2|([^\s"'=<>`]+))/gi;
+    const cssUrl = /url\(\s*(["']?)([^'")]+)\1\s*\)/gi;
+    const cssImport = /(@import\s+)(["'])([^"']+)\2/gi;
+    const rewrite = (ref: string): string => {
+      if (!ref.startsWith('/') || ref.startsWith('//')) return ref;
+      if (/^\/(?:api|raw-signed|preview-assets)(?:\/|[?#]|$)/i.test(ref)) return ref;
+      const rawPath = ref.slice(1).split(/[?#]/, 1)[0] ?? '';
+      try {
+        if (decodeURIComponent(rawPath).split(/[\\/]/).some((segment) => segment === '.' || segment === '..')) {
+          return '#od-invalid-project-path';
+        }
+      } catch {
+        return '#od-invalid-project-path';
+      }
+      const target = ref === '/' || ref.startsWith('/?') || ref.startsWith('/#')
+        ? `index.html${ref.slice(1)}`
+        : ref.slice(1);
+      return `${projectRoot}${target}`;
+    };
+    const rewriteChunk = (chunk: string): string => {
+      let next = chunk.replace(
+        urlAttr,
+        (match, space: string, name: string, eq: string, quote: string | undefined, quotedValue: string | undefined, unquotedValue: string | undefined) => {
+          const value = quotedValue ?? unquotedValue ?? '';
+          const rewritten = rewrite(value);
+          if (rewritten === value) return match;
+          return quote
+            ? `${space}${name}${eq}${quote}${rewritten}${quote}`
+            : `${space}${name}${eq}${rewritten}`;
+        },
+      );
+      next = next.replace(srcsetAttr, (match, prefix: string, quote: string | undefined, quotedValue: string | undefined, unquotedValue: string | undefined) => {
+        const value = quotedValue ?? unquotedValue ?? '';
+        if (/(?:^|,\s*)data:/i.test(value)) return match;
+        const rewritten = value.split(',').map((candidate) => {
+          const body = candidate.trim();
+          if (!body) return candidate;
+          const [url = '', ...descriptors] = body.split(/\s+/);
+          const rewrittenUrl = rewrite(url);
+          if (rewrittenUrl === url) return candidate;
+          return `${candidate.match(/^\s*/)?.[0] ?? ''}${[rewrittenUrl, ...descriptors].join(' ')}`;
+        }).join(',');
+        if (rewritten === value) return match;
+        return quote ? `${prefix}${quote}${rewritten}${quote}` : `${prefix}${rewritten}`;
+      });
+      next = next.replace(cssUrl, (match, quote: string, value: string) => {
+        const rewritten = rewrite(value);
+        return rewritten === value ? match : `url(${quote}${rewritten}${quote})`;
+      });
+      return next.replace(cssImport, (match, prefix: string, quote: string, value: string) => {
+        const rewritten = rewrite(value);
+        return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
+      });
+    };
+    return rewriteOutsideExecutableHtmlRanges(html, rewriteChunk);
+  }
+
   function rewriteWorkspaceScopedHtmlAssetUrls(
     html: string,
     projectId: string,
@@ -6706,12 +6840,16 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                 }
               : null;
           const scope = projectPreviewScopes.mint(projectId, previewWorkspace);
-          return injectProjectPreviewBase(
+          const hasAuthoredBase = /<base\b/i.test(html);
+          const projectRoot = `/preview-assets/projects/${encodeURIComponent(projectId)}`
+            + `/preview/${encodeURIComponent(scope)}/`;
+          const based = injectProjectPreviewBase(
             html,
             projectId,
             relPath,
             scope,
           );
+          return hasAuthoredBase ? based : rewriteProjectRootRelativeHtmlUrls(based, projectRoot);
         },
         true, // revalidate: emit ETag/Last-Modified so covers/preview/export reuse cached assets
       );

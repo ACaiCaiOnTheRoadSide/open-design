@@ -3023,6 +3023,7 @@ export function signProjectRawUrlsInHtml(
   projectId: string,
   token: string | null,
   applicationOrigin = typeof globalThis.location !== 'undefined' ? globalThis.location.origin : '',
+  containRootRelative = true,
 ): string {
   if (!token) return html;
   const plain = projectRawPrefix(projectId);
@@ -3037,7 +3038,145 @@ export function signProjectRawUrlsInHtml(
   if (applicationOrigin && applicationOrigin !== 'null') {
     rewritten = rewrite(rewritten, `${applicationOrigin}${plain}`);
   }
-  return rewritten;
+  if (!containRootRelative) return rewritten;
+
+  // Generated sites often treat / as their project root. In the sandbox it is
+  // the OpenDesign host root, so contain root-relative pages and assets in the
+  // signed project while leaving explicit host APIs and protocol URLs alone.
+  const rewriteRootRelative = (ref: string): string => {
+    if (!ref.startsWith('/') || ref.startsWith('//')) return ref;
+    if (/^\/(?:api|raw-signed|preview-assets)(?:\/|[?#]|$)/i.test(ref)) return ref;
+    const rawPath = ref.slice(1).split(/[?#]/, 1)[0] ?? '';
+    try {
+      if (decodeURIComponent(rawPath).split(/[\\/]/).some((segment) => segment === '.' || segment === '..')) {
+        return '#od-invalid-project-path';
+      }
+    } catch {
+      return '#od-invalid-project-path';
+    }
+    const target = ref === '/' || ref.startsWith('/?') || ref.startsWith('/#')
+      ? `index.html${ref.slice(1)}`
+      : ref.slice(1);
+    return `${signed}${target}`;
+  };
+  const rewriteCss = (css: string): string => {
+    let next = css.replace(
+      /url\(\s*(["']?)([^'")]+)\1\s*\)/gi,
+      (match, quote: string, value: string) => {
+        const replacement = rewriteRootRelative(value);
+        return replacement === value ? match : `url(${quote}${replacement}${quote})`;
+      },
+    );
+    next = next.replace(
+      /(@import\s+)(["'])([^"']+)\2/gi,
+      (match, prefix: string, quote: string, value: string) => {
+        const replacement = rewriteRootRelative(value);
+        return replacement === value ? match : `${prefix}${quote}${replacement}${quote}`;
+      },
+    );
+    return next;
+  };
+  const urlAttributes = new Set([
+    'href', 'src', 'poster', 'data-src', 'data', 'action', 'formaction', 'xlink:href',
+  ]);
+  const rewriteTag = (tag: string): string => {
+    const tagName = tag.match(/^<\s*([^\s/>]+)/)?.[1]?.toLowerCase() ?? '';
+    const attributes: Array<{
+      name: string;
+      value: string;
+      start: number;
+      end: number;
+    }> = [];
+    let cursor = tag.match(/^<\s*[^\s/>]+/)?.[0].length ?? 1;
+    while (cursor < tag.length) {
+      while (/\s/.test(tag[cursor] ?? '')) cursor += 1;
+      if (tag[cursor] === '>' || tag[cursor] === '/' || cursor >= tag.length) break;
+      const nameStart = cursor;
+      while (cursor < tag.length && !/[\s=/>]/.test(tag[cursor] ?? '')) cursor += 1;
+      const name = tag.slice(nameStart, cursor).toLowerCase();
+      while (/\s/.test(tag[cursor] ?? '')) cursor += 1;
+      if (tag[cursor] !== '=') continue;
+      cursor += 1;
+      while (/\s/.test(tag[cursor] ?? '')) cursor += 1;
+      const quote = tag[cursor] === '"' || tag[cursor] === "'" ? tag[cursor] : '';
+      if (quote) cursor += 1;
+      const valueStart = cursor;
+      if (quote) while (cursor < tag.length && tag[cursor] !== quote) cursor += 1;
+      else while (cursor < tag.length && !/[\s>]/.test(tag[cursor] ?? '')) cursor += 1;
+      attributes.push({ name, value: tag.slice(valueStart, cursor), start: valueStart, end: cursor });
+      if (quote && tag[cursor] === quote) cursor += 1;
+    }
+    const refresh = tagName === 'meta'
+      && attributes.some((attribute) => attribute.name === 'http-equiv' && attribute.value.toLowerCase() === 'refresh');
+    const replacements = attributes.flatMap((attribute) => {
+      let value = attribute.value;
+      if (urlAttributes.has(attribute.name)) value = rewriteRootRelative(value);
+      else if (attribute.name === 'srcset' && !/(?:^|,\s*)data:/i.test(value)) {
+        value = value.split(',').map((candidate) => {
+          const body = candidate.trim();
+          if (!body) return candidate;
+          const [url = '', ...descriptors] = body.split(/\s+/);
+          return `${candidate.match(/^\s*/)?.[0] ?? ''}${[rewriteRootRelative(url), ...descriptors].join(' ')}`;
+        }).join(',');
+      } else if (attribute.name === 'style') value = rewriteCss(value);
+      else if (refresh && attribute.name === 'content') {
+        value = value.replace(/(\burl\s*=\s*)(\/[^;\s]*)/i, (_match, prefix: string, url: string) =>
+          `${prefix}${rewriteRootRelative(url)}`);
+      }
+      return value === attribute.value ? [] : [{ ...attribute, value }];
+    });
+    for (const replacement of replacements.reverse()) {
+      tag = `${tag.slice(0, replacement.start)}${replacement.value}${tag.slice(replacement.end)}`;
+    }
+    return tag;
+  };
+  const findTagEnd = (source: string, start: number): number => {
+    let quote = '';
+    for (let index = start + 1; index < source.length; index += 1) {
+      const char = source[index] ?? '';
+      if (quote) {
+        if (char === quote) quote = '';
+      } else if (char === '"' || char === "'") quote = char;
+      else if (char === '>') return index + 1;
+    }
+    return source.length;
+  };
+  const rewriteDocument = (source: string): string => {
+    const lower = source.toLowerCase();
+    let output = '';
+    let cursor = 0;
+    while (cursor < source.length) {
+      const tagStart = source.indexOf('<', cursor);
+      if (tagStart < 0) return output + source.slice(cursor);
+      output += source.slice(cursor, tagStart);
+      if (source.startsWith('<!--', tagStart)) {
+        const commentEnd = source.indexOf('-->', tagStart + 4);
+        const end = commentEnd < 0 ? source.length : commentEnd + 3;
+        output += source.slice(tagStart, end);
+        cursor = end;
+        continue;
+      }
+      const tagEnd = findTagEnd(source, tagStart);
+      const tag = source.slice(tagStart, tagEnd);
+      output += rewriteTag(tag);
+      cursor = tagEnd;
+      const rawTextName = tag.match(/^<\s*(script|style)\b/i)?.[1]?.toLowerCase();
+      if (!rawTextName) continue;
+      const closeStart = lower.indexOf(`</${rawTextName}`, cursor);
+      if (closeStart < 0) {
+        const body = source.slice(cursor);
+        output += rawTextName === 'style' ? rewriteCss(body) : body;
+        return output;
+      }
+      const body = source.slice(cursor, closeStart);
+      output += rawTextName === 'style' ? rewriteCss(body) : body;
+      const closeEnd = findTagEnd(source, closeStart);
+      output += source.slice(closeStart, closeEnd);
+      cursor = closeEnd;
+    }
+    return output;
+  };
+  return rewriteDocument(rewritten);
 }
 
 export function designSystemStaticUrl(
