@@ -43,12 +43,12 @@ import {
   MEDIA_USER_REPLY_CONTRACT,
   renderMediaGenerationContract,
 } from './media-contract.js';
+import { MEDIA_PROJECT_FILE_PERSISTENCE } from './media-persistence.js';
 import { renderPanelPrompt } from './panel.js';
 import { defaultCritiqueConfig, type CritiqueConfig } from '@open-design/contracts/critique';
 import {
   executionProfileFromStreamFormat,
   INTEGRATIONS_MCP_PATH,
-  SETTINGS_MEDIA_PROVIDERS_PATH,
   type ByokMediaDefaults,
   type ChatSessionMode,
   type ExecutionProfile,
@@ -59,8 +59,6 @@ import {
 // Prepended first in every composed prompt so it wins precedence over all
 // later sections, including skill bodies and user/project instructions.
 
-const ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT = 100;
-const ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX = 'ElevenLabs voice list could not be loaded';
 const SEMANTIC_OUTPUT_FILE_NAMES = `## Semantic output file names
 
 For new user-facing deliverables, choose a short semantic project-relative filename derived from the user's brief, product, screen, or artifact type. Do not call every new artifact \`index.html\`.
@@ -68,17 +66,6 @@ For new user-facing deliverables, choose a short semantic project-relative filen
 Good examples: \`investor-pitch-deck.html\`, \`ai-community-pr-deck.html\`, \`refund-ops-dashboard.html\`, \`pricing-page.html\`, \`screens/ios-checkout.html\`, \`daily-digest.md\`, \`image-manifest.json\`.
 
 When editing an existing artifact, preserve its existing filename unless the user asks for a copy or version. Use \`index.html\` only for fixed runtime conventions or a lightweight launcher/overview: live-artifact generated previews, HyperFrames compositions, static SPA/deploy entry mapping, plugin previews/examples, \`ui_kits/app/index.html\`, or a multi-screen overview that links to semantic screen files. If an active skill or template says to copy a seed to \`index.html\`, adapt the destination to a semantic filename unless the task is one of those fixed-path exceptions.`;
-const PROMPT_SAFE_HTTP_STATUS_LABELS: Record<string, string> = {
-  '400': 'Bad Request',
-  '401': 'Unauthorized',
-  '403': 'Forbidden',
-  '404': 'Not Found',
-  '429': 'Too Many Requests',
-  '500': 'Internal Server Error',
-  '502': 'Bad Gateway',
-  '503': 'Service Unavailable',
-  '504': 'Gateway Timeout',
-};
 
 function renderUiLocalePrompt(
   locale: string | undefined,
@@ -119,36 +106,6 @@ function renderUiLocalePrompt(
     );
   }
   return lines.join('\n');
-}
-
-function normalizePromptText(value: string): string {
-  return value
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function formatElevenLabsVoiceOptionsErrorForPrompt(
-  error: string | undefined,
-): string | undefined {
-  const trimmed = normalizePromptText(error ?? '');
-  if (!trimmed) return undefined;
-
-  if (/no ElevenLabs API key/i.test(trimmed)) {
-    return `${ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX} because the ElevenLabs API key is missing. Tell the user to configure it in ${SETTINGS_MEDIA_PROVIDERS_PATH} or paste a voice id manually.`;
-  }
-
-  const statusMatch = trimmed.match(
-    /(?:\((\d{3})(?:\s+([^)]+))?\)|\b(\d{3})(?:\s+([A-Za-z][A-Za-z -]{0,40}))?\b)/,
-  );
-  if (statusMatch) {
-    const statusCode = statusMatch[1] ?? statusMatch[3];
-    const statusText = statusCode ? PROMPT_SAFE_HTTP_STATUS_LABELS[statusCode] ?? '' : '';
-    const suffix = statusText ? ` ${statusText}` : '';
-    return `${ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX} (${statusCode}${suffix}). Tell the user to retry the lookup or paste a voice id manually.`;
-  }
-
-  return `${ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX}. Tell the user to retry the lookup or paste a voice id manually.`;
 }
 
 type ProjectMetadata = {
@@ -317,8 +274,8 @@ export function detectPlatformIntentSignal(
 
 /**
  * Whether the visible conversation mentions generating media. Gates the
- * MEDIA_DISPATCH_HINT for non-media projects: most runs never generate
- * media, so the generate→wait dispatch hint only ships once the request
+ * MEDIA_MCP_HINT for non-media projects: most runs never generate
+ * media, so the MCP guidance only ships once the request
  * text (transcript included) shows media vocabulary. Callers that cannot
  * supply the request text pass undefined to `mediaHintSignal`, which
  * preserves the legacy always-inject behavior.
@@ -441,173 +398,31 @@ export const SKIP_DISCOVERY_BRIEF_OVERRIDE = `# Automated project mode — skip 
 
 This project was created through the daemon API with \`skipDiscoveryBrief: true\`. Override the discovery rules below: do NOT emit a project-opening \`<question-form id="discovery">\` or show "Quick brief — 30 seconds". Treat the user's first message and project metadata as the brief, then proceed directly to planning/building under the normal artifact workflow. Ask at most one concise follow-up only if a required detail is impossible to infer safely.`;
 
-// Injected into non-media projects so the agent knows how to dispatch
-// media generation if the user asks for it mid-session (e.g. "generate an
-// image with fal"). Without this, agents in prototype/deck projects try to
-// call provider REST APIs directly and ask the user for keys that the daemon
-// already holds in .od/media-config.json.
-// Kept deliberately compact: this hint ships on EVERY non-media project
-// (the vast majority never generate media), so the worked generate→wait
-// bash recipe lives in `od media help` (printMediaHelp in cli.ts) and the
-// CLI's own stderr handoff guidance instead of the prompt. The hint only
-// needs to (1) route the agent to the dispatcher instead of provider APIs,
-// (2) state the handoff/exit-code semantics, and (3) pin the behavioral
-// rules agents historically fumbled (PowerShell translation, jq, asking
-// for API keys, substituting fal-ai/* model paths).
-const MEDIA_DISPATCH_HINT = `
+// Injected into non-media projects when the conversation asks for generated
+// media. Generation uses a capable MCP tool exposed in the current run.
+const MEDIA_MCP_HINT = `
 
 ---
 
 ## Media generation (if asked)
 
-If the user asks you to generate an image, video, or audio file — regardless of which provider or model they mention (fal, Replicate, OpenAI, etc.) — use the daemon dispatcher via your **Bash tool**. Do NOT call provider REST APIs directly.
+First inspect the tools available in this run. If an external MCP exposes a
+capable media-generation tool, invoke that real tool directly. Choose by the
+actual tool schema, not by guessing from a server name, and do not hardcode a
+server, provider, tool, or model name.
 
-OpenDesign Cloud models use the \`vela/*\` prefix. Never invoke the \`vela\`
-CLI directly for those models: the OD dispatcher owns trusted Workspace
-attribution, polling, downloads, and final project-file placement.
+Do not use the OpenDesign media dispatcher, call provider REST APIs directly, or
+ask the user for provider credentials. If no capable external MCP tool is
+available, stop and follow the user-facing failure contract below. If an MCP
+tool fails, retain its exact tool name and raw error only in the tool trace.
 
-The daemon injects these env vars into your shell (**POSIX bash — not PowerShell**):
-
-- \`OD_NODE_BIN\`   — absolute path to the Node runtime
-- \`OD_BIN\`        — absolute path to the OD CLI script
-- \`OD_PROJECT_ID\` — the active project id
-
-**Always use the generate→wait loop below.** \`media generate\` always exits 0 — either with \`{"file":{...}}\` if done within ~25s, or with \`{"taskId":"..."}\` as a handoff for slow models. Whenever the output contains a \`taskId\`, keep polling with \`media wait\` until exit 0 (done) or exit 5 (failed).
-
-Use **POSIX \`$VAR\` syntax** — do NOT translate to PowerShell (\`$env:VAR\`, \`&\` operator). Uses \`python3\` for JSON parsing (do NOT use \`jq\`):
-
-\`\`\`bash
-# POSIX bash — do NOT convert to PowerShell
-IMAGE_MODEL=IMAGE_MODEL_VALUE
-out=\$("$OD_NODE_BIN" "$OD_BIN" media generate \\
-  --project "$OD_PROJECT_ID" \\
-  --surface image \\
-  --model "$IMAGE_MODEL" \\
-  --prompt "..." \\
-  --aspect 16:9)
-ec=\$?
-if [ "\$ec" -ne 0 ]; then echo "\$out" >&2; exit "\$ec"; fi
-last=\$(printf '%s\\n' "\$out" | tail -1)
-task_id=\$(printf '%s\\n' "\$last" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('taskId',''))" 2>/dev/null)
-since=\$(printf '%s\\n' "\$last" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('nextSince',0))" 2>/dev/null)
-since="\${since:-0}"
-while [ -n "\$task_id" ]; do
-  out=\$("$OD_NODE_BIN" "$OD_BIN" media wait "\$task_id" --since "\$since")
-  ec=\$?
-  last=\$(printf '%s\\n' "\$out" | tail -1)
-  since=\$(printf '%s\\n' "\$last" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('nextSince',\$since))" 2>/dev/null)
-  since="\${since:-0}"
-  if [ "\$ec" -eq 0 ]; then
-    task_id=""
-  elif [ "\$ec" -ne 2 ]; then
-    echo "\$out" >&2; exit "\$ec"
-  fi
-done
-printf '%s\\n' "\$last"
-\`\`\`
-
-The command exits \`0\` with one line of JSON: \`{"file":{...}}\` when done within ~25s, or \`{"taskId":"..."}\` as a SUCCESSFUL handoff for slow models. On a handoff, run the exact \`media wait\` command the CLI prints on stderr and repeat it until exit \`0\` (done) or exit \`5\` (failed); exit \`2\` means still running — not a failure. Parse JSON with \`python3\`, never \`jq\`.
+${MEDIA_PROJECT_FILE_PERSISTENCE}
 
 ${MEDIA_USER_REPLY_CONTRACT}
+`;
 
-MODEL_SELECTION_GUIDANCE`;
-
-function renderByokMediaDefaultsHint(defaults?: ByokMediaDefaults): string {
-  const lines: string[] = [];
-  const imageModel = defaults?.imageModel?.trim();
-  const videoModel = defaults?.videoModel?.trim();
-  const speechModel = defaults?.speechModel?.trim();
-  const speechVoice = defaults?.speechVoice?.trim();
-  if (imageModel) lines.push(`- Image model: \`${imageModel}\``);
-  if (videoModel) lines.push(`- Video model: \`${videoModel}\``);
-  if (speechModel) lines.push(`- Speech model: \`${speechModel}\``);
-  if (speechVoice) lines.push(`- Speech voice: \`${speechVoice}\``);
-  if (lines.length === 0) return '';
-  return `
-
-### Run-scoped BYOK media defaults
-
-The user selected these BYOK media defaults in the chat UI for this run. Use
-them when dispatching media unless the current user message explicitly asks for
-a different model or voice.
-${lines.join('\n')}`;
-}
-
-function shellDoubleQuote(value: string): string {
-  return `"${value.replace(/(["\\$`])/g, '\\$1')}"`;
-}
-
-function renderMediaDispatchModelGuidance(defaults?: ByokMediaDefaults): string {
-  const imageModel = defaults?.imageModel?.trim();
-  const videoModel = defaults?.videoModel?.trim();
-  const imagePart = imageModel
-    ? `For image generation prefer your configured model: \`${imageModel}\`.`
-    : 'For image generation use the managed dispatcher model `vela/gpt-image-2`.';
-  const videoPart = videoModel
-    ? `For video prefer your configured model: \`${videoModel}\`.`
-    : 'For video use the managed dispatcher model `vela/doubao-seedance-2-0-260128`.';
-  return `${imagePart} ${videoPart} Always pass \`--surface\` explicitly (\`image\`, \`video\`, or \`audio\`). Only use a Fal model when the user explicitly requests that provider or model. If the user explicitly requests a \`fal-ai/*\` path, pass it through as-is without substitution.`;
-}
-
-function renderMediaDispatchHint(
-  defaults?: ByokMediaDefaults,
-  runtimeDefaults?: ByokMediaDefaults,
-): string {
-  const effectiveDefaults = runtimeDefaults ?? defaults;
-  const imageModel = effectiveDefaults?.imageModel?.trim() || 'vela/gpt-image-2';
-  const hint = MEDIA_DISPATCH_HINT
-    .replace('IMAGE_MODEL_VALUE', shellDoubleQuote(imageModel))
-    .replace(
-      'MODEL_SELECTION_GUIDANCE',
-      renderMediaDispatchModelGuidance(effectiveDefaults),
-    );
-  return `${hint}${renderByokMediaDefaultsHint(defaults)}${renderRuntimeMediaDefaultsHint(runtimeDefaults, defaults)}`;
-}
-
-function mediaDefaultsForRuntime(
-  agentId: string | null | undefined,
-  defaults?: ByokMediaDefaults,
-  metadata?: ProjectMetadata,
-): ByokMediaDefaults | undefined {
-  const imageModel = defaults?.imageModel?.trim() || metadata?.imageModel?.trim();
-  const videoModel = defaults?.videoModel?.trim() || metadata?.videoModel?.trim();
-  if (agentId === 'amr') {
-    return {
-      ...defaults,
-      imageModel: imageModel || 'vela/gpt-image-2',
-      videoModel: videoModel || 'vela/doubao-seedance-2-0-260128',
-    };
-  }
-  if (agentId === 'ohmyagent') {
-    return {
-      ...defaults,
-      imageModel: imageModel || 'vela/gpt-image-2',
-      videoModel: videoModel || 'vela/doubao-seedance-2-0-260128',
-    };
-  }
-  return defaults;
-}
-
-function renderRuntimeMediaDefaultsHint(
-  runtimeDefaults: ByokMediaDefaults | undefined,
-  userDefaults: ByokMediaDefaults | undefined,
-): string {
-  if (!runtimeDefaults) return '';
-  const lines: string[] = [];
-  if (!userDefaults?.imageModel?.trim() && runtimeDefaults.imageModel?.trim()) {
-    lines.push(`- Image model: \`${runtimeDefaults.imageModel.trim()}\``);
-  }
-  if (!userDefaults?.videoModel?.trim() && runtimeDefaults.videoModel?.trim()) {
-    lines.push(`- Video model: \`${runtimeDefaults.videoModel.trim()}\``);
-  }
-  if (lines.length === 0) return '';
-  return `
-
-### Runtime media defaults
-
-This runtime recommends these media defaults when the user has not selected a
-different run-scoped model:
-${lines.join('\n')}`;
+function renderMediaMcpHint(): string {
+  return MEDIA_MCP_HINT;
 }
 
 const FILESYSTEM_HANDOFF_OVERRIDE = `
@@ -842,7 +657,7 @@ export interface ComposeInput {
   promptCoreVariant?: 'classic' | 'slim' | undefined;
   // Whether the visible conversation mentions generating media (see
   // `detectMediaIntentSignal`). Only consulted for non-media projects:
-  // `false` skips the MEDIA_DISPATCH_HINT, `true`/`undefined` keep it.
+  // `false` skips the MEDIA_MCP_HINT, `true`/`undefined` keep it.
   // Media surfaces always get the full media contract regardless.
   mediaHintSignal?: boolean | undefined;
   // Whether the visible conversation names a delivery platform (see
@@ -896,21 +711,6 @@ export function composeSystemPrompt({
   // layered composition until the A/B comparison signs off.
   const isSlimCore = promptCoreVariant === 'slim';
   const isAskModeEarly = sessionMode === 'chat';
-  const runtimeMediaDefaults = mediaDefaultsForRuntime(
-    agentId,
-    byokMediaDefaults,
-    metadata,
-  );
-  const explicitImageModel = byokMediaDefaults?.imageModel?.trim() || metadata?.imageModel?.trim();
-  const explicitVideoModel = byokMediaDefaults?.videoModel?.trim() || metadata?.videoModel?.trim();
-  const explicitMediaDefaults: ByokMediaDefaults | undefined =
-    byokMediaDefaults || explicitImageModel || explicitVideoModel
-      ? {
-          ...byokMediaDefaults,
-          ...(explicitImageModel ? { imageModel: explicitImageModel } : {}),
-          ...(explicitVideoModel ? { videoModel: explicitVideoModel } : {}),
-        }
-      : undefined;
   // Media surfaces (image / video / audio) must be resolved BEFORE the head
   // is built: their generation contract, rather than the design charter's
   // HTML workflow, is the sole workflow authority on these runs.
@@ -1346,20 +1146,15 @@ export function composeSystemPrompt({
     // mode for anything that actually generates media.
   } else if (isMediaSurface) {
     parts.push(renderMediaGenerationContract(mediaExecution, byokMediaDefaults));
-    const runtimeDefaultsHint = renderRuntimeMediaDefaultsHint(
-      runtimeMediaDefaults,
-      explicitMediaDefaults,
-    );
-    if (runtimeDefaultsHint) parts.push(runtimeDefaultsHint);
   } else if (mediaHintSignal ?? true) {
     // Non-media projects (prototype, deck, etc.): inject a lightweight hint
-    // so the agent uses `od media generate` if the user asks for an image/video
+    // so the agent uses a capable MCP tool if the user asks for generated media
     // mid-session, rather than hunting for provider API keys in the environment.
     // Gated on the media-intent signal: most conversations never mention
     // media, and the transcript-scanned signal flips the hint on for the
     // rest of the session as soon as one does.
     (isSlimCore ? slimTurnVariableParts : parts).push(
-      renderMediaDispatchHint(byokMediaDefaults, runtimeMediaDefaults),
+      renderMediaMcpHint(),
     );
   }
 
@@ -1550,7 +1345,9 @@ export function renderConnectedExternalMcpDirective(
     lines.join('\n'),
     '\n\n',
     '**Do NOT call any tool whose name matches `mcp__<server>__authenticate` or `mcp__<server>__complete_authentication` for the servers above.** Their connection and static credentials are managed by the platform; use the real tools directly.\n\n',
-    `If a real tool fails, report the exact tool name and error text and stop. Do not retry by invoking any \`*_authenticate\` tool.\n`,
+    'For a media-generation request, inspect the real tools exposed by these servers. If one is capable, use it directly. Do not infer capability from a server name or hardcode a provider, tool, or model. Do not use the OpenDesign media dispatcher as a fallback.\n\n',
+    `${MEDIA_PROJECT_FILE_PERSISTENCE}\n\n`,
+    `If a real tool fails, stop and do not retry by invoking any \`*_authenticate\` tool. For media-generation failures, keep the exact tool name and raw error in the tool trace and follow the media user-facing completion contract; do not expose them in the visible reply. For non-media failures, report the exact tool name and error text.\n`,
   ].join('');
 }
 
@@ -1563,8 +1360,8 @@ export function renderConnectedExternalMcpDirective(
 function renderMetadataBlock(
   metadata: ProjectMetadata | undefined,
   template: ProjectTemplate | undefined,
-  audioVoiceOptions: AudioVoiceOption[] | undefined,
-  audioVoiceOptionsError: string | undefined,
+  _audioVoiceOptions: AudioVoiceOption[] | undefined,
+  _audioVoiceOptionsError: string | undefined,
   mediaExecution: MediaExecutionPolicy | undefined,
   style: 'classic' | 'facts' = 'classic',
 ): string {
@@ -1704,11 +1501,7 @@ function renderMetadataBlock(
       lines.push(`- **referenceTemplate**: ${metadata.promptTemplate.title}`);
     }
     lines.push('');
-    lines.push(renderMediaMetadataAction(
-      'image',
-      '`"$OD_NODE_BIN" "$OD_BIN" media generate --surface image --model <imageModel>`',
-      mediaExecution,
-    ));
+    lines.push(renderMediaMetadataAction('image', mediaExecution));
   }
   if (metadata.kind === 'video') {
     lines.push(
@@ -1728,14 +1521,10 @@ function renderMetadataBlock(
       lines.push(`- **referenceTemplate**: ${metadata.promptTemplate.title}`);
     }
     lines.push('');
-    lines.push(renderMediaMetadataAction(
-      'video',
-      '`"$OD_NODE_BIN" "$OD_BIN" media generate --surface video --model <videoModel> --length <seconds> --aspect <ratio>`',
-      mediaExecution,
-    ));
+    lines.push(renderMediaMetadataAction('video', mediaExecution));
     if (metadata.videoModel === 'hyperframes-html') {
       lines.push(
-        'Special case: `hyperframes-html` is a local HTML-to-MP4 renderer, not a photoreal text-to-video model. Treat it like a motion design renderer, ask at most one clarifying question, then create a HyperFrames composition with `"$OD_NODE_BIN" "$OD_BIN" media scaffold --composition-dir <rel>` under `.hyperframes-cache/`, edit `index.html`, and dispatch via `"$OD_NODE_BIN" "$OD_BIN" media generate --surface video --model hyperframes-html --composition-dir <rel>`. Do not run HyperFrames `init` or `render` yourself.',
+        'Special case: `hyperframes-html` is a motion-design source workflow. You may use `media scaffold` to prepare editable files under `.hyperframes-cache/`, but it does not generate final video. For final media, use a capable MCP tool as required by the media generation contract.',
       );
     }
   }
@@ -1754,40 +1543,13 @@ function renderMetadataBlock(
     } else if (metadata.audioKind === 'speech') {
       lines.push('- **voice**: (not provided; relevant dimensions include voice id, accent, and pacing)');
     }
-    const voiceOptions = shouldRenderElevenLabsVoiceOptions(metadata, audioVoiceOptions)
-      ? audioVoiceOptions ?? []
-      : [];
-    if (voiceOptions.length > 0) {
-      lines.push(
-        '- **ElevenLabs voice selection policy**: First infer from the current request, conversation, Plugin inputs, and available context. If the provider default can safely satisfy the brief, omit `--voice` and do not ask. Only when voice selection would materially change the requested result and no safe default can be inferred, emit the dropdown template below. Its visible labels are voice descriptions; the selected value must be the exact `voice_id` passed to `--voice`. Do not ask the user to type an id.',
-      );
-      if (voiceOptions.length > ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT) {
-        lines.push(`- **ElevenLabs voice options**: showing the first ${ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT} of ${voiceOptions.length} available voices.`);
-      }
-      lines.push('');
-      lines.push('Conditional template — do not emit unless the voice-selection policy above requires clarification:');
-      lines.push('<question-form id="elevenlabs-voice" title="Choose an ElevenLabs voice">');
-      lines.push(JSON.stringify(renderElevenLabsVoiceQuestionForm(voiceOptions), null, 2));
-      lines.push('</question-form>');
-    } else {
-      const audioVoiceOptionsPromptError = formatElevenLabsVoiceOptionsErrorForPrompt(audioVoiceOptionsError);
-      if (audioVoiceOptionsPromptError) {
-        lines.push(
-          `- **ElevenLabs voice options**: ${audioVoiceOptionsPromptError}`,
-        );
-      }
-    }
     if (metadata.audioKind === 'sfx') {
       lines.push(
         '- **SFX discovery**: If the audible event cannot be inferred and a missing detail would materially change the result, clarify only the highest-impact unresolved dimensions. Relevant dimensions include sound source/action, materials, intensity, acoustic space, timing/tail, loop/non-loop, and "avoid" constraints. Do not ask for language or voice for SFX.',
       );
     }
     lines.push('');
-    lines.push(renderMediaMetadataAction(
-      'audio',
-      '`"$OD_NODE_BIN" "$OD_BIN" media generate --surface audio --audio-kind <kind> --model <audioModel> --duration <seconds>` and add `--voice <voice-id>` for speech when you have a provider-specific voice id',
-      mediaExecution,
-    ));
+    lines.push(renderMediaMetadataAction('audio', mediaExecution));
   }
 
   if (metadata.inspirationDesignSystemIds && metadata.inspirationDesignSystemIds.length > 0) {
@@ -1932,76 +1694,14 @@ function renderMetadataBlock(
 
 function renderMediaMetadataAction(
   surface: MediaSurface,
-  command: string,
   mediaExecution: MediaExecutionPolicy | undefined,
 ): string {
   const article = surface === 'audio' ? 'an' : 'a';
   const mode = mediaExecution?.mode ?? 'enabled';
   if (mode === 'disabled') {
-    return `This is ${article} **${surface}** project, but OpenDesign-owned media execution is disabled for this run. Plan the creative brief only unless an external MCP media tool is explicitly configured. Do NOT call OD media generation tools and do NOT emit \`<artifact>\` HTML for media surfaces.`;
+    return `This is ${article} **${surface}** project, but OpenDesign-owned media execution is disabled for this run. Inspect the actual tools and use a capable MCP media tool if one is available; otherwise plan the creative brief only. Do NOT call OD media generation tools and do NOT emit \`<artifact>\` HTML for media surfaces.`;
   }
-  return `This is ${article} **${surface}** project. Plan the creative brief carefully, then dispatch via the **media generation contract** using ${command}. Do NOT emit \`<artifact>\` HTML for media surfaces.`;
-}
-
-function shouldRenderElevenLabsVoiceOptions(
-  metadata: ProjectMetadata,
-  audioVoiceOptions: AudioVoiceOption[] | undefined,
-): boolean {
-  return metadata.kind === 'audio'
-    && metadata.audioKind === 'speech'
-    && metadata.audioModel === 'elevenlabs-v3'
-    && !metadata.voice
-    && Array.isArray(audioVoiceOptions)
-    && audioVoiceOptions.length > 0;
-}
-
-function renderElevenLabsVoiceQuestionForm(voiceOptions: AudioVoiceOption[]): {
-  description: string;
-  questions: Array<{
-    id: string;
-    label: string;
-    type: 'select';
-    required: boolean;
-    allowCustom: false;
-    placeholder: string;
-    help: string;
-    options: Array<{ label: string; value: string }>;
-  }>;
-  submitLabel: string;
-} {
-  const options = voiceOptions.slice(0, ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT).map((option) => ({
-    label: formatElevenLabsVoiceLabel(option),
-    value: option.voiceId,
-  }));
-  return {
-    description:
-      'Pick a voice by description. The selected answer will be the exact voice_id passed to the renderer.',
-    questions: [
-      {
-        id: 'voice',
-        label: 'Voice',
-        type: 'select',
-        required: true,
-        allowCustom: false,
-        placeholder: 'Choose a voice',
-        help: 'Select a voice description; the answer submits the matching Voice ID.',
-        options,
-      },
-    ],
-    submitLabel: 'Use voice',
-  };
-}
-
-function formatElevenLabsVoiceLabel(option: AudioVoiceOption): string {
-  const labels = option.labels && typeof option.labels === 'object'
-    ? Object.values(option.labels)
-        .map((value) => (typeof value === 'string' ? value.trim() : ''))
-        .filter(Boolean)
-    : [];
-  const bits = [...labels];
-  if (bits.length > 0) return `${option.name} — ${bits.join(' · ')}`;
-  const category = typeof option.category === 'string' ? option.category.trim() : '';
-  return category ? `${option.name} — ${category}` : option.name;
+  return `This is ${article} **${surface}** project. Plan the creative brief carefully, then use a capable MCP tool as required by the **media generation contract**. Do NOT emit \`<artifact>\` HTML for media surfaces.`;
 }
 
 /**

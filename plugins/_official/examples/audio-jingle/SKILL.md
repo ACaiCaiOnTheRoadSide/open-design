@@ -2,9 +2,8 @@
 name: audio-jingle
 description: |
   Audio generation skill — jingles, beds, voiceover, and sound effects.
-  Routes music requests to Suno V5 / Udio / Lyria, speech to MiniMax
-  TTS / FishAudio / ElevenLabs V3, and SFX to ElevenLabs SFX or
-  AudioCraft. Output is one MP3/WAV file saved to the project folder.
+  Selects an available MCP tool by declared capability and saves one MP3/WAV
+  file beneath the project `assets/` directory.
 triggers:
   - "music"
   - "jingle"
@@ -35,11 +34,11 @@ od:
 Three sub-modes. The active project's `audioKind` decides which one
 runs:
 
-| `audioKind` | Models we route to | Plan focus |
+| `audioKind` | Required capability | Plan focus |
 |---|---|---|
-| `music` | Suno V5 (default), Udio, Lyria 2 | genre + tempo + instrumentation |
-| `speech` | MiniMax TTS (default), Fish, ElevenLabs V3 | script + voice + pacing |
-| `sfx` | ElevenLabs SFX (default), AudioCraft | texture + impact + duration |
+| `music` | music generation | genre + tempo + instrumentation |
+| `speech` | speech generation | script + voice + pacing |
+| `sfx` | sound-effect generation | texture + impact + duration |
 
 ## Resource map
 
@@ -59,12 +58,10 @@ an instruction to ask: infer a safe default when possible, and emit a
 clarifying form only when the missing answer would materially change the
 requested output or prevent generation.
 
-Important: `voice` is provider-specific. For `minimax-tts`, `--voice`
-must be a valid MiniMax `voice_id` (for example `male-qn-qingse`), not
-a natural-language description. If you only have a prose voice brief
-("warm female narrator", "neutral Mandarin"), keep that in your plan
-but omit `--voice` so the daemon's default voice id applies, or ask the
-user to choose a specific id.
+A voice identifier is tool-specific. Inspect the selected MCP tool schema before
+passing one. If only a prose voice brief is available, use a supported prose
+field or the tool's default; do not invent an identifier or ask for provider
+credentials.
 
 ### Step 1 — Plan
 
@@ -77,8 +74,8 @@ user to choose a specific id.
 
 **Speech**
 - Script (final, not draft — TTS runs verbatim)
-- Voice target + pacing
-  For MiniMax this means a real `voice_id`, not prose in `--voice`
+- Voice target + pacing; pass a voice identifier only when the selected tool's
+  schema declares one
 - Pronunciation hints for proper nouns / acronyms
 
 **SFX**
@@ -86,46 +83,34 @@ user to choose a specific id.
 - Duration + envelope (sharp attack vs. gentle swell)
 - Layering note (single hit vs. stacked)
 
-State the plan in 2-3 sentences before dispatching.
+State the plan in 2-3 sentences before generation.
 
 ### Step 2 — Compose the prompt
 
-Use the format the upstream model prefers. Bind `audioDuration` to the
-API parameter directly; never put "make it 30 seconds" in prose.
+Use the selected MCP tool's declared schema. Pass `audioDuration` through a
+supported structured field rather than relying only on prose.
 
-### Step 3 — Dispatch via the media contract
+### Step 3 — Generate through a capable MCP tool
 
-Use the unified dispatcher — do **not** call provider APIs by hand:
-
-```bash
-"$OD_NODE_BIN" "$OD_BIN" media generate \
-  --project "$OD_PROJECT_ID" \
-  --surface audio \
-  --audio-kind "<music|speech|sfx>" \
-  --model "<audioModel from metadata>" \
-  --duration <audioDuration seconds> \
-  [--voice "<provider voice id (speech only)>"] \
-  --output "<short-slug>-<duration>s.mp3" \
-  --prompt "<assembled prompt from Step 2 — for speech, the literal script>"
-```
-
-The command prints one line of JSON: `{"file": {"name": "...", ...}}`.
-The bytes land in the project; the FileViewer renders the audio
-transport controls automatically.
+Inspect the actual tools available in this run and select an audio-generation
+tool by its declared schema. Do not hardcode a server, provider, tool, or model
+name, use the OpenDesign media dispatcher, call provider APIs directly, or ask
+for provider credentials. Invoke the capable MCP tool with the assembled prompt
+and requested audio parameters, then persist its result as a regular non-empty
+file at `./assets/<short-slug>-<duration>s.<ext>` beneath the current project
+`cwd`.
 
 ### Step 4 — Hand off
 
-Reply with: plan summary, the filename returned by the dispatcher, and
-one sentence on what to try if the user wants a variation (e.g. "swap
-tempo from 92 to 108 BPM" rather than "make it different").
+Use the media completion contract's single sanitized sentence. Keep tool,
+provider, model, path, and raw error details only in the tool trace.
 
 ## Hard rules
 
-- TTS runs your script **literally**. Proof it before dispatching —
-  even one stray comma changes the cadence.
-- MiniMax TTS rejects free-form voice prose in `--voice`. Use a real
-  MiniMax `voice_id` (for example `male-qn-qingse`) or omit the flag
-  and let the daemon's default voice apply.
+- TTS runs your script **literally**. Proof it before generation — even one
+  stray comma changes the cadence.
+- Pass only voice fields declared by the selected MCP tool schema; never invent
+  provider-specific identifiers.
 - Music: under 30s = single section; 30–90s = intro + body; 90s+ =
   full arc. Don't try to fit a 3-act song into 15 seconds.
 - SFX: prefer one well-described layer over a paragraph of "make it

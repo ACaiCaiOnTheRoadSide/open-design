@@ -3,7 +3,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
-import { INTEGRATIONS_MCP_PATH } from '@open-design/contracts';
 
 import {
   composeSystemPrompt,
@@ -241,7 +240,7 @@ describe('composeSystemPrompt', () => {
       // Nor the Ask-mode charter (fourth-round finding): CHAT_MODE_OVERRIDE
       // forbids creating media, contradicting the media contract below.
       expect(prompt).not.toContain('# Ask mode');
-      expect(prompt).toContain('media generate');
+      expect(prompt).toContain('a capable media-generation MCP tool');
     }
     // Non-media slim runs keep the charter head.
     const design = composeSystemPrompt({ promptCoreVariant: 'slim' });
@@ -249,14 +248,15 @@ describe('composeSystemPrompt', () => {
     expect(design).toContain('## Requirements Clarification Phase');
   });
 
-  it('pins Cloud nano-banana shorthand and forbids reading generated media bytes back into context', () => {
+  it('avoids dispatcher model routing and forbids reading generated media bytes back into context', () => {
     const prompt = composeSystemPrompt({
       skillMode: 'image',
       metadata: { kind: 'image', imageModel: 'vela/nano-banana-2' } as any,
     });
 
-    expect(prompt).toContain('`nano-banana` and `nano-banana-2` mean');
-    expect(prompt).toContain('Do not call `Read` on the generated image');
+    expect(prompt).toContain('Do not use the OpenDesign media dispatcher');
+    expect(prompt).not.toContain('`nano-banana` and `nano-banana-2` mean');
+    expect(prompt).toContain('Do not call `Read` on generated image');
   });
 
   it('injects the html-in-canvas preflight for the hyperframes skill', () => {
@@ -273,20 +273,23 @@ describe('composeSystemPrompt', () => {
     expect(prompt).toContain('## Active skill — hyperframes');
     expect(prompt).toContain('**Pre-flight (do this before any other tool):**');
     expect(prompt).toContain('`references/html-in-canvas.md`');
-    expect(prompt).toContain('`"$OD_NODE_BIN" "$OD_BIN" media scaffold`');
-    expect(prompt).toContain('media generate --surface video --model hyperframes-html --composition-dir <rel>');
-    expect(prompt).toContain('Do not run HyperFrames `render` yourself');
+    expect(prompt).toContain('"$OD_NODE_BIN" "$OD_BIN" media scaffold');
+    expect(prompt).toContain('`media scaffold` only prepares editable HyperFrames source');
+    expect(prompt).toContain('Do not use the OpenDesign media dispatcher');
+    expect(prompt).not.toContain('media generate --surface video --model hyperframes-html');
     expect(prompt).not.toContain('npx hyperframes');
     expect(prompt).not.toContain('intentionally rejected for this model');
     expect(prompt).not.toContain('AGENT_RENDERED');
     expect(prompt).not.toContain('rendered by you directly via npx');
   });
 
-  it('keeps both hyperframes skill copies aligned with the daemon render handoff', () => {
+  it('keeps both hyperframes skill copies aligned on scaffold-only OD usage', () => {
     for (const markdown of [hyperframesSkillMarkdown, officialHyperframesSkillMarkdown]) {
       expect(markdown).toContain('"$OD_NODE_BIN" "$OD_BIN" media scaffold');
-      expect(markdown).toContain('media generate --surface video --model hyperframes-html --composition-dir <rel>');
-      expect(markdown).toContain('Do not run HyperFrames `render`');
+      expect(markdown).toContain('`media scaffold` only prepares editable HyperFrames source');
+      expect(markdown).toContain('use a capable MCP');
+      expect(markdown).not.toContain('media generate --surface video --model hyperframes-html');
+      expect(markdown).not.toContain('"$OD_NODE_BIN" "$OD_BIN" media wait');
       expect(markdown).not.toContain('npx hyperframes');
       expect(markdown).not.toContain('AGENT_RENDERED');
       expect(markdown).not.toContain('rendered by you directly via npx');
@@ -326,6 +329,23 @@ describe('composeSystemPrompt', () => {
 
     expect(prompt).toContain('## Media generation contract');
     expect(prompt).not.toContain('# Slide deck — fixed framework');
+  });
+
+  it('prefers a capable external MCP on media surfaces and requires project persistence', () => {
+    const prompt = composeSystemPrompt({
+      skillMode: 'image',
+      metadata: { kind: 'image' } as any,
+    });
+
+    expect(prompt).toContain('First inspect the actual');
+    expect(prompt).toContain('invoke a capable tool directly');
+    expect(prompt).toContain('Do not use the OpenDesign media dispatcher');
+    expect(prompt).toContain('The current working directory (`cwd`) is the Agent-side project root');
+    expect(prompt).toContain('`./assets/<descriptive-name>.<ext>`');
+    expect(prompt).toContain('keep it only when it is already inside `./assets/`');
+    expect(prompt).toContain('regular non-empty file');
+    expect(prompt).not.toContain('is the **only**\napproved execution path');
+    expect(prompt).not.toContain('Always call out to the dispatcher');
   });
 
   it('lets metadata.kind win over conflicting composed skill modes', () => {
@@ -394,112 +414,20 @@ describe('composeSystemPrompt', () => {
       expect(prompt).toContain('Do not output generated source code in a `<artifact type="text/html">...</artifact>` block.');
     });
 
-    it('uses Vela media defaults without falling back to Fal', () => {
-      const amrPrompt = composeSystemPrompt({
-        agentId: 'amr',
-        metadata: { kind: 'image', imageModel: 'vela/gpt-image-2' } as any,
-      });
-      expect(amrPrompt).toContain('- **imageModel**: vela/gpt-image-2');
-      expect(amrPrompt).not.toContain('Image model: `vela/gpt-image-2`');
-      expect(amrPrompt).toContain(
-        'Video model: `vela/doubao-seedance-2-0-260128`',
-      );
-      expect(amrPrompt).toContain('### Runtime media defaults');
-      expect(amrPrompt).toContain('This runtime recommends these media defaults');
-      expect(amrPrompt).not.toContain('This AMR run uses these managed media defaults');
-      expect(amrPrompt).not.toContain('### Run-scoped BYOK media defaults');
-      expect(amrPrompt).toContain('Never invoke the `vela` CLI directly');
-      expect(amrPrompt).toContain('trusted Workspace attribution');
-
-      const claudePrompt = composeSystemPrompt({ agentId: 'claude' });
-      expect(claudePrompt).toContain('IMAGE_MODEL="vela/gpt-image-2"');
-      expect(claudePrompt).not.toContain('`--model flux-pro-ultra`');
-    });
-
-    it('uses the managed Vela image tool for OhMyAgent without exposing unrelated keys', () => {
-      const secret = 'minimax-secret-must-not-reach-the-prompt';
-      const previous = process.env.OD_MINIMAX_API_KEY;
-      process.env.OD_MINIMAX_API_KEY = secret;
-      try {
-        const prompt = composeSystemPrompt({ agentId: 'ohmyagent' });
-        expect(prompt).toContain('IMAGE_MODEL="vela/gpt-image-2"');
-        expect(prompt).toContain('Image model: `vela/gpt-image-2`');
-        expect(prompt).toContain('### Runtime media defaults');
-        expect(prompt).not.toContain('For the best fal image model');
-        expect(prompt).not.toContain(secret);
-      } finally {
-        if (previous === undefined) delete process.env.OD_MINIMAX_API_KEY;
-        else process.env.OD_MINIMAX_API_KEY = previous;
-      }
-    });
-
-    it('keeps an explicit image default ahead of OhMyAgent managed runtime defaults', () => {
-      const previous = process.env.OD_MINIMAX_API_KEY;
-      process.env.OD_MINIMAX_API_KEY = 'another-secret-value';
-      try {
-        const prompt = composeSystemPrompt({
-          agentId: 'ohmyagent',
-          byokMediaDefaults: { imageModel: 'user-selected-image-model' },
-        });
-        expect(prompt).toContain('IMAGE_MODEL="user-selected-image-model"');
-        expect(prompt).toContain('Image model: `user-selected-image-model`');
-        expect(prompt).not.toContain('minimax-image-01');
-        expect(prompt).not.toContain('another-secret-value');
-      } finally {
-        if (previous === undefined) delete process.env.OD_MINIMAX_API_KEY;
-        else process.env.OD_MINIMAX_API_KEY = previous;
-      }
-    });
-
-    it('keeps an explicit project image model ahead of OhMyAgent runtime defaults', () => {
+    it('uses MCP tools without injecting managed dispatcher defaults', () => {
       const prompt = composeSystemPrompt({
         agentId: 'ohmyagent',
-        metadata: {
-          kind: 'image',
-          imageModel: 'vela/nano-banana-2',
-        },
-      });
-
-      expect(prompt).toContain('- **imageModel**: vela/nano-banana-2');
-      expect(prompt).toContain('### Runtime media defaults');
-      expect(prompt).not.toContain('Image model: `vela/gpt-image-2`');
-      expect(prompt).toContain('Video model: `vela/doubao-seedance-2-0-260128`');
-      expect(prompt).not.toContain('--model flux-pro-ultra');
-      expect(prompt).toContain('otherwise use `vela/gpt-image-2`');
-    });
-
-    it('keeps image completion copy concrete while retaining internal diagnostics', () => {
-      const imagePrompt = composeSystemPrompt({
-        agentId: 'amr',
-        locale: 'zh-CN',
         metadata: { kind: 'image', imageModel: 'vela/gpt-image-2' } as any,
       });
-      expect(imagePrompt).toContain('reply exactly `图片已生成`');
-      expect(imagePrompt).toContain('MEDIA_DISPATCH_FAILED');
-      expect(imagePrompt).toContain('图片未生成：媒体生成调度失败，原因未分类');
-      expect(imagePrompt).toContain('tool output and daemon logs');
-      expect(imagePrompt).not.toContain('the filename, the model used');
-      expect(imagePrompt).not.toContain('surface them verbatim to the user');
-      expect(imagePrompt).not.toContain('quote the real stderr / exit code');
-
-      const prototypePrompt = composeSystemPrompt({
-        agentId: 'amr',
-        locale: 'zh-CN',
-        metadata: { kind: 'prototype' } as any,
-      });
-      expect(prototypePrompt).toContain('reply exactly `图片已生成`');
-      expect(prototypePrompt).toContain('MEDIA_DISPATCH_FAILED');
-      expect(prototypePrompt).toContain('图片未生成：媒体生成调度失败，原因未分类');
-      expect(prototypePrompt).toContain('IMAGE_MODEL="vela/gpt-image-2"');
-      expect(prototypePrompt).not.toContain(
-        'For the best fal image model use `--model flux-pro-ultra`',
-      );
+      expect(prompt).toContain('- **imageModel**: vela/gpt-image-2');
+      expect(prompt).toContain('a capable media-generation MCP tool');
+      expect(prompt).toContain('Do not use the OpenDesign media dispatcher');
+      expect(prompt).not.toContain('### Runtime media defaults');
+      expect(prompt).not.toContain('media generate --surface');
+      expect(prompt).not.toContain('media wait');
     });
 
-    // The provider-error branch has to reach the prompt the DAEMON composes,
-    // not just the copy in packages/contracts. Reclassifying a provider verdict
-    // as an outage hides the actionable code and message from the user.
-    it('preserves structured provider errors in both prompts', () => {
+    it('keeps image completion copy concrete while retaining raw MCP failures only in the tool trace', () => {
       for (const metadata of [
         { kind: 'image', imageModel: 'vela/gpt-image-2' },
         { kind: 'prototype' },
@@ -509,10 +437,11 @@ describe('composeSystemPrompt', () => {
           locale: 'zh-CN',
           metadata: metadata as any,
         });
-        expect(prompt).toContain('错误代码：`{code}`');
-        expect(prompt).toContain(
-          'public code and message without reclassifying either one from wording or HTTP',
-        );
+        expect(prompt).toContain('reply exactly `图片已生成`');
+        expect(prompt).toContain('图片未生成：没有可用的媒体生成工具');
+        expect(prompt).toContain('图片未生成：媒体生成失败');
+        expect(prompt).toContain('retain its exact tool name and raw error');
+        expect(prompt).not.toContain('MEDIA_DISPATCH_FAILED');
       }
     });
 
@@ -605,7 +534,7 @@ describe('composeSystemPrompt', () => {
   describe('connectedExternalMcp directive is no longer in the system prompt', () => {
     it('never emits the MCP directive from composeSystemPrompt', () => {
       const prompt = composeSystemPrompt({});
-      expect(prompt).not.toContain('External MCP servers — already authenticated');
+      expect(prompt).not.toContain('External MCP servers — available for this run');
       expect(prompt).not.toContain('mcp__<server>__authenticate');
     });
 
@@ -614,12 +543,12 @@ describe('composeSystemPrompt', () => {
         metadata: { kind: 'image' },
         mediaExecution: { mode: 'disabled' },
       });
-      expect(prompt).toContain('OpenDesign-owned media execution is **disabled for this run**');
-      expect(prompt).toContain('MEDIA_EXECUTION_DISABLED');
-      expect(prompt).toContain('本次任务未启用图片生成');
+      expect(prompt).toContain('OpenDesign-owned media execution is disabled for this run');
+      expect(prompt).toContain('external MCP');
+      expect(prompt).toContain('图片未生成：没有可用的媒体生成工具');
       expect(prompt).not.toContain('describe the intended creative brief');
       expect(prompt).not.toContain('## Media generation contract');
-      expect(prompt).not.toContain('External MCP servers — already authenticated');
+      expect(prompt).not.toContain('External MCP servers — available for this run');
     });
   });
 
@@ -629,25 +558,28 @@ describe('composeSystemPrompt', () => {
       expect(renderConnectedExternalMcpDirective([])).toBe('');
     });
 
-    it('lists each connected server and forbids the synthetic auth tools', () => {
+    it('lists servers, uses capable media tools, and persists results under cwd', () => {
       const directive = renderConnectedExternalMcpDirective([
         { id: 'higgsfield-openclaw', label: 'Higgsfield (OpenClaw)' },
         { id: 'github' },
       ]);
-      expect(directive).toContain('## External MCP servers — already authenticated');
+      expect(directive).toContain('## External MCP servers — available for this run');
       expect(directive).toContain('`higgsfield-openclaw`');
       expect(directive).toContain('Higgsfield (OpenClaw)');
       expect(directive).toContain('`github`');
       expect(directive).toContain(
         '**Do NOT call any tool whose name matches `mcp__<server>__authenticate` or `mcp__<server>__complete_authentication`',
       );
-      expect(directive).toContain('localhost:<random>/callback');
-      // Reconnect lives in the top-level Integrations view, NOT in Settings:
-      // `mcpClient` kept its Settings render block but lost its sidebar nav
-      // item, so "Settings → External MCP" named a place users cannot navigate
-      // to. Asserted through the contract so this cannot drift again.
-      expect(directive).toContain(INTEGRATIONS_MCP_PATH);
-      expect(directive).not.toContain('Settings → External MCP');
+      expect(directive).toContain('Do not use the OpenDesign media dispatcher as a fallback');
+      expect(directive).toContain('keep the exact tool name and raw error in the tool trace');
+      expect(directive).toContain('do not expose them in the visible reply');
+      expect(directive).toContain('The current working directory (`cwd`) is the Agent-side project root');
+      expect(directive).toContain('project-relative path');
+      expect(directive).toContain('download a returned URL');
+      expect(directive).toContain('base64 or binary content');
+      expect(directive).toContain('resource URI');
+      expect(directive).toContain('temporary/filesystem file');
+      expect(directive).not.toContain('image_generate_text_to_image');
     });
 
     it('skips entries with blank ids and emits nothing when none remain', () => {

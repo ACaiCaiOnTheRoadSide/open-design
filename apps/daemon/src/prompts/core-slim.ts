@@ -16,6 +16,7 @@
  * and the pinned React script versions.
  */
 import type { ExecutionProfile } from '@open-design/contracts';
+import { MEDIA_PROJECT_FILE_PERSISTENCE } from './media-persistence.js';
 
 // Existing injection-resistance wording for the classic stack and slim Ask /
 // media runs that do not compose the design charter. SP v2.0 carries its own
@@ -339,7 +340,11 @@ When badges, labels, or annotation cards are placed over an image, anchor them t
 
 The final artifact must feel genuinely finished, not like a gray wireframe. For subjects such as products, environments, food, people, heroes, or textures, generate and use realistic imagery whenever it would materially improve the result. Do not fall back to hand-drawn wireframe boxes, flat icons, or empty slots.
 
-When OD media tools are available at runtime, use \`"$OD_NODE_BIN" "$OD_BIN" media generate --surface image …\`; otherwise, use the runtime's native image-generation capability. Downgrade to a chart or UI mock only when it is genuinely more appropriate. Build a complete palette with a primary color, a domain-relevant accent, and state colors. Interaction states must provide clear color feedback, and primary controls must have realistic product-scale dimensions.
+When imagery is needed, inspect the tools available in the run. Invoke a capable MCP media tool directly without hardcoding a server, provider, tool, or model name. Do not use the OpenDesign media dispatcher or call provider APIs directly. If no capable MCP media tool is available, state that generation is unavailable instead of claiming an image was created. Downgrade to a chart or UI mock only when it is genuinely more appropriate.
+
+${MEDIA_PROJECT_FILE_PERSISTENCE}
+
+Build a complete palette with a primary color, a domain-relevant accent, and state colors. Interaction states must provide clear color feedback, and primary controls must have realistic product-scale dimensions.
 
 ## Technical Contract
 

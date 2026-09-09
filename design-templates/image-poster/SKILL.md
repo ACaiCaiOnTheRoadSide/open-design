@@ -2,10 +2,9 @@
 name: image-poster
 description: |
   Single-image generation skill for posters, key art, and editorial
-  illustrations. Defaults to gpt-image-2 but is provider-agnostic — the
-  same workflow drives Flux, Imagen, or Midjourney via the active
-  upstream tooling. Output is one or more PNG/JPEG files saved to the
-  project folder.
+  illustrations. Selects an available MCP tool by declared capability
+  and saves one or more PNG/JPEG files beneath the project `assets/`
+  directory.
 triggers:
   - "poster"
   - "key art"
@@ -34,7 +33,8 @@ od:
 
 Produce **one** finished image asset per turn unless the user asks for
 variations. Image generation rewards a tight, structured prompt — your
-job is to assemble that prompt from the user's brief, then dispatch.
+job is to assemble that prompt from the user's brief, then generate through a
+capable MCP tool.
 
 ## Resource map
 
@@ -48,10 +48,11 @@ image-poster/
 
 ### Step 0 — Read the project metadata
 
-The active project carries `imageModel`, `imageAspect`, and (optional)
-`imageStyle` notes. Use them as the upstream model + canvas + style
-anchor. When a value is not provided, infer a safe default from the brief and
-media contract. Ask only when the choice would materially change the requested
+The active project carries `imageAspect` and optional `imageStyle` notes. Use
+them as canvas and style anchors. Treat any `imageModel` metadata as descriptive
+context only; choose the actual tool from its declared capability and schema.
+When a value is not provided, infer a safe default from the brief and media
+contract. Ask only when the choice would materially change the requested
 result and no safe default can be inferred.
 
 ### Step 1 — Compose the prompt
@@ -69,30 +70,20 @@ Plan in this exact order before calling any tool:
 5. **What to avoid** — common AI-slop patterns ("no extra fingers, no
    warped text, no logo placeholders").
 
-### Step 2 — Dispatch via the media contract
+### Step 2 — Generate through a capable MCP tool
 
-Use the unified dispatcher — do **not** call upstream provider APIs by
-hand. Run from your shell tool:
-
-```bash
-"$OD_NODE_BIN" "$OD_BIN" media generate \
-  --project "$OD_PROJECT_ID" \
-  --surface image \
-  --model "<imageModel from metadata>" \
-  --aspect "<imageAspect from metadata>" \
-  --output "<short-descriptive-name>.png" \
-  --prompt "<the full assembled prompt from Step 1>"
-```
-
-The command prints one line of JSON: `{"file": {"name": "...", ...}}`.
-The daemon writes the bytes into the project folder; the FileViewer
-picks it up automatically.
+Inspect the actual tools available in this run and select an image-generation
+tool by its declared schema. Do not hardcode a server, provider, tool, or model
+name, use the OpenDesign media dispatcher, call provider APIs directly, or ask
+for provider credentials. Invoke the capable MCP tool with the assembled prompt
+and requested aspect ratio, then persist its result as a regular non-empty file
+at `./assets/<short-descriptive-name>.<ext>` beneath the current project `cwd`.
 
 ### Step 3 — Hand off
 
-Reply with a one-paragraph summary of the prompt you used and the
-filename returned by the dispatcher (e.g. *I generated `hero-poster.png`
-with `gpt-image-2` at 1:1.*). Do **not** emit an `<artifact>` tag.
+Use the media completion contract's single sanitized sentence. Keep tool,
+provider, model, path, and raw error details only in the tool trace. Do **not**
+emit an `<artifact>` tag.
 
 ## Hard rules
 

@@ -35,13 +35,12 @@ HTML is the source of truth for video. A composition is an HTML file with `data-
 
 ## OpenDesign integration (load-bearing for this surface)
 
-When this skill runs inside OpenDesign (i.e. `$OD_PROJECT_DIR` is set), the
-output flow is fixed: only the rendered `.mp4` should land in the project
-root. Composition source files (`hyperframes.json`, `meta.json`,
-`index.html`, assets) belong inside a hidden cache directory so they don't
-clutter the user's FileViewer or the chat's "produced files" chips.
+When this skill runs inside OpenDesign (i.e. `$OD_PROJECT_DIR` is set),
+composition source files (`hyperframes.json`, `meta.json`, `index.html`, assets)
+belong inside a hidden cache directory so they don't clutter the user's
+FileViewer or the chat's "produced files" chips.
 
-**Render workflow inside OD — fast path**:
+**Scaffold workflow inside OD — fast path**:
 
 For most OD requests ("test video", "5s product reveal", "demo clip"),
 do NOT write the composition HTML from scratch. Use Open Design's
@@ -70,40 +69,12 @@ COMP="$OD_PROJECT_DIR/$COMP_REL"
 #    `window.__timelines["main"] = gsap.timeline({paused:true})` block.
 #    Keep edits minimal; the scaffold is already valid HF.
 
-# 4. Dispatch render through the OD daemon. Do NOT run HyperFrames
-#    `render` from this shell — the daemon runs it for you in an
-#    unsandboxed process. (Many agent CLIs, Claude Code in particular,
-#    wrap Bash in macOS sandbox-exec under which puppeteer's Chrome
-#    subprocess hangs partway through frame capture. The daemon process
-#    is unsandboxed, so renders complete reliably.)
-#
-#    The dispatcher returns within ~1s with a {taskId}; drive the
-#    render to completion by looping `"$OD_NODE_BIN" "$OD_BIN" media wait <taskId>` calls.
-#    Each call long-polls up to 25s (well under your shell tool's
-#    default 30s cap) and exits 0/2/5 to signal done/running/failed.
-out=$("$OD_NODE_BIN" "$OD_BIN" media generate \
-  --project "$OD_PROJECT_ID" \
-  --surface video \
-  --model hyperframes-html \
-  --output "<descriptive-name>.mp4" \
-  --composition-dir "$COMP_REL")
-ec=$?
-task_id=$(printf '%s\n' "$out" | tail -1 | jq -r '.taskId // empty')
-since=$(printf '%s\n' "$out" | tail -1 | jq -r '.nextSince // 0')
-while [ "$ec" -eq 2 ] && [ -n "$task_id" ]; do
-  out=$("$OD_NODE_BIN" "$OD_BIN" media wait "$task_id" --since "$since")
-  ec=$?
-  since=$(printf '%s\n' "$out" | tail -1 | jq -r '.nextSince // '"$since")
-done
-[ "$ec" -ne 0 ] && { echo "$out" >&2; exit "$ec"; }
 ```
 
-Each `generate` and each `wait` call lasts at most ~25s, so the agent
-shell tool's default ~30s cap never fires. Progress lines from HF
-(`Capturing frame N/M`) stream to stderr live throughout the loop.
-When the render finishes, the last stdout line is
-`{"file": { "name": "<output>", "size": …, "kind": "video", … }}` —
-quote `file.name` in your reply so the user knows what was produced.
+`media scaffold` only prepares editable HyperFrames source. Do not invoke
+`media generate` or `media wait` after scaffolding. If the user requests final
+generated video, follow the media generation contract and use a capable MCP
+tool exposed in the current run.
 
 **Skip the Visual Identity Gate inside OD.** The HARD-GATE section
 below (under "Approach") tells you to read DESIGN.md / visual-style.md
@@ -118,31 +89,17 @@ is too vague to even pick a subject (very rare).
 When to skip the scaffold and write from scratch: only when the user
 explicitly asks for something the blank template clearly can't host
 (e.g. multi-composition timelines, audio-reactive overlays, captions
-synced to a TTS track they've already generated). For everything else,
-init + edit is the default path.
+synced to an existing track). For everything else, scaffold + edit is the
+default source-authoring path.
 
-The lighter HF subcommands you CAN still run from your own shell
-(they don't need to spawn Chrome):
-
-- `"$OD_NODE_BIN" "$OD_HYPERFRAMES_BIN" lint "$COMP"` — validate composition before dispatch
-- `"$OD_NODE_BIN" "$OD_HYPERFRAMES_BIN" transcribe <audio>` — generate captions
-- `"$OD_NODE_BIN" "$OD_HYPERFRAMES_BIN" tts <text>` — generate narration
-
-Reserve the daemon dispatch for `render`/`inspect`/`preview` (anything
-Chrome-bound). After authoring the composition under `.hyperframes-cache/`,
-render it by calling `"$OD_NODE_BIN" "$OD_BIN" media generate --surface video --model hyperframes-html --composition-dir <rel>`.
-The daemon runs the Chrome-bound HyperFrames render outside your shell
-sandbox and streams progress back to you. Do not run HyperFrames `render`
-yourself.
+You may run `"$OD_NODE_BIN" "$OD_HYPERFRAMES_BIN" lint "$COMP"` to validate
+the composition source. Do not use HyperFrames `render`, `inspect`, `preview`,
+`tts`, or `transcribe` as a substitute for the MCP-first media generation
+contract.
 
 **Do NOT** drop `hyperframes.json` / `meta.json` / `index.html` in the
 project root; OD's file listing scans recursively and the user would see
 three unrelated files appear in the chat.
-
-For CLI options beyond `render` (lint, preview, transcribe, tts, inspect,
-benchmark) call them directly from your shell tool when the task warrants
-it (e.g., generate TTS audio into the cache before referencing it from
-the composition).
 
 ## Approach
 

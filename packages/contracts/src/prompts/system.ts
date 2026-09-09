@@ -35,10 +35,8 @@ import { OFFICIAL_DESIGNER_PROMPT, renderOfficialDesignerPrompt } from './offici
 import { DISCOVERY_AND_PHILOSOPHY } from './discovery.js';
 import { DECK_FRAMEWORK_DIRECTIVE } from './deck-framework.js';
 import { MEDIA_GENERATION_CONTRACT } from './media-contract.js';
-import { SETTINGS_MEDIA_PROVIDERS_PATH } from '../settings-nav.js';
 
 export const BASE_SYSTEM_PROMPT = OFFICIAL_DESIGNER_PROMPT;
-const ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT = 100;
 const SEMANTIC_OUTPUT_FILE_NAMES = `## Semantic output file names
 
 For new user-facing deliverables, choose a short semantic project-relative filename derived from the user's brief, product, screen, or artifact type. Do not call every new artifact \`index.html\`.
@@ -53,19 +51,6 @@ export interface AudioVoiceOption {
   category?: string | null;
   labels?: Record<string, string> | null;
 }
-
-const ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX = 'ElevenLabs voice list could not be loaded';
-const PROMPT_SAFE_HTTP_STATUS_LABELS: Record<string, string> = {
-  '400': 'Bad Request',
-  '401': 'Unauthorized',
-  '403': 'Forbidden',
-  '404': 'Not Found',
-  '429': 'Too Many Requests',
-  '500': 'Internal Server Error',
-  '502': 'Bad Gateway',
-  '503': 'Service Unavailable',
-  '504': 'Gateway Timeout',
-};
 
 function renderUiLocalePrompt(locale: string | undefined): string {
   const normalized = locale?.trim();
@@ -98,34 +83,12 @@ function renderUiLocalePrompt(locale: string | undefined): string {
   return lines.join('\n');
 }
 
-function normalizePromptText(value: string): string {
-  return value
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 export function formatElevenLabsVoiceOptionsErrorForPrompt(
   error: string | undefined,
 ): string | undefined {
-  const trimmed = normalizePromptText(error ?? '');
-  if (!trimmed) return undefined;
-
-  if (/no ElevenLabs API key/i.test(trimmed)) {
-    return `${ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX} because the ElevenLabs API key is missing. Tell the user to configure it in ${SETTINGS_MEDIA_PROVIDERS_PATH} or paste a voice id manually.`;
-  }
-
-  const statusMatch = trimmed.match(
-    /(?:\((\d{3})(?:\s+([^)]+))?\)|\b(\d{3})(?:\s+([A-Za-z][A-Za-z -]{0,40}))?\b)/,
-  );
-  if (statusMatch) {
-    const statusCode = statusMatch[1] ?? statusMatch[3];
-    const statusText = statusCode ? PROMPT_SAFE_HTTP_STATUS_LABELS[statusCode] ?? '' : '';
-    const suffix = statusText ? ` ${statusText}` : '';
-    return `${ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX} (${statusCode}${suffix}). Tell the user to retry the lookup or paste a voice id manually.`;
-  }
-
-  return `${ELEVENLABS_VOICE_OPTIONS_PROMPT_PREFIX}. Tell the user to retry the lookup or paste a voice id manually.`;
+  return error?.trim()
+    ? 'Voice options are unavailable. Keep the raw lookup error out of the user-visible reply.'
+    : undefined;
 }
 
 export const SKIP_DISCOVERY_BRIEF_OVERRIDE = `# Automated project mode — skip discovery form
@@ -751,13 +714,8 @@ function imageLines(
     }
     out.push('');
     out.push(
-      'This is an **image** project. Plan the prompt carefully, then dispatch via the **media generation contract** using `"$OD_NODE_BIN" "$OD_BIN" media generate --surface image --model <imageModel>`. Do NOT emit `<artifact>` HTML for media surfaces.',
+      'This is an **image** project. Plan the prompt carefully, then inspect the tools available in this run and invoke a capable media-generation MCP tool by its declared schema. Persist the result beneath `./assets/`. Do NOT emit `<artifact>` HTML for media surfaces.',
     );
-    if (metadata.imageModel?.startsWith('vela/')) {
-      out.push(
-        'This OpenDesign Cloud `vela/*` model must go through the OD media dispatcher. Do not invoke the `vela` CLI or the remote media API directly; the daemon owns Workspace attribution, downloads, and final project-file placement.',
-      );
-    }
   }
   return out;
 }
@@ -781,16 +739,11 @@ function videoLines(
     }
     out.push('');
     out.push(
-      'This is a **video** project. Plan the shotlist and motion, then dispatch via the **media generation contract** using `"$OD_NODE_BIN" "$OD_BIN" media generate --surface video --model <videoModel> --length <seconds> --aspect <ratio>`. Do NOT emit `<artifact>` HTML.',
+      'This is a **video** project. Plan the shotlist and motion, then inspect the tools available in this run and invoke a capable media-generation MCP tool by its declared schema. Persist the result beneath `./assets/`. Do NOT emit `<artifact>` HTML.',
     );
-    if (metadata.videoModel?.startsWith('vela/')) {
-      out.push(
-        'This OpenDesign Cloud `vela/*` model must go through the OD media dispatcher. Do not invoke the `vela` CLI or the remote media API directly; the daemon owns Workspace attribution, polling, downloads, and final project-file placement.',
-      );
-    }
     if (metadata.videoModel === 'hyperframes-html') {
       out.push(
-        'Special case: `hyperframes-html` is a local HTML-to-MP4 renderer, not a photoreal text-to-video model. Treat it like a motion design renderer, ask at most one clarifying question, then dispatch immediately.',
+        'Special case: `hyperframes-html` identifies an editable motion-design source workflow, not final video generation. Use `media scaffold` only to prepare source, then use a capable MCP media tool for final video.',
       );
     }
   }
@@ -799,8 +752,8 @@ function videoLines(
 
 function audioLines(
   metadata: ProjectMetadata,
-  audioVoiceOptions: AudioVoiceOption[] | undefined,
-  audioVoiceOptionsError: string | undefined,
+  _audioVoiceOptions: AudioVoiceOption[] | undefined,
+  _audioVoiceOptionsError: string | undefined,
 ): string[] {
   const out: string[] = [];
   if (metadata.kind === 'audio') {
@@ -818,29 +771,6 @@ function audioLines(
     } else if (metadata.audioKind === 'speech') {
       out.push('- **voice**: (not provided; relevant dimensions include voice id, accent, and pacing)');
     }
-    const voiceOptions = shouldRenderElevenLabsVoiceOptions(metadata, audioVoiceOptions)
-      ? audioVoiceOptions ?? []
-      : [];
-    if (voiceOptions.length > 0) {
-      out.push(
-        '- **ElevenLabs voice selection policy**: First infer from the current request, conversation, Plugin inputs, and available context. If the provider default can safely satisfy the brief, omit `--voice` and do not ask. Only when voice selection would materially change the requested result and no safe default can be inferred, emit the dropdown template below. Its visible labels are voice descriptions; the selected value must be the exact `voice_id` passed to `--voice`. Do not ask the user to type an id.',
-      );
-      if (voiceOptions.length > ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT) {
-        out.push(`- **ElevenLabs voice options**: showing the first ${ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT} of ${voiceOptions.length} available voices.`);
-      }
-      out.push('');
-      out.push('Conditional template — do not emit unless the voice-selection policy above requires clarification:');
-      out.push('<question-form id="elevenlabs-voice" title="Choose an ElevenLabs voice">');
-      out.push(JSON.stringify(renderElevenLabsVoiceQuestionForm(voiceOptions), null, 2));
-      out.push('</question-form>');
-    } else {
-      const audioVoiceOptionsPromptError = formatElevenLabsVoiceOptionsErrorForPrompt(audioVoiceOptionsError);
-      if (audioVoiceOptionsPromptError) {
-        out.push(
-          `- **ElevenLabs voice options**: ${audioVoiceOptionsPromptError}`,
-        );
-      }
-    }
     if (metadata.audioKind === 'sfx') {
       out.push(
         '- **SFX discovery**: If the audible event cannot be inferred and a missing detail would materially change the result, clarify only the highest-impact unresolved dimensions. Relevant dimensions include sound source/action, materials, intensity, acoustic space, timing/tail, loop/non-loop, and "avoid" constraints. Do not ask for language or voice for SFX.',
@@ -848,7 +778,7 @@ function audioLines(
     }
     out.push('');
     out.push(
-      'This is an **audio** project. Lock the content intent first, then dispatch via the **media generation contract** using `"$OD_NODE_BIN" "$OD_BIN" media generate --surface audio --audio-kind <kind> --model <audioModel> --duration <seconds>` and add `--voice <voice-id>` for speech when you have a provider-specific voice id. Do NOT emit `<artifact>` HTML.',
+      'This is an **audio** project. Lock the content intent first, then inspect the tools available in this run and invoke a capable media-generation MCP tool by its declared schema. Persist the result beneath `./assets/`. Do NOT emit `<artifact>` HTML.',
     );
   }
   return out;
@@ -978,67 +908,6 @@ function templateReferenceLines(
     }
   }
   return out;
-}
-
-function shouldRenderElevenLabsVoiceOptions(
-  metadata: ProjectMetadata,
-  audioVoiceOptions: AudioVoiceOption[] | undefined,
-): boolean {
-  return metadata.kind === 'audio'
-    && metadata.audioKind === 'speech'
-    && metadata.audioModel === 'elevenlabs-v3'
-    && !metadata.voice
-    && Array.isArray(audioVoiceOptions)
-    && audioVoiceOptions.length > 0;
-}
-
-function renderElevenLabsVoiceQuestionForm(voiceOptions: AudioVoiceOption[]): {
-  description: string;
-  questions: Array<{
-    id: string;
-    label: string;
-    type: 'select';
-    required: boolean;
-    allowCustom: false;
-    placeholder: string;
-    help: string;
-    options: Array<{ label: string; value: string }>;
-  }>;
-  submitLabel: string;
-} {
-  const options = voiceOptions.slice(0, ELEVENLABS_VOICE_PROMPT_OPTION_LIMIT).map((option) => ({
-    label: formatElevenLabsVoiceLabel(option),
-    value: option.voiceId,
-  }));
-  return {
-    description:
-      'Pick a voice by description. The selected answer will be the exact voice_id passed to the renderer.',
-    questions: [
-      {
-        id: 'voice',
-        label: 'Voice',
-        type: 'select',
-        required: true,
-        allowCustom: false,
-        placeholder: 'Choose a voice',
-        help: 'Select a voice description; the answer submits the matching Voice ID.',
-        options,
-      },
-    ],
-    submitLabel: 'Use voice',
-  };
-}
-
-function formatElevenLabsVoiceLabel(option: AudioVoiceOption): string {
-  const labels = option.labels && typeof option.labels === 'object'
-    ? Object.values(option.labels)
-        .map((value) => (typeof value === 'string' ? value.trim() : ''))
-        .filter(Boolean)
-    : [];
-  const bits = [...labels];
-  if (bits.length > 0) return `${option.name} — ${bits.join(' · ')}`;
-  const category = typeof option.category === 'string' ? option.category.trim() : '';
-  return category ? `${option.name} — ${category}` : option.name;
 }
 
 /**

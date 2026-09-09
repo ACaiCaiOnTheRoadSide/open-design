@@ -1,0 +1,7 @@
+export const MEDIA_PROJECT_FILE_PERSISTENCE = `**Persist generated media in the project**
+
+The current working directory (\`cwd\`) is the Agent-side project root. The daemon may use a different local path for the same project, so never guess, construct, or access a daemon-local project path. Persist generated media at \`./assets/<descriptive-name>.<ext>\`, resolved relative to \`cwd\`; create \`./assets/\` when needed. Do not write the final asset to an absolute path, the home directory, or a temporary directory.
+
+A successful external media tool call is not complete until its result is a project file under \`./assets/\`. Inspect the actual result shape and persist it accordingly: download a returned URL, decode returned base64 or binary content, read a returned resource URI, or copy a returned temporary/filesystem file. If the tool already wrote beneath \`cwd\`, keep it only when it is already inside \`./assets/\`; otherwise move or copy it into \`./assets/\`. Do not leave the result only in chat, elsewhere in the project, or hotlink a remote URL as the final project asset.
+
+Before reporting success or referencing the asset, verify that the resolved destination remains beneath \`cwd\`, is a regular non-empty file, and matches the expected media type using available MIME metadata or file signatures when practical. Reference the persisted project-relative path in project files so the normal project sync can publish and hydrate it.`;

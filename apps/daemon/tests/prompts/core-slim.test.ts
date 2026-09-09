@@ -88,9 +88,14 @@ describe('renderSlimCoreCharter — frozen protocol markers', () => {
     expect(charter).toContain('omit `allowCustom` or set it to `true`');
   });
 
-  it('keeps the imagery dispatch and local-file contract intact', () => {
-    expect(charter).toContain('media generate --surface image');
-    expect(charter).toContain("runtime's native image-generation capability");
+  it('prefers capable MCP imagery tools and persists results under the Agent cwd', () => {
+    expect(charter).toContain('Invoke a capable MCP media tool directly');
+    expect(charter).toContain('The current working directory (`cwd`) is the Agent-side project root');
+    expect(charter).toContain('`./assets/<descriptive-name>.<ext>`');
+    expect(charter).toContain('download a returned URL');
+    expect(charter).toContain('decode returned base64 or binary content');
+    expect(charter).toContain('never guess, construct, or access a daemon-local project path');
+    expect(charter).not.toContain('When OD media tools are available at runtime');
     expect(charter).toContain('Do not hotlink user-uploaded images by URL');
   });
 

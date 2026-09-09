@@ -169,6 +169,35 @@ describe('sync engine', () => {
         () => backend.manifests.get(projectId)?.files['local.txt']?.sha256,
         { timeout: 5_000 },
       ).toBe(sha('from-route'));
+
+      // Every user-uploaded project asset must land in this daemon instance's
+      // project directory, then flow through the same manifest/blob sync used
+      // by sandbox output. Keep this binary so the assertion cannot pass via a
+      // text-only code path.
+      const uploadedImage = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0x00, 0x01, 0x02, 0xff,
+      ]);
+      const uploadForm = new FormData();
+      uploadForm.append('dir', 'assets');
+      uploadForm.append('files', new Blob([uploadedImage], { type: 'image/png' }), 'user-upload.png');
+      const uploadResponse = await fetch(`${started.url}/api/projects/${projectId}/upload`, {
+        method: 'POST',
+        body: uploadForm,
+      });
+      expect(uploadResponse.status).toBe(200);
+      await expect(uploadResponse.json()).resolves.toMatchObject({
+        files: [{ name: 'assets/user-upload.png', path: 'assets/user-upload.png' }],
+      });
+      await expect(fsp.readFile(join(detail.resolvedDir, 'assets', 'user-upload.png')))
+        .resolves.toEqual(uploadedImage);
+      const uploadedImageHash = sha(uploadedImage);
+      await expect.poll(
+        () => backend.manifests.get(projectId)?.files['assets/user-upload.png']?.sha256,
+        { timeout: 5_000 },
+      ).toBe(uploadedImageHash);
+      expect(backend.blobs.get(uploadedImageHash)).toEqual(uploadedImage);
+
       await expect(fsp.stat(join(dataDir, 'sync', `${projectId}.json`))).resolves.toBeDefined();
 
       const deleteResponse = await fetch(`${started.url}/api/projects/${projectId}`, {

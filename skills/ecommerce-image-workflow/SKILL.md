@@ -167,57 +167,24 @@ Then add slot-specific instructions:
   product.
 - Preserve product scale and structure.
 
-### Step 4 - Dispatch through the media contract
+### Step 4 - Generate through capable MCP tools
 
-Use the unified OpenDesign media dispatcher. Do not call provider APIs or
-custom model commands directly.
+Inspect the actual tools exposed in this run and select an image-generation tool
+by its declared schema. The tool must support the product reference image needed
+for fidelity. Do not hardcode a server, provider, tool, or model name, use the
+OpenDesign media dispatcher, call provider APIs directly, or ask for provider
+credentials.
 
-For each slot, run the standard generate/wait loop:
+For each slot, invoke the capable MCP tool with the project-relative product
+reference, full slot prompt, and requested aspect. Inspect the returned result
+shape and persist URL, base64, binary, resource URI, or temporary-file output as
+a regular non-empty file at `./assets/<product-slug>-<slot>.<ext>` beneath the
+current project `cwd`. Record each persisted project-relative filename in
+`image-manifest.json`.
 
-```bash
-# POSIX bash. Do not call provider APIs directly.
-out=$("$OD_NODE_BIN" "$OD_BIN" media generate \
-  --project "$OD_PROJECT_ID" \
-  --surface image \
-  --model "<imageModel from metadata>" \
-  --aspect "<slot aspect or imageAspect from metadata>" \
-  --image "<project-relative product reference image>" \
-  --output "<product-slug>-<slot>.png" \
-  --prompt "<full slot prompt>")
-ec=$?
-if [ "$ec" -ne 0 ]; then echo "$out" >&2; exit "$ec"; fi
-
-last=$(printf '%s\n' "$out" | tail -1)
-task_id=$(printf '%s\n' "$last" |
-  python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('taskId',''))" 2>/dev/null)
-since=$(printf '%s\n' "$last" |
-  python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('nextSince',0))" 2>/dev/null)
-since="${since:-0}"
-
-while [ -n "$task_id" ]; do
-  out=$("$OD_NODE_BIN" "$OD_BIN" media wait "$task_id" --since "$since")
-  ec=$?
-  last=$(printf '%s\n' "$out" | tail -1)
-  since=$(printf '%s\n' "$last" |
-    python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('nextSince',0))" 2>/dev/null)
-  since="${since:-0}"
-  if [ "$ec" -eq 0 ]; then
-    task_id=""
-  elif [ "$ec" -ne 2 ]; then
-    echo "$out" >&2
-    exit "$ec"
-  fi
-done
-
-printf '%s\n' "$last"
-```
-
-The final line must be JSON with `{"file": {"name": "...", ...}}`.
-Record each final returned filename in `image-manifest.json`.
-
-If the active image model or provider cannot use `--image`, stop and tell the
-user that this workflow needs a reference-capable image generation path for
-product fidelity.
+If no available MCP tool supports reference-guided image generation, stop and
+use the media contract's sanitized no-tool completion. Keep raw tool errors only
+in the tool trace.
 
 ### Step 5 - Write `image-manifest.json`
 
@@ -291,8 +258,8 @@ Do not emit an `<artifact>` tag.
 - Preserve the product; do not redesign it.
 - Do not invent claims, certifications, measurements, ingredients, or
   performance data.
-- Use `"$OD_NODE_BIN" "$OD_BIN" media generate`; do not call provider APIs
-  directly.
+- Select a capable MCP tool by its declared schema; do not use the OpenDesign
+  media dispatcher or call provider APIs directly.
 - Always create `image-manifest.json` after generation.
 - Run `references/checklist.md` before handoff.
 

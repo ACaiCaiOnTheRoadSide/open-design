@@ -5,7 +5,7 @@ description: >
   Atelier Zero visual language (Monocle / Apartamento / Études editorial
   collage) — the same aesthetic OpenDesign uses for its own marketing
   surface. The agent fills a typed `inputs.json` from a brand brief,
-  optionally generates 16 collage assets via gpt-image-2, then runs a
+  optionally generates 16 collage assets through capable MCP tools, then runs a
   pure-function composer that emits a self-contained HTML file; a
   separate path can mirror the Astro marketing site in `apps/landing-page/`.
   Drop-in scroll-reveal motion and a
@@ -83,15 +83,10 @@ parameters:
     values: [generate, placeholder, bring-your-own]
     default: placeholder
     description: >
-      `generate` calls gpt-image-2 (fal.ai or Azure) for all 16 slots.
+      `generate` uses capable MCP image tools exposed in the current run for all 16 slots.
       `placeholder` writes paper-textured SVG frames so the layout is
       fully visible without an image budget. `bring-your-own` assumes
       the user has dropped 16 PNGs at `imagery.assets_path` already.
-  image_provider:
-    type: enum
-    values: [fal, azure]
-    default: fal
-    description: "Provider for `image_strategy: generate`. fal.ai is faster."
 outputs:
   - path: <out>/index.html
     when: output_format in [standalone-html, both]
@@ -207,21 +202,16 @@ Writes 16 `.svg` files (with `.png` aliases for compatibility) into
 dimensions, and the prompt hint from `image-manifest.json`. The
 composer's `<img src='./assets/hero.png'>` etc. just work.
 
-#### `generate` — gpt-image-2 mode
+#### `generate` — MCP mode
 
-```bash
-FAL_KEY=... npx tsx scripts/imagegen.ts <inputs.json> --out=<out>/assets/
-```
-
-Calls fal.ai's `openai/gpt-image-2` synchronous endpoint per slot.
-Composes prompts as: **style anchor** (paper-collage editorial system)
-+ **brand variables** (name / nav / headline / italic emphasis pulled
-from `inputs.json`) + **per-slot composition** (e.g. cropped plaster
-head + tree growing through arch). Skips slots whose target file
-already exists; pass `--force` to re-render.
-
-Without `FAL_KEY`, the script prints the prompts so the operator can
-route them through the `/gpt-image-fal` slash-command skill manually.
+Inspect the actual tools exposed in this run and select an image-generation tool
+by its declared schema. Do not run `scripts/imagegen.ts`, call provider APIs
+or slash-command wrappers, ask for credentials, or hardcode a server, provider,
+tool, or model. For every slot, combine the **style anchor** (paper-collage
+editorial system), **brand variables**, and **per-slot composition**, invoke the
+capable MCP tool, and persist the returned bytes as the manifest filename under
+`./assets/` relative to the current project `cwd`. Keep raw failures only in the
+tool trace and use the media contract's sanitized visible failure copy.
 
 #### `bring-your-own`
 
@@ -289,7 +279,7 @@ design-templates/open-design-landing/
 ├── example.html             # canonical rendering (regenerated from inputs.example.json)
 ├── scripts/
 │   ├── compose.ts           # inputs.json + styles.css → index.html
-│   ├── imagegen.ts          # gpt-image-2 wrapper (fal.ai)
+│   ├── imagegen.ts          # legacy provider wrapper; do not run in Agent workflows
 │   └── placeholder.ts       # SVG paper-textured frames
 └── assets/
     ├── *.png                # 16 collage plates (OpenDesign instance)

@@ -162,20 +162,15 @@ encoding used by the sister skill — see its `inputs.example.json`.
 
 ### 2. (Optional) generate or stub imagery
 
-This skill does **not** ship its own image generator or placeholder
-script — it shares the 16-slot library from `open-design-landing`. To
-regenerate or stub:
+For generated imagery, inspect the actual MCP tools exposed in this run and
+select one by declared image-generation capability. Do not run the shared
+provider wrapper, call provider APIs directly, ask for credentials, or hardcode
+a server, provider, tool, or model. Persist each generated file under
+`./assets/` relative to the current project `cwd` and point
+`inputs.imagery.assets_path` there. Keep raw failures only in the tool trace.
 
-```bash
-# generate via gpt-image-2 (fal.ai)
-FAL_KEY=... npx tsx ../open-design-landing/scripts/imagegen.ts ../open-design-landing/inputs.example.json --out=../open-design-landing/assets/
-
-# or paper-textured SVG placeholders
-npx tsx ../open-design-landing/scripts/placeholder.ts ../open-design-landing/assets/
-```
-
-Set your deck's `inputs.imagery.assets_path` to wherever those PNGs
-live (default in the example: `../open-design-landing/assets/`).
+For a layout-only first pass, the shared paper-textured SVG placeholder script
+may be used; placeholders are not final generated media.
 
 ### 3. Compose the deck
 

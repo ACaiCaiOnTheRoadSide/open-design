@@ -1,6 +1,6 @@
 ---
 name: hatch-pet
-description: Create, repair, validate, preview, and package Codex-compatible animated pet spritesheets from character art, screenshots, generated images, or visual references. Use when a user wants to hatch a Codex pet, create a custom animated pet, or build a built-in pet asset with an 8x9 atlas, transparent unused cells, row-by-row animation prompts, QA contact sheets, preview videos, and pet.json packaging. This skill composes the installed $imagegen system skill for visual generation and uses bundled scripts for deterministic spritesheet assembly.
+description: Create, repair, validate, preview, and package Codex-compatible animated pet spritesheets from character art, screenshots, generated images, or visual references. Use when a user wants to hatch a Codex pet, create a custom animated pet, or build a built-in pet asset with an 8x9 atlas, transparent unused cells, row-by-row animation prompts, QA contact sheets, preview videos, and pet.json packaging. This skill selects capable MCP tools for visual generation and uses bundled scripts for deterministic spritesheet assembly.
 triggers:
   - "hatch a pet"
   - "hatch pet"
@@ -42,31 +42,26 @@ od:
 
 ## Overview
 
-Create a Codex-compatible animated pet from a concept, one or more reference images, or both. This skill owns pet-specific prompt planning, animation rows, frame extraction, atlas geometry, QA, previews, and packaging. It delegates visual generation to `$imagegen`.
+Create a Codex-compatible animated pet from a concept, one or more reference images, or both. This skill owns pet-specific prompt planning, animation rows, frame extraction, atlas geometry, QA, previews, and packaging. It delegates visual generation to the selected capable MCP tool.
 
 User-facing inputs are optional. If the user omits a pet name, infer one from the concept or reference filenames; if that is not possible, choose a short appropriate name. If the user omits a description, infer one from the concept or references. If the user omits reference images, generate the base pet from text first, then use that base as the canonical reference for every animation row.
 
 ## Generation Delegation
 
-Use `$imagegen` for all normal visual generation.
+Inspect the actual MCP tools exposed in this run and select image-generation
+capability from their declared schemas. Do not hardcode a server, provider, tool,
+or model, call provider APIs directly, invoke credential-based fallbacks, or ask
+for credentials. Pass each pet prompt as the authoritative visual spec and attach
+every listed grounding image. Persist each result beneath `./assets/` relative
+to project `cwd` before ingesting it with `record_imagegen_result.py`.
 
-Before generating base art, row strips, or repair rows, load and follow the installed image generation skill:
-
-```text
-${CODEX_HOME:-$HOME/.codex}/skills/.system/imagegen/SKILL.md
-```
-
-Do not call the Image API directly for the normal path. Let `$imagegen` choose its own built-in-first path and its own CLI fallback rules. If `$imagegen` says a fallback requires confirmation, ask the user before continuing.
-
-When invoking `$imagegen` from this skill, pass the generated pet prompt as the authoritative visual spec. Do not wrap it in the generic `$imagegen` shared prompt schema and do not add extra polish, hero-art, photo, product, or illustration-style augmentation. Pet prompts should stay terse, sprite-specific, and digital-pet oriented; only add role labels for input images and any essential user constraint.
-
-Use this skill's scripts for deterministic work only: preparing prompts and manifests, ingesting selected `$imagegen` outputs, extracting frames, validating rows, composing the final atlas, creating QA media, and packaging.
-
-Hard boundary: do not create, draw, tile, warp, mirror, or synthesize pet visuals with local Python/Pillow scripts, SVG, canvas, HTML/CSS, or other code-native art as a substitute for `$imagegen`. For a normal pet run, expect up to 10 visual generation jobs: 1 base pet plus 9 row-strip jobs. The only exception is `running-left`, which may be derived by mirroring `running-right` only after `running-right` has been generated, visually inspected, and explicitly approved as safe to mirror. If mirroring is not appropriate, generate `running-left` as a normal grounded `$imagegen` row. If those calls are too expensive, blocked, or unavailable, stop and explain the blocker instead of fabricating row strips locally.
-
-Do not mark visual jobs complete by editing `imagegen-jobs.json`, copying files into `decoded/`, or writing helper scripts that populate row outputs. Use `record_imagegen_result.py` for selected built-in `$imagegen` outputs, or `generate_pet_images.py` only for the documented secondary fallback. The deterministic scripts may only process already-generated visual outputs.
-
-Only the base job may be prompt-only. Every row-strip job generated through `$imagegen` must use the input images listed in `imagegen-jobs.json`, including the canonical base reference created after the base job is recorded. Treat any row generation without attached grounding images as invalid.
+Use this skill's scripts only for deterministic prompt preparation, manifests,
+ingest, frame extraction, validation, atlas composition, QA media, and packaging.
+Do not use local Python/Pillow, SVG, canvas, HTML/CSS, or other code-native art as
+a substitute for unavailable generated visuals. The only derivation exception is
+`running-left`, which may mirror an approved `running-right` result when identity
+and semantics are preserved. If no capable reference-guided MCP tool is
+available, stop with the media contract's sanitized no-tool reply.
 
 ## Codex Digital Pet Style
 
@@ -160,17 +155,16 @@ python "$SKILL_DIR/scripts/prepare_pet_run.py" \
 
 All arguments above are optional except any flags needed to express user constraints. For text-only requests, pass the concept through `--pet-notes` and omit `--reference`; `prepare_pet_run.py` will infer a name, description, chroma key, and output directory as needed.
 
-2. Inspect the next ready `$imagegen` jobs:
+2. Inspect the next ready image-generation jobs:
 
 ```bash
 python "$SKILL_DIR/scripts/pet_job_status.py" --run-dir /absolute/path/to/run
 ```
 
-3. For each ready job, invoke `$imagegen` with:
+3. For each ready job, invoke the selected capable MCP tool with:
 
 - the prompt file listed in `imagegen-jobs.json`
 - every input image listed for the job, with its role label
-- the default built-in `image_gen` path unless `$imagegen` itself routes otherwise
 
 The base job must complete first. If user references exist, the base job uses them. If no references exist, the base job may be prompt-only. After recording the base, `record_imagegen_result.py` writes `decoded/base.png` and `references/canonical-base.png`; all row jobs use the original references if present plus those canonical base images.
 
@@ -187,9 +181,11 @@ python "$SKILL_DIR/scripts/derive_running_left_from_running_right.py" \
   --decision-note "<why mirroring preserves this pet's identity>"
 ```
 
-If there is any asymmetric side-specific marking, readable text, non-mirrored logo, handed prop, one-sided accessory, lighting cue, or direction-specific pose that would become wrong when flipped, do not mirror. Generate `running-left` with `$imagegen` using its row prompt and all listed grounding images, including `decoded/running-right.png` as a gait reference.
+If there is any asymmetric side-specific marking, readable text, non-mirrored logo, handed prop, one-sided accessory, lighting cue, or direction-specific pose that would become wrong when flipped, do not mirror. Generate `running-left` with the selected capable MCP tool using its row prompt and all listed grounding images, including `decoded/running-right.png` as a gait reference.
 
-For the built-in path, record the selected source image from `$CODEX_HOME/generated_images/.../ig_*.png`. Do not record files from the run directory, `tmp/`, hand-made fixtures, deterministic row folders, or post-processed copies as visual job sources.
+Record the selected original source image from `./assets/`. Do not record files
+from `tmp/`, hand-made fixtures, deterministic row folders, or post-processed
+copies as visual job sources.
 
 4. After selecting a generated output for a job, ingest it:
 
@@ -254,7 +250,7 @@ Default flow:
 5. Parent records the selected `idle` and `running-right` results returned by subagents.
 6. Parent decides whether `running-left` is safe to derive by mirror; if not, parent treats it as a normal grounded row job delegated to a subagent.
 7. Parent spawns subagents for every remaining non-derived row image-generation job.
-8. Each subagent receives the row prompt and every listed input image path, invokes `$imagegen`, and returns only the selected `$CODEX_HOME/generated_images/.../ig_*.png` source path.
+8. Each subagent receives the row prompt and every listed input image path, invokes the selected capable MCP tool, persists the result under project `./assets/`, and returns only that project file path.
 9. Parent alone runs `record_imagegen_result.py`, `derive_running_left_from_running_right.py`, repair queueing, finalization, QA, and packaging.
 
 Subagent write boundary: do not let subagents edit `imagegen-jobs.json`, copy files into `decoded/`, run `record_imagegen_result.py`, run `derive_running_left_from_running_right.py`, run `finalize_pet_run.py`, or package the pet. This avoids manifest races and keeps provenance checks centralized.
@@ -265,7 +261,7 @@ Subagent handoff contract:
 - Include the row id, the absolute prompt file path, the full prompt text or an instruction to read that exact prompt file, and every input image path with its role label from `imagegen-jobs.json`.
 - Explicitly remind the subagent that the prompt's transparency and effects rules are mandatory: no detached effects, no wave marks for `waving`, no speed lines or dust for running rows, and only attached opaque sprite-like tears/smoke/stars when allowed by the state prompt.
 - Tell the subagent to inspect the generated candidate for frame count, identity consistency, clean flat chroma-key background, safe spacing, and forbidden detached effects before returning it.
-- Tell the subagent to return only the selected original `$CODEX_HOME/generated_images/.../ig_*.png` source path plus a one-sentence QA note. The parent decides whether to record or repair it.
+- Tell the subagent to return only the selected original project `./assets/` path plus a one-sentence QA note. The parent decides whether to record or repair it.
 
 Use this template for each subagent:
 
@@ -278,7 +274,7 @@ Input images:
 - <absolute path> — <role>
 - <absolute path> — <role>
 
-Read and follow the row prompt exactly, including the Transparency and artifact rules. Use `$imagegen` only; do not use local scripts to draw, tile, edit, or synthesize sprites.
+Read and follow the row prompt exactly, including the Transparency and artifact rules. Use the selected capable MCP tool only; do not use local scripts to draw, tile, edit, or synthesize sprites.
 
 Before returning, visually check:
 - exact requested frame count
@@ -303,37 +299,31 @@ python "$SKILL_DIR/scripts/queue_pet_repairs.py" \
   --run-dir /absolute/path/to/run
 ```
 
-Then repeat the `$imagegen` generation and `record_imagegen_result.py` ingest loop for each reopened row job. Regenerate the smallest failing scope: the failed row, not the whole sheet.
+Then repeat the capable-MCP generation and `record_imagegen_result.py` ingest loop for each reopened row job. Regenerate the smallest failing scope: the failed row, not the whole sheet.
 
 For identity repairs, use the canonical base image, original references, contact sheet, and exact row failure note as grounding context. Repair only the failed row while preserving the canonical pet identity.
 
-## Secondary Image Generation Fallback
+## Image Generation Contract
 
-`scripts/generate_pet_images.py` is a secondary fallback for this skill.
-
-Use it only when the installed `$imagegen` system skill is unavailable or cannot be invoked in the current environment. Normal pet creation should delegate visual generation to `$imagegen`, because `$imagegen` owns the built-in-first image generation policy and its own CLI fallback behavior.
-
-Run the secondary fallback only after explaining why `$imagegen` cannot be used:
-
-```bash
-python "$SKILL_DIR/scripts/generate_pet_images.py" \
-  --run-dir /absolute/path/to/run \
-  --model gpt-image-2 \
-  --states all
-```
-
-The secondary fallback requires `OPENAI_API_KEY`.
+Inspect the actual MCP tools exposed in this run and select an image-generation
+tool by declared capability and schema. Every row job must include its required
+grounding images. Do not use `scripts/generate_pet_images.py`, provider APIs,
+credential-based fallbacks, or hardcoded server, tool, provider, or model names.
+Persist every returned image beneath `./assets/` relative to project `cwd`, then
+feed that project-relative file into `record_imagegen_result.py`. If no capable
+reference-guided MCP tool is available, stop with the media contract's sanitized
+no-tool response; keep raw errors only in the tool trace.
 
 ## Rules
 
-- Keep `$imagegen` as the primary generation layer.
-- Keep reference images attached/visible for `$imagegen` whenever the chosen path supports references.
+- Use capable MCP tools selected from the current run as the only generation layer.
+- Keep reference images attached/visible whenever the selected tool supports references.
 - Attach the row's `references/layout-guides/<state>.png` image to every row-strip job as a layout-only guide, and do not accept outputs that copy guide pixels.
 - Use subagents for row-strip visual generation after the parent records the base image. The parent may generate the base, but row-strip jobs belong to subagents unless the user explicitly says not to use subagents for this session.
-- Generate every normal visual job with `$imagegen`: base plus all row strips that are not explicitly approved `running-left` mirror derivations.
+- Generate every normal visual job with the selected capable MCP tool: base plus all row strips that are not explicitly approved `running-left` mirror derivations.
 - Treat only the base job as eligible for prompt-only generation; every row job must attach its listed grounding images.
-- Delegate `running-right` first, then mirror `running-left` only when visual inspection confirms a mirror preserves identity and semantics; otherwise delegate `running-left` as a normal grounded `$imagegen` row.
-- Never substitute locally drawn, tiled, transformed, or code-generated row strips for missing `$imagegen` outputs.
+- Delegate `running-right` first, then mirror `running-left` only when visual inspection confirms a mirror preserves identity and semantics; otherwise delegate `running-left` as a normal grounded MCP generation row.
+- Never substitute locally drawn, tiled, transformed, or code-generated row strips for missing MCP outputs.
 - Never manually mutate `imagegen-jobs.json` to claim a visual job completed.
 - Do not rely on generated images for exact atlas geometry; use this skill's deterministic scripts.
 - Use the chroma key stored in `pet_request.json`; do not force a fixed green screen.
