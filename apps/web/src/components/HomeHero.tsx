@@ -2654,7 +2654,7 @@ function catalogFacetLabel(
   return value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function ohMyInspirePreviewType(template: OhMyInspireCatalogTemplate): string {
+function ohMyInspireLegacyPreviewType(template: OhMyInspireCatalogTemplate): string {
   const declared = (template.preview?.type ?? template.preview_type ?? '').toLowerCase();
   if (declared) return declared;
   const path = template.preview_url?.split(/[?#]/, 1)[0]?.toLowerCase() ?? '';
@@ -2665,6 +2665,17 @@ function ohMyInspirePreviewType(template: OhMyInspireCatalogTemplate): string {
   return '';
 }
 
+function ohMyInspirePublicPreviewUrl(value: string | undefined): string | null {
+  const contained = ohMyInspireCatalogPreviewUrl(value);
+  if (contained) return contained;
+  try {
+    const url = new URL(value ?? '');
+    return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function OhMyInspireCardPreview({
   template,
   title,
@@ -2672,11 +2683,32 @@ function OhMyInspireCardPreview({
   template: OhMyInspireCatalogTemplate;
   title: string;
 }) {
-  const [failed, setFailed] = useState(false);
-  const url = ohMyInspireCatalogPreviewUrl(template.preview_url);
-  const type = ohMyInspirePreviewType(template);
-  useEffect(() => setFailed(false), [url]);
-  if (!url || failed) return <div className="home-hero__plugin-preset-loading-preview" />;
+  const [cardFailed, setCardFailed] = useState(false);
+  const [legacyFailed, setLegacyFailed] = useState(false);
+  const cardUrl = ohMyInspirePublicPreviewUrl(template.card_preview?.poster_url);
+  const legacyUrl = ohMyInspireCatalogPreviewUrl(template.preview_url);
+  useEffect(() => setCardFailed(false), [cardUrl]);
+  useEffect(() => setLegacyFailed(false), [legacyUrl]);
+  if (cardUrl && !cardFailed) {
+    return (
+      <div className="plugins-home__preview plugins-home__preview--media">
+        <div className="plugins-home__media">
+          <img
+            className="plugins-home__media-img"
+            src={cardUrl}
+            alt={`${title} preview`}
+            loading="eager"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            onError={() => setCardFailed(true)}
+          />
+        </div>
+      </div>
+    );
+  }
+  const url = legacyUrl;
+  const type = ohMyInspireLegacyPreviewType(template);
+  if (!url || legacyFailed) return <div className="home-hero__plugin-preset-loading-preview" />;
   if (type === 'html') {
     return (
       <div className="plugins-home__preview plugins-home__html">
@@ -2707,7 +2739,7 @@ function OhMyInspireCardPreview({
             preload="auto"
             disablePictureInPicture
             tabIndex={-1}
-            onError={() => setFailed(true)}
+            onError={() => setLegacyFailed(true)}
           />
         </div>
       </div>
@@ -2717,7 +2749,7 @@ function OhMyInspireCardPreview({
     return (
       <div className="plugins-home__preview plugins-home__preview--media">
         <div className="plugins-home__media">
-          <audio src={url} preload="metadata" onError={() => setFailed(true)} />
+          <audio src={url} preload="metadata" onError={() => setLegacyFailed(true)} />
         </div>
       </div>
     );
@@ -2731,7 +2763,8 @@ function OhMyInspireCardPreview({
           alt={`${title} preview`}
           loading="eager"
           decoding="async"
-          onError={() => setFailed(true)}
+          referrerPolicy="no-referrer"
+          onError={() => setLegacyFailed(true)}
         />
       </div>
     </div>
@@ -2838,15 +2871,28 @@ function OhMyInspireDetailPreview({
   type,
   url,
   title,
+  poster,
+  onError,
 }: {
   type: string;
   url: string;
   title: string;
+  poster?: string;
+  onError?: () => void;
 }) {
   if (type === 'video') {
     return (
       <div className="community-template-preview__frame ohmyinspire-detail-media">
-        <video src={url} controls autoPlay muted playsInline preload="auto" />
+        <video
+          src={url}
+          poster={poster}
+          controls
+          autoPlay
+          muted
+          playsInline
+          preload="auto"
+          onError={onError}
+        />
       </div>
     );
   }
@@ -2860,7 +2906,7 @@ function OhMyInspireDetailPreview({
   if (type === 'image') {
     return (
       <div className="community-template-preview__frame ohmyinspire-detail-media">
-        <img src={url} alt={`${title} preview`} />
+        <img src={url} alt={`${title} preview`} onError={onError} referrerPolicy="no-referrer" />
       </div>
     );
   }
@@ -2888,8 +2934,20 @@ function OhMyInspireTemplatePreviewModal({
   pending: boolean;
 }) {
   const { t } = useI18n();
+  const [cardFailed, setCardFailed] = useState(false);
   const title = ohMyInspireTemplateTitle(template, locale);
-  const previewUrl = ohMyInspireCatalogPreviewUrl(template.preview_url);
+  const cardPreview = template.card_preview;
+  const cardPoster = ohMyInspirePublicPreviewUrl(cardPreview?.poster_url);
+  const cardVideo = ohMyInspirePublicPreviewUrl(cardPreview?.video_url);
+  const legacyUrl = ohMyInspireCatalogPreviewUrl(template.preview_url);
+  useEffect(() => setCardFailed(false), [cardPoster, cardVideo, template.id]);
+  const usingCard = Boolean(cardPreview && !cardFailed);
+  const previewUrl = usingCard
+    ? (cardPreview?.type === 'video' && cardVideo ? cardVideo : cardPoster)
+    : (legacyUrl ?? (cardPreview?.type === 'video' ? cardPoster : null));
+  const previewType = usingCard
+    ? (cardPreview?.type === 'video' && cardVideo ? 'video' : 'image')
+    : (legacyUrl ? ohMyInspireLegacyPreviewType(template) : 'image');
   return (
     <div className="community-template-preview" role="presentation" onMouseDown={onClose}>
       <section
@@ -2910,9 +2968,11 @@ function OhMyInspireTemplatePreviewModal({
         </header>
         {previewUrl ? (
           <OhMyInspireDetailPreview
-            type={ohMyInspirePreviewType(template)}
+            type={previewType}
             url={previewUrl}
             title={title}
+            poster={usingCard ? cardPoster ?? undefined : undefined}
+            onError={usingCard ? () => setCardFailed(true) : undefined}
           />
         ) : (
           <div className="community-template-preview__frame" />

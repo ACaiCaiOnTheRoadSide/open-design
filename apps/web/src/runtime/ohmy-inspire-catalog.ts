@@ -9,6 +9,13 @@ export interface OhMyInspireCatalogTemplate {
   preview?: { type?: string; path?: string };
   preview_type?: string;
   preview_url?: string;
+  card_preview?: {
+    type: 'image' | 'video';
+    poster_url: string;
+    video_url?: string;
+    width: number;
+    height: number;
+  };
 }
 
 export interface OhMyInspireCatalogTemplateDetail extends OhMyInspireCatalogTemplate {
