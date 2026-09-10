@@ -111,6 +111,7 @@ import {
   fetchAllOhMyInspireTemplates,
   fetchOhMyInspireTemplateDetail,
   ohMyInspireCatalogPreviewUrl,
+  ohMyInspirePreviewMayAnimate,
   ohMyInspireTemplateDescription,
   ohMyInspireTemplateTitle,
   type OhMyInspireCatalogTemplate,
@@ -2683,32 +2684,66 @@ function OhMyInspireCardPreview({
   template: OhMyInspireCatalogTemplate;
   title: string;
 }) {
+  const [motionActive, setMotionActive] = useState(false);
   const [cardFailed, setCardFailed] = useState(false);
-  const [legacyFailed, setLegacyFailed] = useState(false);
+  const [motionFailed, setMotionFailed] = useState(false);
   const cardUrl = ohMyInspirePublicPreviewUrl(template.card_preview?.poster_url);
+  const cardVideoUrl = ohMyInspirePublicPreviewUrl(template.card_preview?.video_url);
   const legacyUrl = ohMyInspireCatalogPreviewUrl(template.preview_url);
+  const animatedImageUrl = ohMyInspirePreviewMayAnimate(template) ? legacyUrl : null;
+  const showVideo = motionActive && cardVideoUrl && !motionFailed;
+  const showAnimatedImage = motionActive && animatedImageUrl && !motionFailed;
   useEffect(() => setCardFailed(false), [cardUrl]);
-  useEffect(() => setLegacyFailed(false), [legacyUrl]);
+  useEffect(() => setMotionFailed(false), [cardVideoUrl, animatedImageUrl]);
   if (cardUrl && !cardFailed) {
     return (
-      <div className="plugins-home__preview plugins-home__preview--media">
+      <div
+        className="plugins-home__preview plugins-home__preview--media"
+        onMouseEnter={() => setMotionActive(true)}
+        onMouseLeave={() => setMotionActive(false)}
+      >
         <div className="plugins-home__media">
-          <img
-            className="plugins-home__media-img"
-            src={cardUrl}
-            alt={`${title} preview`}
-            loading="eager"
-            decoding="async"
-            referrerPolicy="no-referrer"
-            onError={() => setCardFailed(true)}
-          />
+          {showVideo ? (
+            <video
+              className="plugins-home__media-video"
+              src={cardVideoUrl}
+              autoPlay
+              muted
+              playsInline
+              loop
+              preload="metadata"
+              disablePictureInPicture
+              tabIndex={-1}
+              poster={cardUrl}
+              onError={() => setMotionFailed(true)}
+            />
+          ) : showAnimatedImage ? (
+            <img
+              className="plugins-home__media-img"
+              src={animatedImageUrl}
+              alt={`${title} preview`}
+              loading="eager"
+              referrerPolicy="no-referrer"
+              onError={() => setMotionFailed(true)}
+            />
+          ) : (
+            <img
+              className="plugins-home__media-img"
+              src={cardUrl}
+              alt={`${title} preview`}
+              loading="eager"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              onError={() => setCardFailed(true)}
+            />
+          )}
         </div>
       </div>
     );
   }
   const url = legacyUrl;
   const type = ohMyInspireLegacyPreviewType(template);
-  if (!url || legacyFailed) return <div className="home-hero__plugin-preset-loading-preview" />;
+  if (!url || motionFailed) return <div className="home-hero__plugin-preset-loading-preview" />;
   if (type === 'html') {
     return (
       <div className="plugins-home__preview plugins-home__html">
@@ -2739,7 +2774,7 @@ function OhMyInspireCardPreview({
             preload="auto"
             disablePictureInPicture
             tabIndex={-1}
-            onError={() => setLegacyFailed(true)}
+            onError={() => setMotionFailed(true)}
           />
         </div>
       </div>
@@ -2749,7 +2784,7 @@ function OhMyInspireCardPreview({
     return (
       <div className="plugins-home__preview plugins-home__preview--media">
         <div className="plugins-home__media">
-          <audio src={url} preload="metadata" onError={() => setLegacyFailed(true)} />
+          <audio src={url} preload="metadata" onError={() => setMotionFailed(true)} />
         </div>
       </div>
     );
@@ -2764,7 +2799,7 @@ function OhMyInspireCardPreview({
           loading="eager"
           decoding="async"
           referrerPolicy="no-referrer"
-          onError={() => setLegacyFailed(true)}
+          onError={() => setMotionFailed(true)}
         />
       </div>
     </div>
@@ -2934,20 +2969,33 @@ function OhMyInspireTemplatePreviewModal({
   pending: boolean;
 }) {
   const { t } = useI18n();
-  const [cardFailed, setCardFailed] = useState(false);
+  const [motionFailed, setMotionFailed] = useState(false);
+  const [posterFailed, setPosterFailed] = useState(false);
   const title = ohMyInspireTemplateTitle(template, locale);
   const cardPreview = template.card_preview;
   const cardPoster = ohMyInspirePublicPreviewUrl(cardPreview?.poster_url);
   const cardVideo = ohMyInspirePublicPreviewUrl(cardPreview?.video_url);
   const legacyUrl = ohMyInspireCatalogPreviewUrl(template.preview_url);
-  useEffect(() => setCardFailed(false), [cardPoster, cardVideo, template.id]);
-  const usingCard = Boolean(cardPreview && !cardFailed);
-  const previewUrl = usingCard
-    ? (cardPreview?.type === 'video' && cardVideo ? cardVideo : cardPoster)
-    : (legacyUrl ?? (cardPreview?.type === 'video' ? cardPoster : null));
-  const previewType = usingCard
-    ? (cardPreview?.type === 'video' && cardVideo ? 'video' : 'image')
-    : (legacyUrl ? ohMyInspireLegacyPreviewType(template) : 'image');
+  const animatedImageUrl = ohMyInspirePreviewMayAnimate(template) ? legacyUrl : null;
+  useEffect(() => {
+    setMotionFailed(false);
+    setPosterFailed(false);
+  }, [cardPoster, cardVideo, animatedImageUrl, template.id]);
+  const usingVideo = Boolean(cardPreview?.type === 'video' && cardVideo && !motionFailed);
+  const usingAnimatedImage = Boolean(!usingVideo && animatedImageUrl && !motionFailed);
+  const usingPoster = Boolean(!usingVideo && !usingAnimatedImage && cardPoster && !posterFailed);
+  const previewUrl = usingVideo
+    ? cardVideo
+    : usingAnimatedImage
+      ? animatedImageUrl
+      : usingPoster
+        ? cardPoster
+        : legacyUrl;
+  const previewType = usingVideo
+    ? 'video'
+    : usingAnimatedImage || usingPoster
+      ? 'image'
+      : (legacyUrl ? ohMyInspireLegacyPreviewType(template) : 'image');
   return (
     <div className="community-template-preview" role="presentation" onMouseDown={onClose}>
       <section
@@ -2971,8 +3019,14 @@ function OhMyInspireTemplatePreviewModal({
             type={previewType}
             url={previewUrl}
             title={title}
-            poster={usingCard ? cardPoster ?? undefined : undefined}
-            onError={usingCard ? () => setCardFailed(true) : undefined}
+            poster={usingVideo ? cardPoster ?? undefined : undefined}
+            onError={
+              usingVideo || usingAnimatedImage
+                ? () => setMotionFailed(true)
+                : usingPoster
+                  ? () => setPosterFailed(true)
+                  : undefined
+            }
           />
         ) : (
           <div className="community-template-preview__frame" />

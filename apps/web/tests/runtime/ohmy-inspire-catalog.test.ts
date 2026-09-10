@@ -6,6 +6,7 @@ import {
   fetchOhMyInspireTemplates,
   isOhMyInspireHandoffUrl,
   ohMyInspireCatalogPreviewUrl,
+  ohMyInspirePreviewMayAnimate,
 } from '../../src/runtime/ohmy-inspire-catalog';
 
 describe('OhMyInspire catalog client', () => {
@@ -80,6 +81,22 @@ describe('OhMyInspire catalog client', () => {
     );
     expect(ohMyInspireCatalogPreviewUrl('/gpt-image-2/../secret.webp')).toBeNull();
     expect(ohMyInspireCatalogPreviewUrl('https://tracker.example/preview')).toBeNull();
+  });
+
+  it('recognizes image previews that may contain animation', () => {
+    expect(ohMyInspirePreviewMayAnimate({
+      id: 'motion',
+      name: 'Motion',
+      description: '',
+      preview: { type: 'image', path: 'preview.webp' },
+      preview_url: '/gpt-image-2/motion.webp?version=1',
+    })).toBe(true);
+    expect(ohMyInspirePreviewMayAnimate({
+      id: 'still',
+      name: 'Still',
+      description: '',
+      preview: { type: 'image', path: 'preview.png' },
+    })).toBe(false);
   });
 
   it('downloads through the backend and sends explicit charge confirmation only after consent', async () => {

@@ -144,6 +144,15 @@ export function ohMyInspireCatalogPreviewUrl(value: string | undefined): string 
   return null;
 }
 
+export function ohMyInspirePreviewMayAnimate(template: OhMyInspireCatalogTemplate): boolean {
+  const type = (template.preview?.type ?? template.preview_type ?? '').trim().toLowerCase();
+  if (['gif', 'webp', 'image/gif', 'image/webp'].includes(type)) return true;
+  return [template.preview?.path, template.preview_url].some((value) => {
+    const path = value?.split(/[?#]/, 1)[0]?.toLowerCase() ?? '';
+    return /\.(?:gif|webp)$/.test(path);
+  });
+}
+
 export function ohMyInspireTemplateTitle(template: OhMyInspireCatalogTemplate, locale: string): string {
   if (locale.startsWith('zh')) return template.localizedName?.zh?.trim() || template.name;
   return template.localizedName?.en?.trim() || template.name;
