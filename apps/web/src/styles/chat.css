@@ -1109,7 +1109,7 @@
   cursor: pointer;
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast, #fff);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -1157,7 +1157,7 @@
   cursor: pointer;
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast, #fff);
   font: inherit;
   font-weight: 600;
   padding: 6px 14px;
@@ -1209,7 +1209,7 @@
   cursor: pointer;
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast, #fff);
   font: inherit;
   font-weight: 600;
   font-size: 13px;
