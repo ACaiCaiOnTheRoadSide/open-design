@@ -582,6 +582,27 @@ describe('composeSystemPrompt', () => {
       expect(directive).not.toContain('image_generate_text_to_image');
     });
 
+    it('discovers media-mcp tools without inventing a server-owned connect or asking the user', () => {
+      const directive = renderConnectedExternalMcpDirective([{ id: 'media-mcp', label: 'Design Media' }]);
+      expect(directive).toContain('`media-mcp` (Design Media)');
+      expect(directive).toContain('call them directly without connecting again');
+      expect(directive).toContain('use ToolSearch with the exact server id');
+      expect(directive).toContain('mcp__<server>__connect');
+      expect(directive).toContain('when it is actually exposed');
+      expect(directive).toContain('runtime, not the MCP server tools/list');
+      expect(directive).toContain('Do not invent a bare `connect` tool');
+      expect(directive).toContain('perform discovery yourself');
+      expect(directive).toContain('Do not stop at “connect first”');
+      expect(directive).toContain('Discovery does not authorize a paid generation');
+      expect(directive).toContain('report that the tools could not be loaded');
+    });
+
+    it('uses the same discovery contract for media and other MCP servers', () => {
+      const media = renderConnectedExternalMcpDirective([{ id: 'media-mcp' }]);
+      const other = renderConnectedExternalMcpDirective([{ id: 'github' }]);
+      expect(media.replace('`media-mcp`', '`github`')).toBe(other);
+    });
+
     it('skips entries with blank ids and emits nothing when none remain', () => {
       expect(
         renderConnectedExternalMcpDirective([
