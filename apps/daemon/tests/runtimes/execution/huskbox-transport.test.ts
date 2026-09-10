@@ -126,8 +126,9 @@ describe('HuskboxExecutionTransport', () => {
     expect(body.env.OD_STDIN_LEN).toBe('6');
   });
 
-  it('retries pre-ack 429/network failures with one stable idempotency key', async () => {
+  it('retries pre-ack 429/network failures with one stable idempotency key and structured diagnostics', async () => {
     const keys: string[] = [];
+    const diagnostics: Array<{ event: string; details: Record<string, unknown> }> = [];
     let attempt = 0;
     const fetcher = vi.fn(async (_url, init) => {
       keys.push(JSON.parse(String(init?.body)).idempotency_key);
@@ -136,12 +137,29 @@ describe('HuskboxExecutionTransport', () => {
       if (attempt === 2) throw new TypeError('socket reset');
       return sse(['started', { id: 'e3' }], ['completed', { id: 'e3', status: 'succeeded', exit_code: 0 }]);
     }) as typeof fetch;
-    const handle = execute(fetcher);
+    const handle = execute(fetcher, 'ignore', {
+      logDiagnostic: (event: string, details: Record<string, unknown>) => diagnostics.push({ event, details }),
+    });
     const stderr = read(handle.stderr);
     await expect(handle.result).resolves.toEqual({ exitCode: 0, signal: null });
     expect(keys).toHaveLength(3);
     expect(new Set(keys).size).toBe(1);
     expect(await stderr).toContain('[od-retry]');
+    expect(diagnostics.map(({ event }) => event)).toEqual([
+      'attempt_started', 'attempt_failed', 'retry_scheduled',
+      'attempt_started', 'attempt_failed', 'retry_scheduled',
+      'attempt_started', 'execution_acknowledged', 'attempt_terminal',
+    ]);
+    expect(diagnostics[1]?.details).toMatchObject({
+      attempt: 1,
+      errorCode: 'RESOURCE_EXHAUSTED',
+      status: 429,
+      retryable: true,
+      traceId: 'trace-busy',
+      projectId: 'p1',
+      memory: expect.any(Object),
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain('retry_after');
   });
 
   it('retries retryable HTTP 500 responses', async () => {

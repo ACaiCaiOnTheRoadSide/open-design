@@ -17,6 +17,70 @@ type DaemonRuntimeOptions = Omit<StartServerOptions, 'returnServer'> & {
   logListening?: boolean;
 };
 
+type ProcessDiagnosticSnapshot = {
+  pid: number;
+  uptimeSeconds: number;
+  exitCode: number | string | null;
+  serverListening: boolean;
+  memory: NodeJS.MemoryUsage;
+  activeResources: Record<string, number>;
+};
+
+export function daemonProcessDiagnosticSnapshot(server: Pick<Server, 'listening'>): ProcessDiagnosticSnapshot {
+  const activeResources: Record<string, number> = {};
+  for (const resource of process.getActiveResourcesInfo()) {
+    activeResources[resource] = (activeResources[resource] ?? 0) + 1;
+  }
+  return {
+    pid: process.pid,
+    uptimeSeconds: Math.round(process.uptime()),
+    exitCode: process.exitCode ?? null,
+    serverListening: server.listening,
+    memory: process.memoryUsage(),
+    activeResources,
+  };
+}
+
+export function installDaemonProcessDiagnostics(
+  server: Server,
+  log: (message: string, details: Record<string, unknown>) => void = (message, details) => console.error(message, details),
+): () => void {
+  const snapshot = () => daemonProcessDiagnosticSnapshot(server);
+  const onBeforeExit = (code: number) => log('[od] process beforeExit', { code, ...snapshot() });
+  const onExit = (code: number) => log('[od] process exit', { code, ...snapshot() });
+  const onUncaughtExceptionMonitor = (error: Error, origin: NodeJS.UncaughtExceptionOrigin) => {
+    log('[od] uncaught exception monitor', {
+      origin,
+      errorName: error?.name ?? 'Error',
+      errorMessage: error?.message ?? String(error),
+      ...snapshot(),
+    });
+  };
+  const onServerClose = () => log('[od] HTTP server close event', snapshot());
+  const onServerError = (error: Error) => log('[od] HTTP server error event', {
+    errorName: error.name,
+    errorMessage: error.message,
+    ...snapshot(),
+  });
+
+  process.on('beforeExit', onBeforeExit);
+  process.on('exit', onExit);
+  process.on('uncaughtExceptionMonitor', onUncaughtExceptionMonitor);
+  server.on('close', onServerClose);
+  server.on('error', onServerError);
+  const heartbeat = setInterval(() => log('[od] process heartbeat', snapshot()), 60_000);
+  heartbeat.unref();
+
+  return () => {
+    clearInterval(heartbeat);
+    process.off('beforeExit', onBeforeExit);
+    process.off('exit', onExit);
+    process.off('uncaughtExceptionMonitor', onUncaughtExceptionMonitor);
+    server.off('close', onServerClose);
+    server.off('error', onServerError);
+  };
+}
+
 export type DaemonCliStartupConfig = {
   host: string;
   open: boolean;
@@ -224,13 +288,14 @@ export async function runDaemonCliStartup(argv: string[], options: { printHelp?:
     port,
   });
   console.error('[od] process diagnostics', {
-    pid: process.pid,
     ppid: process.ppid,
     node: process.version,
     platform: process.platform,
     arch: process.arch,
     database: (process.env.OD_DAEMON_DB ?? 'sqlite').trim().toLowerCase(),
+    ...daemonProcessDiagnosticSnapshot(runtime.server),
   });
+  installDaemonProcessDiagnostics(runtime.server);
   const stop = createDaemonSignalStop(runtime);
   process.on('SIGINT', () => { void stop('SIGINT'); });
   process.on('SIGTERM', () => { void stop('SIGTERM'); });

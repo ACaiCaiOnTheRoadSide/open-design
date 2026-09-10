@@ -62,6 +62,7 @@ export interface HuskboxTransportOptions {
   workspaceService?: HuskboxWorkspaceService;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   idempotencyKey?: () => string;
+  logDiagnostic?: (event: string, details: Record<string, unknown>) => void;
 }
 
 const OHMYAGENT_STDIO_DRIVER = String.raw`
@@ -419,6 +420,11 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
       const idempotencyKey = this.options.idempotencyKey?.() ?? `od-run-${randomUUID()}`;
       for (let attempt = 1; attempt <= this.config.retryMaxAttempts; attempt++) {
         if (this.abort.signal.aborted) return this.finish({ exitCode: null, signal: 'SIGTERM' });
+        this.diagnostic('attempt_started', {
+          attempt,
+          maxAttempts: this.config.retryMaxAttempts,
+          projectId,
+        });
         const request: HuskboxExecuteRequest = {
           idempotency_key: idempotencyKey,
           ...(this.config.image ? { image: this.config.image } : {}),
@@ -428,7 +434,17 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
           timeout_seconds: this.config.executionTimeoutSeconds ?? 3_600,
         };
         const outcome = await this.attempt(request, attempt, projectId);
-        if (outcome) return this.finish(outcome);
+        if (outcome) {
+          this.diagnostic('attempt_terminal', {
+            attempt,
+            projectId,
+            executionId: this.executionId || null,
+            exitCode: outcome.exitCode,
+            signal: outcome.signal,
+            ...this.errorDiagnostic(outcome.error),
+          });
+          return this.finish(outcome);
+        }
         lastError = this.lastAttemptError ?? lastError;
         if (attempt < this.config.retryMaxAttempts) {
           // The key remains stable for this transport execution group. If the
@@ -438,6 +454,15 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
           // Before acknowledgement delivery is at-least-once, but the stable key
           // makes execution at-most-once under Huskbox's idempotency contract.
           const delay = Math.min(60_000, this.config.retryBaseMs * (2 ** (attempt - 1)));
+          this.diagnostic('retry_scheduled', {
+            attempt,
+            nextAttempt: attempt + 1,
+            maxAttempts: this.config.retryMaxAttempts,
+            delayMs: delay,
+            projectId,
+            executionId: this.executionId || null,
+            ...this.errorDiagnostic(lastError),
+          });
           this.stderrSink.write(`${RETRY_MARKER} ${lastError.message}; retry ${attempt + 1}/${this.config.retryMaxAttempts}\n`);
           await (this.options.sleep ?? sleep)(delay, this.abort.signal);
         }
@@ -465,6 +490,11 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
         }
         if (event.event === 'started') {
           this.executionId = typeof body.id === 'string' ? body.id : '';
+          this.diagnostic('execution_acknowledged', {
+            attempt,
+            projectId,
+            executionId: this.executionId || null,
+          });
           this.resolveStarted();
         } else if (event.event === 'stdout') {
           if (typeof body.data === 'string' && body.data) {
@@ -512,6 +542,13 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
           })
         : new HuskboxExecutionError('NETWORK_ERROR', error instanceof Error ? error.message : String(error), { attempt, retryable: true });
       this.lastAttemptError = structured;
+      this.diagnostic('attempt_failed', {
+        attempt,
+        projectId,
+        executionId: this.executionId || null,
+        sawStdout: this.sawStdout,
+        ...this.errorDiagnostic(structured),
+      });
       if (!retryable || this.sawStdout) return { exitCode: DEFAULT_FAILURE_EXIT, signal: null, error: structured };
       return null;
     }
@@ -609,7 +646,41 @@ export class HuskboxExecutionHandle implements ExecutionHandle {
     }
   }
 
+  private errorDiagnostic(error: Error | undefined): Record<string, unknown> {
+    if (!error) return {};
+    if (error instanceof HuskboxExecutionError) {
+      return {
+        errorName: error.name,
+        errorCode: error.code,
+        status: error.details.status ?? null,
+        retryable: error.details.retryable ?? null,
+        traceId: error.details.trace_id ?? null,
+        remoteStatus: error.details.remoteStatus ?? null,
+      };
+    }
+    return { errorName: error.name };
+  }
+
+  private diagnostic(event: string, details: Record<string, unknown>): void {
+    try {
+      const log = this.options.logDiagnostic
+        ?? ((name: string, fields: Record<string, unknown>) => console.error(`[huskbox] ${name}`, fields));
+      log(event, {
+        ...details,
+        pid: process.pid,
+        uptimeSeconds: Math.round(process.uptime()),
+        memory: process.memoryUsage(),
+      });
+    } catch {
+      // Diagnostics must never alter execution behavior.
+    }
+  }
+
   private fail(error: Error): void {
+    this.diagnostic('execution_failed', {
+      executionId: this.executionId || null,
+      ...this.errorDiagnostic(error),
+    });
     this.rejectStarted(error);
     this.stderrSink.write(`od-agent huskbox: ${error.message}\n`);
     this.finish({ exitCode: DEFAULT_FAILURE_EXIT, signal: null, error });

@@ -1,9 +1,12 @@
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Server } from 'node:http';
 import {
   createDaemonRuntimeStop,
   createDaemonSignalStop,
+  daemonProcessDiagnosticSnapshot,
+  installDaemonProcessDiagnostics,
   parseDaemonCliStartupArgs,
 } from '../src/daemon-startup.js';
 
@@ -84,6 +87,31 @@ describe('daemon runtime shutdown ordering', () => {
 
     expect(process.exitCode).toBe(0);
     process.exitCode = previousExitCode;
+  });
+
+  it('records process resources and server lifecycle without changing behavior', () => {
+    const server = Object.assign(new EventEmitter(), { listening: true }) as unknown as Server;
+    const log = vi.fn();
+    const dispose = installDaemonProcessDiagnostics(server, log);
+
+    const snapshot = daemonProcessDiagnosticSnapshot(server);
+    expect(snapshot).toMatchObject({
+      pid: process.pid,
+      serverListening: true,
+      memory: expect.any(Object),
+      activeResources: expect.any(Object),
+    });
+
+    server.emit('close');
+    expect(log).toHaveBeenCalledWith(
+      '[od] HTTP server close event',
+      expect.objectContaining({ serverListening: true, pid: process.pid }),
+    );
+
+    dispose();
+    log.mockClear();
+    server.emit('close');
+    expect(log).not.toHaveBeenCalled();
   });
 
   it('propagates a graceful service barrier failure after HTTP drain', async () => {
