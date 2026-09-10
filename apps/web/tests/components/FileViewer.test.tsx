@@ -7693,19 +7693,25 @@ describe('FileViewer tweaks toolbar', () => {
     expect((screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement).srcdoc).toBe(frame.srcdoc);
   });
 
-  it('uses the cookie-free signed base for relative srcDoc assets when a raw token is available', async () => {
+  it('renders ordinary relative assets through the cookie-free signed srcDoc base', async () => {
+    const projectId = 'relative-assets-project';
     const file = htmlPreviewFile({ name: 'brand.html', path: 'brand.html' });
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/api/projects/project-1/raw-token')) {
+      if (url.includes(`/api/projects/${projectId}/files`)) {
+        return new Response(JSON.stringify({
+          files: [{ name: 'brand.html' }, { name: 'assets/linkflow-waterfall-hero.png' }],
+        }), { status: 200 });
+      }
+      if (url.includes(`/api/projects/${projectId}/raw-token`)) {
         return new Response(JSON.stringify({
           token: 'test-token',
           exp: Math.floor(Date.now() / 1000) + 3600,
         }), { status: 200 });
       }
-      if (url.includes('/api/projects/project-1/preview-url')) {
+      if (url.includes(`/api/projects/${projectId}/preview-url`)) {
         return new Response(JSON.stringify({
-          url: '/api/projects/project-1/preview/scope-1/brand.html',
+          url: `/api/projects/${projectId}/preview/scope-1/brand.html`,
           file: 'brand.html',
           csp: "default-src 'none'",
           iframeSandbox: 'allow-scripts allow-forms',
@@ -7718,10 +7724,10 @@ describe('FileViewer tweaks toolbar', () => {
 
     render(
       <FileViewer
-        projectId="project-1"
+        projectId={projectId}
         projectKind="prototype"
         file={file}
-        liveHtml='<!doctype html><html><body><script>location.reload()</script><img src="assets/monday-meeting.png"></body></html>'
+        liveHtml='<!doctype html><html><body><img src="assets/linkflow-waterfall-hero.png"></body></html>'
       />,
     );
 
@@ -7729,11 +7735,11 @@ describe('FileViewer tweaks toolbar', () => {
       const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
       expect(frame.srcdoc).toContain(
-        '<base href="/raw-signed/test-token/project-1/">',
+        `<base href="/raw-signed/test-token/${projectId}/">`,
       );
-      expect(frame.srcdoc).toContain('src="assets/monday-meeting.png"');
+      expect(frame.srcdoc).toContain('src="assets/linkflow-waterfall-hero.png"');
       expect(frame.srcdoc).not.toContain(
-        '<base href="/api/projects/project-1/preview/scope-1/">',
+        `<base href="/api/projects/${projectId}/preview/scope-1/">`,
       );
     });
   });

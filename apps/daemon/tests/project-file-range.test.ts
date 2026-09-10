@@ -198,6 +198,12 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       Buffer.from(`<!doctype html><html><body>${'x'.repeat((2 * 1024 * 1024) + 256)}<script>new Worker("worker.js")</script></body></html>`),
     );
     await writeFile(path.join(dir, 'body.html'), Buffer.from('<html><body><main>Preview</main></body></html>'));
+    await mkdir(path.join(dir, 'assets'), { recursive: true });
+    await writeFile(path.join(dir, 'assets', 'linkflow-waterfall-hero.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await writeFile(
+      path.join(dir, 'relative-asset.html'),
+      Buffer.from('<html><body><img src="assets/linkflow-waterfall-hero.png"></body></html>'),
+    );
     await writeFile(
       path.join(dir, 'contained.html'),
       Buffer.from('<html><head><style>@import "/styles/theme.css";.hero{background:url(/images/hero.png)}</style></head><body>'
@@ -409,6 +415,23 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('href="//example.com"');
     expect(html).toContain('href="/api/status"');
     expect(html).toContain('const sample = \'href="/do-not-rewrite.html"\';');
+  });
+
+  it('serves ordinary relative assets through the injected detail-preview base', async () => {
+    const res = await fetch(`${rawUrl('relative-asset.html')}?odPreviewBridge=scroll`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const root = html.match(/\/preview-assets\/projects\/[^/]+\/preview\/[^/]+\//)?.[0];
+    expect(root).toBeTruthy();
+    expect(html).toContain(`<base href="${root}">`);
+    expect(html).toContain('src="assets/linkflow-waterfall-hero.png"');
+
+    const asset = await fetch(`${baseUrl}${root}assets/linkflow-waterfall-hero.png`, {
+      headers: { Origin: 'null' },
+    });
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get('content-type')).toContain('image/png');
+    expect(Buffer.from(await asset.arrayBuffer())).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   });
 
   it('respects an authored base URL in URL-load previews', async () => {

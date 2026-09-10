@@ -10001,6 +10001,14 @@ function HtmlViewer({
     () => source != null && htmlHasRootRelativeProjectAssetRefs(source, projectFilePathSet),
     [source, projectFilePathSet],
   );
+  const confirmedRelativeProjectAssetRefs = useMemo(
+    () => (
+      source != null
+      && projectFilePathSet != null
+      && htmlHasRelativeProjectAssetRefs(source, file.name, projectFilePathSet)
+    ),
+    [file.name, projectFilePathSet, source],
+  );
   useEffect(() => {
     if (!workspaceActive) return;
     setPreviewAssetWarning(null);
@@ -10088,7 +10096,11 @@ function HtmlViewer({
     forceInline: (forceInline || needsSandboxShim) && !needsPowered,
     needsFocusGuard: needsFocusGuard && !needsPowered,
     needsRedirectGuard: needsRedirectGuard && !needsPowered,
-    projectRootAssetRefs: projectRootAssetRefs || scopedRelativeAssetRefs,
+    // Keep authored relative assets on the same signed srcDoc transport used by
+    // thumbnails. URL-load otherwise hands them to the daemon's separate
+    // preview-scope proxy path, so the detail view can lose assets that the
+    // thumbnail already rendered successfully.
+    projectRootAssetRefs: projectRootAssetRefs || scopedRelativeAssetRefs || confirmedRelativeProjectAssetRefs,
   };
   const useUrlLoadPreview = shouldUrlLoadHtmlPreview(urlLoadDecision) && !manualEditRequiresSrcDoc;
   const setSrcDocPreviewIframe = useCallback((frame: HTMLIFrameElement | null) => {
