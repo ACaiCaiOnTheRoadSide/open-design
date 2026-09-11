@@ -154,6 +154,55 @@ describe('AssistantMessage feedback gate', () => {
     expect(screen.queryByRole('button', { name: 'Create plugin/template' })).toBeNull();
   });
 
+  it('renders leaked internal title content without its markup', () => {
+    const message = baseMessage({
+      content: '<od-title>生成奶牛猫图片</od-title>\n图片已经生成。',
+      events: [
+        {
+          kind: 'text',
+          text: '<od-title>生成奶牛猫图片</od-title>\n图片已经生成。',
+        } as ChatMessage['events'][number],
+      ],
+    });
+
+    const { container } = render(
+      <AssistantMessage
+        message={message}
+        streaming={false}
+        projectId="proj-1"
+      />,
+    );
+
+    expect(container.textContent).not.toContain('<od-title>');
+    expect(container.textContent).not.toContain('</od-title>');
+    expect(container.textContent).toContain('生成奶牛猫图片');
+    expect(container.textContent).toContain('图片已经生成。');
+  });
+
+  it('renders leaked internal tag content in live thinking without its markup', () => {
+    const message = baseMessage({
+      content: '',
+      runStatus: undefined,
+      events: [
+        {
+          kind: 'thinking',
+          text: '<od-title>生成奶牛猫图片</od-title>',
+        } as ChatMessage['events'][number],
+      ],
+    });
+
+    const { container } = render(
+      <AssistantMessage
+        message={message}
+        streaming
+        projectId="proj-1"
+      />,
+    );
+
+    expect(container.textContent).not.toContain('<od-title>');
+    expect(container.textContent).toContain('生成奶牛猫图片');
+  });
+
   it('omits the repeated identity header for a consecutive assistant reply', () => {
     const { container } = render(
       <AssistantMessage

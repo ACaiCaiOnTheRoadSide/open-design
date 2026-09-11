@@ -74,6 +74,7 @@ import {
   type VisualStyleContext,
 } from "../runtime/visual-style-catalog";
 import { splitStreamingArtifact, stripArtifact, stripRecoveredHtmlFallbackForDisplay } from "../artifacts/strip";
+import { stripInternalControlTags } from "../runtime/internal-control-tags";
 import { BRAND_BROWSER_TAB_ID } from "../runtime/brand-browser-bridge";
 import {
   getPluginFolderCandidates,
@@ -2641,9 +2642,9 @@ function ProseBlock({
 }) {
   const t = useT();
   const cleaned = useMemo(() => {
-    const stripped = stripArtifact(text);
+    const stripped = stripInternalControlTags(stripArtifact(text), isLastAssistant && streaming);
     return hideRecoveredHtmlFallback ? stripRecoveredHtmlFallbackForDisplay(stripped, text) : stripped;
-  }, [hideRecoveredHtmlFallback, text]);
+  }, [hideRecoveredHtmlFallback, isLastAssistant, streaming, text]);
   // While the latest turn is still streaming a not-yet-closed question-form,
   // drop the partial `<question-form>{…` markup from the prose so the chat
   // doesn't flash raw JSON; an inline loading frame takes its place. A not-yet-closed
@@ -3383,7 +3384,7 @@ function SystemReminderBlock({
 }
 
 function LiveThinkingLine({ text }: { text: string }) {
-  const preview = text.replace(/\s+/g, " ").trim().slice(-240);
+  const preview = stripInternalControlTags(text, true).replace(/\s+/g, " ").trim().slice(-240);
   if (!preview) return null;
   return (
     <div
@@ -3434,6 +3435,7 @@ function ThinkingBlock({
     : elapsedSec != null
       ? t("assistant.thoughtFor", { s: elapsedSec })
       : t("assistant.thought");
+  const visibleText = stripInternalControlTags(text, isThinking);
   return (
     <div className="thinking-block">
       <button className="thinking-toggle" onClick={() => setOpen((o) => !o)}>
@@ -3452,7 +3454,7 @@ function ThinkingBlock({
       </button>
       <div className={`accordion-collapsible${open ? ' open' : ''}`}>
         <div className="accordion-collapsible-inner">
-          <div className="thinking-body">{renderMarkdown(text, { onLinkClick })}</div>
+          <div className="thinking-body">{renderMarkdown(visibleText, { onLinkClick })}</div>
         </div>
       </div>
     </div>
