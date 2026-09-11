@@ -2876,7 +2876,7 @@ function AppInner() {
       const kind = metadata?.kind ?? null;
       const fidelity = fidelityToTracking(metadata?.fidelity ?? null);
       const creationSource: 'blank' | 'template' | 'zip' | 'folder' =
-        input.templateHandoff || input.templateArchive || kind === 'template' ? 'template' : 'blank';
+        input.templateHandoff || input.templateArchive || metadata?.templateId || kind === 'template' ? 'template' : 'blank';
       let createWorkspaceContext: WorkspaceCollabContext | null = null;
       let optimisticProjectId: string | null = null;
       let result;

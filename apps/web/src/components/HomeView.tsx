@@ -120,8 +120,13 @@ import {
   downloadOhMyInspireTemplate,
   fetchOhMyInspireTemplateDetail,
   OhMyInspireCatalogError,
+  ohMyInspireTemplateGenerationPrompt,
+  ohMyInspireTemplateHasArchive,
+  ohMyInspireTemplateProjectKind,
   ohMyInspireTemplateTitle,
+  withOhMyInspireTemplateBrief,
   type OhMyInspireCatalogTemplate,
+  type OhMyInspireCatalogTemplateDetail,
 } from '../runtime/ohmy-inspire-catalog';
 import { confirm } from './confirm-dialog-host';
 import { navigate } from '../router';
@@ -642,7 +647,7 @@ export function HomeView({
   const [selectedTemplateTitle, setSelectedTemplateTitle] = useState<string | null>(
     () => templateHandoff?.templateId ?? null,
   );
-  const [selectedCatalogTemplate, setSelectedCatalogTemplate] = useState<{ id: string } | null>(null);
+  const [selectedCatalogTemplate, setSelectedCatalogTemplate] = useState<OhMyInspireCatalogTemplateDetail | null>(null);
   // A placeholder-carousel scenario submitted on an empty composer. Seed
   // first, then submit after state has committed.
   const [pendingCarouselSubmit, setPendingCarouselSubmit] = useState<{
@@ -2392,9 +2397,17 @@ export function HomeView({
       setPendingApplyId(null);
       setFallbackProjectKind(null);
       setFallbackProjectMetadata(null);
+      const hasArchive = ohMyInspireTemplateHasArchive(detail);
+      const generationPrompt = ohMyInspireTemplateGenerationPrompt(detail);
+      if (!hasArchive && !generationPrompt) {
+        throw new Error(locale.startsWith('zh')
+          ? '该模板既没有可下载归档，也没有可用的生成提示词。'
+          : 'This template has neither a downloadable archive nor a generation prompt.');
+      }
       setTemplateHandoff(null);
-      setSelectedCatalogTemplate({ id: detail.id });
+      setSelectedCatalogTemplate(detail);
       setSelectedTemplateTitle(ohMyInspireTemplateTitle(detail, locale));
+      setFallbackProjectKind(hasArchive ? null : ohMyInspireTemplateProjectKind(detail));
       setPromptEditedByUser(false);
       setError(null);
       focusPromptAtEnd();
@@ -2897,7 +2910,10 @@ export function HomeView({
           ? examplePromptInfoRef.current
           : null;
       let templateArchiveForSubmit: PluginLoopSubmit['templateArchive'] = null;
-      if (selectedCatalogTemplate) {
+      const selectedTemplateHasArchive = selectedCatalogTemplate
+        ? ohMyInspireTemplateHasArchive(selectedCatalogTemplate)
+        : false;
+      if (selectedCatalogTemplate && selectedTemplateHasArchive) {
         try {
           let archive: Blob;
           try {
@@ -2932,8 +2948,14 @@ export function HomeView({
           return;
         }
       }
+      const selectedTemplatePrompt = selectedCatalogTemplate && !selectedTemplateHasArchive
+        ? ohMyInspireTemplateGenerationPrompt(selectedCatalogTemplate)
+        : null;
+      const promptForSubmit = selectedTemplatePrompt
+        ? withOhMyInspireTemplateBrief(trimmed, selectedTemplatePrompt)
+        : trimmed;
       const accepted = await onSubmit({
-        prompt: trimmed,
+        prompt: promptForSubmit,
         pluginId: routedPluginId,
         ...(submittedActive?.record.source
           ? { pluginSource: submittedActive.record.source }
@@ -2949,6 +2971,7 @@ export function HomeView({
             }
           : {}),
         ...(templateArchiveForSubmit ? { templateArchive: templateArchiveForSubmit } : {}),
+        ...(selectedCatalogTemplate ? { templateId: selectedCatalogTemplate.id } : {}),
         ...(resolvedSkillId && activeSkillCatalogScope
           ? { skillCatalogScope: activeSkillCatalogScope }
           : resolvedSkillId && lastSettledLocalCatalogScopeRef.current
@@ -3135,6 +3158,7 @@ export function HomeView({
           setTemplateHandoff(null);
           setSelectedCatalogTemplate(null);
           setSelectedTemplateTitle(null);
+          setFallbackProjectKind(null);
         }}
         selectedPluginContexts={selectedPluginContexts.map((item) => item.record)}
         selectedMcpContexts={selectedMcpContexts.map((item) => item.server)}

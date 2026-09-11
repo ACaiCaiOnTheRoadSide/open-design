@@ -7,6 +7,10 @@ import {
   isOhMyInspireHandoffUrl,
   ohMyInspireCatalogPreviewUrl,
   ohMyInspirePreviewMayAnimate,
+  ohMyInspireTemplateGenerationPrompt,
+  ohMyInspireTemplateHasArchive,
+  ohMyInspireTemplateProjectKind,
+  withOhMyInspireTemplateBrief,
 } from '../../src/runtime/ohmy-inspire-catalog';
 
 describe('OhMyInspire catalog client', () => {
@@ -97,6 +101,39 @@ describe('OhMyInspire catalog client', () => {
       description: '',
       preview: { type: 'image', path: 'preview.png' },
     })).toBe(false);
+  });
+
+  it('routes prompt-only media templates without trying to download an archive', () => {
+    const template = {
+      id: 'gpt-image-2-544',
+      name: 'Vocabulary card',
+      description: 'Fallback description',
+      mode: 'image',
+      examplePrompt: 'Generate the selected image treatment.',
+      download_url: '',
+    };
+
+    expect(ohMyInspireTemplateHasArchive(template)).toBe(false);
+    expect(ohMyInspireTemplateProjectKind(template)).toBe('image');
+    expect(ohMyInspireTemplateGenerationPrompt(template)).toBe('Generate the selected image treatment.');
+    expect(withOhMyInspireTemplateBrief('Use an apple.', template.examplePrompt)).toBe(
+      'Use an apple.\n\nSelected template brief:\nGenerate the selected image treatment.',
+    );
+  });
+
+  it('keeps downloadable video templates on the archive path', () => {
+    const template = {
+      id: 'video-template',
+      name: 'Video template',
+      description: 'Video treatment',
+      mode: 'video',
+      examplePrompt: 'Create a cinematic video.',
+      download_url: '/openapi/v1/catalog/templates/video-template/download',
+    };
+
+    expect(ohMyInspireTemplateHasArchive(template)).toBe(true);
+    expect(ohMyInspireTemplateProjectKind(template)).toBe('video');
+    expect(ohMyInspireTemplateHasArchive({ ...template, download_url: '' })).toBe(false);
   });
 
   it('downloads through the backend and sends explicit charge confirmation only after consent', async () => {

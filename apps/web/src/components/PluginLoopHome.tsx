@@ -40,6 +40,7 @@ export interface PluginLoopSubmit {
   skillCatalogScope?: LocalCatalogScope | null;
   templateHandoff?: { sourceUrl: string; templateId: string | null } | null;
   templateArchive?: { archive: Blob; templateId: string } | null;
+  templateId?: string | null;
   appliedPluginSnapshotId: string | null;
   pluginTitle: string | null;
   taskKind: string | null;

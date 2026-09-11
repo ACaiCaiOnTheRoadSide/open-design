@@ -1424,8 +1424,8 @@ export function EntryShell({
         examplePromptTitle: payload.examplePromptContext.title,
         examplePromptBrief: payload.examplePromptContext.brief,
       } : {}),
-      ...(payload.templateHandoff?.templateId || payload.templateArchive?.templateId
-        ? { templateId: payload.templateHandoff?.templateId ?? payload.templateArchive?.templateId }
+      ...(payload.templateId || payload.templateHandoff?.templateId || payload.templateArchive?.templateId
+        ? { templateId: payload.templateId ?? payload.templateHandoff?.templateId ?? payload.templateArchive?.templateId }
         : {}),
     };
     const createInput: EntryCreateProjectInput = {

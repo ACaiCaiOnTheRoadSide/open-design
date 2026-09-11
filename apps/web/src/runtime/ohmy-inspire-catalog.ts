@@ -19,7 +19,13 @@ export interface OhMyInspireCatalogTemplate {
 }
 
 export interface OhMyInspireCatalogTemplateDetail extends OhMyInspireCatalogTemplate {
+  examplePrompt?: string;
   download_url?: string;
+  download?: {
+    root?: string;
+    size?: number;
+    sha256?: string;
+  };
 }
 
 type CatalogEnvelope<T> = {
@@ -105,6 +111,35 @@ export function fetchOhMyInspireTemplateDetail(
     `/templates/${encodeURIComponent(id)}`,
     signal,
   );
+}
+
+export function ohMyInspireTemplateHasArchive(
+  template: OhMyInspireCatalogTemplateDetail,
+): boolean {
+  return Boolean(template.download_url?.trim());
+}
+
+export function ohMyInspireTemplateGenerationPrompt(
+  template: OhMyInspireCatalogTemplateDetail,
+): string | null {
+  const prompt = template.examplePrompt?.trim() || template.description?.trim();
+  return prompt || null;
+}
+
+export function ohMyInspireTemplateProjectKind(
+  template: OhMyInspireCatalogTemplateDetail,
+): 'image' | 'video' | 'audio' | null {
+  const mode = template.mode?.trim().toLowerCase();
+  return mode === 'image' || mode === 'video' || mode === 'audio' ? mode : null;
+}
+
+export function withOhMyInspireTemplateBrief(userPrompt: string, templatePrompt: string): string {
+  const userBrief = userPrompt.trim();
+  const selectedTemplateBrief = templatePrompt.trim();
+  if (!selectedTemplateBrief) return userBrief;
+  return userBrief
+    ? `${userBrief}\n\nSelected template brief:\n${selectedTemplateBrief}`
+    : selectedTemplateBrief;
 }
 
 export async function downloadOhMyInspireTemplate(
