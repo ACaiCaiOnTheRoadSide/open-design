@@ -125,7 +125,7 @@ describe('HomeView media composer options', () => {
     expect(document.body.contains(popover)).toBe(true);
   });
 
-  it('hides native visual templates while retaining Audio and the persistent design-system picker', async () => {
+  it('exposes Image, Video, and HyperFrames in the type picker', async () => {
     stubFetch();
     renderHome();
 
@@ -133,21 +133,21 @@ describe('HomeView media composer options', () => {
     const trigger = await screen.findByTestId('home-hero-template-trigger');
     await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(trigger);
-    expect(screen.queryByTestId('home-hero-template-wedge-image')).toBeNull();
-    expect(screen.queryByTestId('home-hero-template-wedge-video')).toBeNull();
-    expect(screen.queryByTestId('home-hero-template-wedge-hyperframes')).toBeNull();
+    expect(screen.getByTestId('home-hero-template-wedge-image')).toBeTruthy();
+    expect(screen.getByTestId('home-hero-template-wedge-video')).toBeTruthy();
+    expect(screen.getByTestId('home-hero-template-wedge-hyperframes')).toBeTruthy();
     expect(screen.getByTestId('home-hero-template-wedge-audio')).toBeTruthy();
     expect(screen.getByTestId('home-hero-template-wedge-prototype')).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId('home-hero-template-wedge-audio'));
-    await waitFor(() => expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Audio'));
-    expect(promptIsEmpty()).toBe(true);
-    expect(screen.queryByTestId('home-hero-footer-option-model')).toBeNull();
-    expect(screen.queryByTestId('home-hero-footer-option-ratio')).toBeNull();
-    expect(screen.queryByTestId('home-hero-footer-option-duration')).toBeNull();
+    fireEvent.click(screen.getByTestId('home-hero-template-wedge-image'));
+    await waitFor(() => expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Image'));
+    await clickHomeRailChip('video');
+    await waitFor(() => expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Video'));
+    await clickHomeRailChip('hyperframes');
+    await waitFor(() => expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('HyperFrames'));
   });
 
-  it('falls a persisted hidden visual draft back to the default Prototype design', async () => {
+  it('restores a persisted Image selection instead of falling back to Prototype', async () => {
     window.localStorage.setItem(
       'open-design:home-composer:chip',
       JSON.stringify({ chipId: 'image', pluginId: 'od-media-generation', projectKind: 'image' }),
@@ -156,9 +156,8 @@ describe('HomeView media composer options', () => {
     renderHome();
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Image');
     });
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).not.toContain('Image');
   });
 
   it('falls a persisted untyped native media draft back to Prototype', async () => {
@@ -172,7 +171,6 @@ describe('HomeView media composer options', () => {
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).not.toContain('Image');
   });
 
   it('falls an untyped native media plugin handoff back to Prototype', async () => {
@@ -184,7 +182,25 @@ describe('HomeView media composer options', () => {
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
     });
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).not.toContain('Image');
+  });
+
+  it.each([
+    ['image', 'Image'],
+    ['video', 'Video'],
+  ] as const)('switches to %s when a native visual template is handed off', async (kind, label) => {
+    stubFetch();
+    renderHome({
+      promptHandoff: createPluginUseHandoff(1, 'od-media-generation', {
+        action: 'use',
+        chipId: kind,
+        projectKind: kind,
+        inputs: { mediaKind: kind },
+      }),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain(label);
+    });
   });
 
   it('preserves non-native visual plugin handoffs from Community', async () => {

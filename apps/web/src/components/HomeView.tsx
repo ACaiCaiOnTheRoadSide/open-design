@@ -335,21 +335,13 @@ const EMPTY_DESIGN_SYSTEMS: DesignSystemSummary[] = [];
 const EMPTY_SKILLS: SkillSummary[] = [];
 const EMPTY_CONNECTORS: ConnectorDetail[] = [];
 const EMPTY_PROMPT_TEMPLATES: PromptTemplateSummary[] = [];
-const HIDDEN_NATIVE_VISUAL_CHIP_IDS = ['image', 'video', 'hyperframes'] as const;
-const HIDDEN_NATIVE_VISUAL_PLUGIN_IDS = new Set(['od-media-generation', 'example-hyperframes']);
 
-function isHiddenNativeVisualPluginSelection(
+function isUntypedNativeMediaSelection(
   pluginId: string,
   chipId: string | null | undefined,
   projectKind: ProjectKind | null | undefined,
-  mediaKind?: string | null,
 ): boolean {
-  if (!HIDDEN_NATIVE_VISUAL_PLUGIN_IDS.has(pluginId)) return false;
-  if (pluginId === 'example-hyperframes') return true;
-  if (HIDDEN_NATIVE_VISUAL_CHIP_IDS.some((id) => id === chipId)) return true;
-  if (projectKind === 'image' || projectKind === 'video') return true;
-  if (chipId === 'audio' || projectKind === 'audio') return mediaKind != null && mediaKind !== 'audio';
-  return mediaKind !== 'audio';
+  return pluginId === 'od-media-generation' && chipId == null && projectKind == null;
 }
 
 function defaultDesignChipDraft(): HomeComposerChipDraft | null {
@@ -470,7 +462,7 @@ function readHomeComposerChipDraft(): HomeComposerChipDraft | null {
       projectKind: typeof parsed.projectKind === 'string' ? (parsed.projectKind as ProjectKind) : null,
       prototypeSubtypeId: parsedPrototypeSubtype?.slug ?? legacyPrototypeSubtype?.slug ?? null,
     };
-    return isHiddenNativeVisualPluginSelection(draft.pluginId, draft.chipId, draft.projectKind)
+    return isUntypedNativeMediaSelection(draft.pluginId, draft.chipId, draft.projectKind)
       ? defaultDesignChipDraft()
       : draft;
   } catch {
@@ -1128,14 +1120,10 @@ export function HomeView({
     consumedHandoffIdRef.current = promptHandoff.id;
     setError(null);
     if (promptHandoff.source === 'plugin-use') {
-      const handoffMediaKind = typeof promptHandoff.inputs?.mediaKind === 'string'
-        ? promptHandoff.inputs.mediaKind
-        : null;
-      const fallbackDraft = isHiddenNativeVisualPluginSelection(
+      const fallbackDraft = isUntypedNativeMediaSelection(
         promptHandoff.pluginId,
         promptHandoff.chipId,
         promptHandoff.projectKind,
-        handoffMediaKind,
       )
         ? defaultDesignChipDraft()
         : null;
@@ -2407,7 +2395,7 @@ export function HomeView({
       setTemplateHandoff(null);
       setSelectedCatalogTemplate(detail);
       setSelectedTemplateTitle(ohMyInspireTemplateTitle(detail, locale));
-      setFallbackProjectKind(hasArchive ? null : ohMyInspireTemplateProjectKind(detail));
+      setFallbackProjectKind(ohMyInspireTemplateProjectKind(detail));
       setPromptEditedByUser(false);
       setError(null);
       focusPromptAtEnd();
@@ -3144,8 +3132,9 @@ export function HomeView({
         activeSkillTitle={activeSkill ? localizeSkillName(locale, activeSkill) : null}
         activeTemplateTitle={selectedTemplateTitle}
         activeSkillRecord={activeSkill}
-        activeChipId={active?.chipId ?? null}
-        hiddenTemplateChipIds={HIDDEN_NATIVE_VISUAL_CHIP_IDS}
+        activeChipId={active?.chipId ?? (
+          selectedCatalogTemplate ? ohMyInspireTemplateProjectKind(selectedCatalogTemplate) : null
+        )}
         activePrototypeSubtypeId={active?.prototypeSubtypeId ?? null}
         showActivePluginChip={showActivePluginChip}
         onClearActivePlugin={clearActivePlugin}
