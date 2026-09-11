@@ -1,3 +1,6 @@
+import { localizePromptTemplateSummary } from '../i18n/content';
+import type { Locale } from '../i18n/types';
+
 export interface OhMyInspireCatalogTemplate {
   id: string;
   name: string;
@@ -193,9 +196,22 @@ export function ohMyInspireTemplateTitle(template: OhMyInspireCatalogTemplate, l
   return template.localizedName?.en?.trim() || template.name;
 }
 
-export function ohMyInspireTemplateDescription(template: OhMyInspireCatalogTemplate, locale: string): string {
-  if (locale.startsWith('zh')) return template.localizedDescription?.zh?.trim() || template.description;
-  return template.localizedDescription?.en?.trim() || template.description;
+export function ohMyInspireTemplateDescription(
+  template: OhMyInspireCatalogTemplate,
+  locale: Locale,
+): string {
+  const language = locale.startsWith('zh') ? 'zh' : 'en';
+  const description = template.localizedDescription?.[language]?.trim() || template.description;
+  if (template.mode !== 'image' && template.mode !== 'video') return description;
+
+  return localizePromptTemplateSummary(locale, {
+    id: template.id,
+    surface: template.mode,
+    title: ohMyInspireTemplateTitle(template, locale),
+    summary: description,
+    category: template.category ?? '',
+    source: { repo: 'ohmyinspire', license: '' },
+  }).summary;
 }
 
 export function isOhMyInspireHandoffUrl(value: string | undefined): value is string {

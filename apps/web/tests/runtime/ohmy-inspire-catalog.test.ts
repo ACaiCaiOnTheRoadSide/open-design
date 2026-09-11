@@ -7,6 +7,7 @@ import {
   isOhMyInspireHandoffUrl,
   ohMyInspireCatalogPreviewUrl,
   ohMyInspirePreviewMayAnimate,
+  ohMyInspireTemplateDescription,
   ohMyInspireTemplateGenerationPrompt,
   ohMyInspireTemplateHasArchive,
   ohMyInspireTemplateProjectKind,
@@ -101,6 +102,20 @@ describe('OhMyInspire catalog client', () => {
       description: '',
       preview: { type: 'image', path: 'preview.png' },
     })).toBe(false);
+  });
+
+  it('uses the selected locale for a remote template prompt', () => {
+    const template = {
+      id: 'illustrated-city-food-map',
+      name: 'Illustrated city food map',
+      description: 'Generate a hand-drawn watercolor tourist map.',
+      mode: 'image',
+      category: 'map',
+    } as const;
+
+    expect(ohMyInspireTemplateDescription(template, 'zh-CN')).toContain('手绘');
+    expect(ohMyInspireTemplateDescription(template, 'fr')).toContain('Génère');
+    expect(ohMyInspireTemplateDescription(template, 'en')).toBe(template.description);
   });
 
   it('routes prompt-only media templates without trying to download an archive', () => {
