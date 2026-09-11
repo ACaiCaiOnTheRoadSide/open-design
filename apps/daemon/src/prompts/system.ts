@@ -1338,6 +1338,12 @@ export function renderConnectedExternalMcpDirective(
     })
     .filter((line): line is string => typeof line === 'string');
   if (lines.length === 0) return '';
+  const hasPreferredMediaMcp = connectedExternalMcp.some(
+    (server) => typeof server?.id === 'string' && server.id.trim() === 'media-mcp',
+  );
+  const mediaPriority = hasPreferredMediaMcp
+    ? 'For image and video generation, use the real tools exposed by `media-mcp` first. Only when the relevant `media-mcp` tool is unavailable or its call fails may you use another configured MCP server with equivalent image or video capability as a fallback. Do not skip `media-mcp` merely because another capable tool is available. This priority and fallback rule overrides earlier generic wording that says to stop after the first media-tool failure.\n\n'
+    : '';
   // No leading separator: callers place this in a `---`-joined slice.
   return [
     '## External MCP servers — available for this run\n\n',
@@ -1348,9 +1354,10 @@ export function renderConnectedExternalMcpDirective(
     'Tool discovery is runtime-managed, not a user setup step. Being listed here means a server was configured and injected, not that its handshake or tool discovery succeeded. If its real tools are already available, call them directly without connecting again.\n\n',
     'If tools are not visible and the runtime exposes ToolSearch, use ToolSearch with the exact server id to discover its tools before answering that they are unavailable. In OhMyAgent, a deferred helper named `mcp__<server>__connect` may be returned (replace <server> with the exact id above). Load and call that helper with `{}` when it is actually exposed, then inspect/search the newly loaded tool definitions. This helper belongs to the runtime, not the MCP server tools/list, and is not an OAuth/authentication tool. Do not invent a bare `connect` tool, HTTP endpoint, or user-facing Connect button. Other runtimes may expose the real tools directly and need no helper.\n\n',
     'When asked which tools or parameters are supported, perform discovery yourself and answer from the returned names, descriptions, and schemas. Do not stop at “connect first” or ask the user whether to load the tool list. Discovery does not authorize a paid generation or another side effect. If discovery or connection fails, or no real tool/helper is exposed, report that the tools could not be loaded; do not claim the server is connected or that its capabilities are verified.\n\n',
-    'For a media-generation request, inspect the real tools exposed by these servers. If one is capable, use it directly. Do not infer capability from a server name or hardcode a provider, tool, or model. Do not use the OpenDesign media dispatcher as a fallback.\n\n',
+    'For a media-generation request, inspect the real tools exposed by these servers. If one is capable, use it directly. Do not infer capability from a server name or hardcode a provider, tool, or model unless an explicit priority rule below names one. Do not use the OpenDesign media dispatcher as a fallback.\n\n',
+    mediaPriority,
     `${MEDIA_PROJECT_FILE_PERSISTENCE}\n\n`,
-    `If a real tool fails, stop and do not retry by invoking any \`*_authenticate\` tool. For media-generation failures, keep the exact tool name and raw error in the tool trace and follow the media user-facing completion contract; do not expose them in the visible reply. For non-media failures, report the exact tool name and error text.\n`,
+    `If a media tool fails, follow the media fallback order above when one is present, but do not retry by invoking any \`*_authenticate\` tool. If no fallback succeeds, keep the exact tool name and raw error in the tool trace and follow the media user-facing completion contract; do not expose them in the visible reply. For non-media failures, report the exact tool name and error text.\n`,
   ].join('');
 }
 

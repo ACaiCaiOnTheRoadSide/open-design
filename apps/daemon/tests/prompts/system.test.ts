@@ -595,12 +595,18 @@ describe('composeSystemPrompt', () => {
       expect(directive).toContain('Do not stop at “connect first”');
       expect(directive).toContain('Discovery does not authorize a paid generation');
       expect(directive).toContain('report that the tools could not be loaded');
+      expect(directive).toContain('use the real tools exposed by `media-mcp` first');
+      expect(directive).toContain('another configured MCP server with equivalent image or video capability as a fallback');
+      expect(directive).toContain('Do not skip `media-mcp`');
+      expect(directive).toContain('overrides earlier generic wording');
     });
 
-    it('uses the same discovery contract for media and other MCP servers', () => {
+    it('adds media priority only when media-mcp is configured', () => {
       const media = renderConnectedExternalMcpDirective([{ id: 'media-mcp' }]);
       const other = renderConnectedExternalMcpDirective([{ id: 'github' }]);
-      expect(media.replace('`media-mcp`', '`github`')).toBe(other);
+      expect(media).toContain('use the real tools exposed by `media-mcp` first');
+      expect(other).not.toContain('use the real tools exposed by `media-mcp` first');
+      expect(other).toContain('inspect the real tools exposed by these servers');
     });
 
     it('skips entries with blank ids and emits nothing when none remain', () => {
