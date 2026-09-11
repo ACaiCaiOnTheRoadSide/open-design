@@ -1,5 +1,7 @@
-ARG NODE_IMAGE=docker.io/library/node:24-alpine
-ARG RUNTIME_IMAGE=docker.io/library/node:24-alpine
+# Keep build and runtime on the same known-good Node release. Node 24.19+
+# regresses cleanup of ObjectWrap-based native addons such as node-pty.
+ARG NODE_IMAGE=docker.io/library/node:24.18.0-alpine
+ARG RUNTIME_IMAGE=docker.io/library/node:24.18.0-alpine
 
 FROM ${NODE_IMAGE} AS build
 
