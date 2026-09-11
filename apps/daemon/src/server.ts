@@ -10840,7 +10840,7 @@ export async function startServer({
     // managed SaaS never lets run metadata add or shadow operator MCP servers.
     const runScopedMcpServers = trustedRunScopedMcpServers(run?.toolBundle);
     const {
-      enabledServers: enabledExternalMcp,
+      enabledServers: resolvedExternalMcp,
       persistedTokenServerIds,
     } = resolveExternalMcpServersForRun({
       persistedServers: externalMcpConfig.servers,
@@ -10849,6 +10849,9 @@ export async function startServer({
       // sandbox rule that excludes untrusted locally persisted MCP entries.
       sandboxMode: SANDBOX_RUNTIME.enabled && !managedPlatformMcp,
     });
+    const enabledExternalMcp = resolvedExternalMcp.map((server) => server.id === 'media-mcp' && typeof projectId === 'string' && projectId
+      ? { ...server, headers: { ...(server.headers ?? {}), 'X-OD-Project-ID': projectId } }
+      : server);
     const oauthTokensForSpawn = {};
     if (persistedTokenServerIds.size > 0) {
       try {
