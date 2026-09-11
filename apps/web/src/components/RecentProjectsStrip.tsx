@@ -762,7 +762,7 @@ export function RecentProjectsStrip({
     const cover = selectProjectFileCover(files);
     if (cover?.kind !== 'html') return cover;
 
-    const src = projectCoverUrl(
+    const src = htmlProjectCoverUrl(
       project.id,
       cover.name,
       cover.mtime,
@@ -2731,12 +2731,19 @@ export function projectCover(
   if (override) {
     return {
       kind: override.kind,
-      src: projectCoverUrl(
-        project.id,
-        override.name,
-        override.mtime,
-        workspaceContext,
-      ),
+      src: override.kind === 'html'
+        ? htmlProjectCoverUrl(
+            project.id,
+            override.name,
+            override.mtime,
+            workspaceContext,
+          )
+        : projectCoverUrl(
+            project.id,
+            override.name,
+            override.mtime,
+            workspaceContext,
+          ),
       style,
       initial,
       name: override.name,
@@ -2753,9 +2760,36 @@ export function projectCover(
     );
     if (meta?.kind === 'image') return { kind: 'image', src, style, initial };
     if (meta?.kind === 'video') return { kind: 'video', src, style, initial };
-    if (/\.html?$/i.test(entry)) return { kind: 'html', src, style, initial, name: entry };
+    if (/\.html?$/i.test(entry)) {
+      return {
+        kind: 'html',
+        src: appendHtmlThumbnailPreviewMarker(src),
+        style,
+        initial,
+        name: entry,
+      };
+    }
   }
   return { kind: 'fallback', style, initial };
+}
+
+function htmlProjectCoverUrl(
+  projectId: string,
+  name: string,
+  version?: number,
+  workspaceContext?: WorkspaceCollabContext | null,
+): string {
+  return appendHtmlThumbnailPreviewMarker(
+    projectCoverUrl(projectId, name, version, workspaceContext),
+  );
+}
+
+function appendHtmlThumbnailPreviewMarker(url: string): string {
+  const separator = url.includes('?') ? '&' : '?';
+  // The daemon uses the presence of this marker to inject a project-scoped
+  // asset base and rewrite root-relative media URLs. No interactive preview
+  // bridge is requested for the non-interactive card thumbnail.
+  return `${url}${separator}odPreviewBridge=thumbnail`;
 }
 
 export type ProjectCategory =
