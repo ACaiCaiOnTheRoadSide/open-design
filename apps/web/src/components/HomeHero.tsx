@@ -1343,6 +1343,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
         const templatePrompt = ohMyInspireTemplateDescription(template, locale);
         onPromptChange(templatePrompt);
         editorRef.current?.setText(templatePrompt);
+        setTemplateLibraryExpanded(false);
         requestAnimationFrame(() => editorRef.current?.focus());
         triggerSendAttention();
       }
