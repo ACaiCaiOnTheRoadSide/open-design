@@ -3072,18 +3072,19 @@ export function HomeView({
     setTemplateRecommendations(result);
   }
 
-  function useTemplateRecommendation(recommendation: TemplateRecommendation) {
+  async function useTemplateRecommendation(recommendation: TemplateRecommendation) {
     if (recommendation.kind === 'design-system') {
       const system = designSystems.find((candidate) => candidate.id === recommendation.id);
       if (system) handleDesignSystemChange(system.id);
     } else {
-      const normalizedId = recommendation.id.replace(/^example-/, '');
-      const skill = skills.find((candidate) => (
-        candidate.id === recommendation.id
-        || candidate.id === normalizedId
-        || candidate.name === recommendation.name
-      ));
-      if (skill) useSkill(skill, prompt);
+      setTemplateRecommendLoading(true);
+      const applied = await useOhMyInspireTemplate({
+        id: recommendation.id,
+        name: recommendation.name,
+        description: recommendation.reason,
+      });
+      setTemplateRecommendLoading(false);
+      if (!applied) return;
     }
     setTemplateRecommendations(null);
   }

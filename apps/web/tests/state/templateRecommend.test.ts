@@ -30,6 +30,8 @@ describe('template recommendation client', () => {
     expect(result?.recommendations[0]?.id).toBe('landing');
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/templates/recommend', expect.objectContaining({
       method: 'POST',
+      credentials: 'include',
+      redirect: 'error',
       body: JSON.stringify({
         prompt: 'Build a landing page',
         surface: 'home',

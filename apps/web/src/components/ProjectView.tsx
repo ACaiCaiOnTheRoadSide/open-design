@@ -11182,7 +11182,6 @@ export function ProjectView({
           ) : null}
           {activeConversationId || conversationLoadError || emptyConversationReadOnlySettled ? (
             <ChatPane
-              templateRecommendEnabled
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}

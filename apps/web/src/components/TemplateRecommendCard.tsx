@@ -64,10 +64,9 @@ export function TemplateRecommendCard({
 
   if (!current) return null;
 
-  const previewSrc =
-    current.kind === 'design-template'
-      ? `/api/skills/${encodeURIComponent(current.id)}/example`
-      : null;
+  const previewSrc = current.preview_url?.startsWith('/api/v1/catalog/templates/')
+    ? current.preview_url
+    : null;
 
   const next = () => {
     if (index + 1 < recommendations.length) {
@@ -92,7 +91,7 @@ export function TemplateRecommendCard({
             className={styles.preview}
             src={previewSrc}
             title={displayName}
-            sandbox="allow-scripts allow-same-origin"
+            sandbox=""
             loading="lazy"
           />
         </div>

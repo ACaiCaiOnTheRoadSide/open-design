@@ -11,6 +11,7 @@ export interface TemplateRecommendation {
   plugin_group?: string;
   name: string;
   name_zh?: string;
+  preview_url?: string;
   reason: string;
   confidence: number;
 }
@@ -63,7 +64,9 @@ export async function recommendTemplates(
   try {
     const resp = await fetch('/api/v1/templates/recommend', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
         prompt: input.prompt,
         ...(input.surface ? { surface: input.surface } : {}),
