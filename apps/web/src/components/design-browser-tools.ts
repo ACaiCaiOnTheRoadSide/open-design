@@ -206,6 +206,10 @@ export const BROWSER_CAPTURE_PAGE_ARCHIVE_SCRIPT = `
   const resources = [];
   const seen = new Set();
   const add = (url, kind, meta) => {
+    // A page snapshot is used as design context, not as a full offline copy.
+    // In particular, importing every @font-face variant can pull hundreds of
+    // unrelated font files when the user only selected one image.
+    if (kind === 'font') return;
     const resolved = absoluteUrl(url);
     if (!resolved || seen.has(resolved)) return;
     seen.add(resolved);
