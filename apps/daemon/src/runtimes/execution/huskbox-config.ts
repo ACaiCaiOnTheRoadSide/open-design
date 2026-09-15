@@ -12,7 +12,7 @@ export interface HuskboxExecutionConfig {
   executionTimeoutSeconds?: number;
 }
 
-export const DEFAULT_HUSKBOX_IMAGE = 'acaicai123/ai-design-ohmyagent:f4348e7';
+export const DEFAULT_HUSKBOX_IMAGE = 'acaicai123/ai-design-ohmyagent:3f98e6d-ubuntu26.04';
 
 function positiveInteger(raw: string | undefined, fallback: number): number {
   const value = Number(raw);
