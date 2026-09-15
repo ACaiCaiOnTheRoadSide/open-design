@@ -243,6 +243,10 @@ export function htmlNeedsPoweredPreview(source: string | null | undefined): bool
   // cannot fetch; and threaded WASM needs SAB.
   if (/\bWebAssembly\s*\.\s*(?:instantiateStreaming|compileStreaming)\b/.test(source)) return true;
   if (/\.wasm\b/.test(source)) return true;
+  // Catalog USD viewers opt into powered preview because they stream a model and its
+  // adjacent textures. Detect the loader as a fallback when generated HTML drops the
+  // explicit meta marker.
+  if (/\bUSDLoader\b/.test(source)) return true;
   // WebGL2 / OffscreenCanvas / WebGPU — the modern rendering stack these
   // artifacts drive, usually from a worker.
   if (/getContext\s*\(\s*["'`]webgl2["'`]/.test(source)) return true;

@@ -359,6 +359,10 @@ describe('htmlNeedsPoweredPreview', () => {
     expect(htmlNeedsPoweredPreview('fetch("engine.wasm")')).toBe(true);
   });
 
+  it('matches USDLoader model previews when the explicit marker is missing', () => {
+    expect(htmlNeedsPoweredPreview('new USDLoader().loadAsync("./assets/model.usdc")')).toBe(true);
+  });
+
   it('matches WebGL2 / OffscreenCanvas / WebGPU', () => {
     expect(htmlNeedsPoweredPreview('canvas.getContext("webgl2")')).toBe(true);
     expect(htmlNeedsPoweredPreview("el.getContext('webgl2', {})")).toBe(true);

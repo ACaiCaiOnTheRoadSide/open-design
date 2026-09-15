@@ -5970,6 +5970,10 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     if (/\bimportScripts\s*\(/.test(source)) return true;
     if (/\bWebAssembly\s*\.\s*(?:instantiateStreaming|compileStreaming)\b/.test(source)) return true;
     if (/\.wasm\b/.test(source)) return true;
+    // Catalog USD previews stream a model plus adjacent textures and explicitly require
+    // powered preview. Keep them working when a generated entry accidentally drops the
+    // opt-in meta marker.
+    if (/\bUSDLoader\b/.test(source)) return true;
     if (/getContext\s*\(\s*["'`]webgl2["'`]/.test(source)) return true;
     if (/\bOffscreenCanvas\b/.test(source)) return true;
     if (/\bnavigator\s*\.\s*gpu\b/.test(source)) return true;
