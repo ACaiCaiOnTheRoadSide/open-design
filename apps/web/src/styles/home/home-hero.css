@@ -5363,6 +5363,10 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
     margin: 0;
     padding: 20px 14px 24px;
   }
+  .home-hero__template-sidebar,
+  .home-hero__template-backdrop {
+    display: none;
+  }
   .home-view::before,
   .home-view__pearl-fluid {
     border-radius: 0;
