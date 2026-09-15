@@ -5840,6 +5840,35 @@ body:has(> .home-view__pearl-fluid) .entry-shell {
   }
 }
 
+@media (min-width: 1800px) {
+  .home-view {
+    --home-wide-gutter: 64px;
+    --home-wide-panel-gap: 40px;
+    --home-wide-template-width: clamp(440px, 25vw, 560px);
+    --home-wide-template-half: clamp(220px, 12.5vw, 280px);
+
+    width: calc(100% - var(--home-wide-gutter) - var(--home-wide-gutter) - var(--home-wide-template-width) - var(--home-wide-panel-gap));
+    max-width: none;
+    transform: translateX(calc(var(--home-wide-template-half) + 20px));
+  }
+
+  .home-hero__title-block,
+  .home-hero__composer-card,
+  .home-view > .recent-projects {
+    width: 100%;
+    max-width: none;
+  }
+
+  .home-hero__template-sidebar {
+    left: calc(0px - var(--home-wide-template-width) - var(--home-wide-panel-gap));
+    width: var(--home-wide-template-width);
+  }
+
+  .home-hero__title-block {
+    transform: translateX(calc(0px - var(--home-wide-template-half) - 20px));
+  }
+}
+
 .home-hero__template-expand {
   appearance: none;
   display: none;
