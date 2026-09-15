@@ -5960,6 +5960,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   }
 
   function htmlHasPoweredPreviewSignal(source: string): boolean {
+    // Vite production entries contain only hashed script URLs, so their WebGL/Worker/WASM
+    // capabilities are invisible to this HTML-only scanner. Let generated artifacts opt
+    // into the existing isolated powered-preview transport without weakening ordinary
+    // preview CSPs.
+    if (/<meta\b(?=[^>]*\bname\s*=\s*["']od-powered-preview["'])(?=[^>]*\bcontent\s*=\s*["']required["'])[^>]*>/i.test(source)) return true;
     if (/\bSharedArrayBuffer\b/.test(source)) return true;
     if (/\bnew\s+(?:Worker|SharedWorker)\s*\(/.test(source)) return true;
     if (/\bimportScripts\s*\(/.test(source)) return true;

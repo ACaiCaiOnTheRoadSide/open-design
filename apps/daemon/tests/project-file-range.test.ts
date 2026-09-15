@@ -197,6 +197,10 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       path.join(dir, 'large-powered.html'),
       Buffer.from(`<!doctype html><html><body>${'x'.repeat((2 * 1024 * 1024) + 256)}<script>new Worker("worker.js")</script></body></html>`),
     );
+    await writeFile(
+      path.join(dir, 'opt-in-powered.html'),
+      Buffer.from('<!doctype html><html><head><meta content="required" name="od-powered-preview"></head><body><script type="module" src="/assets/app.js"></script></body></html>'),
+    );
     await writeFile(path.join(dir, 'body.html'), Buffer.from('<html><body><main>Preview</main></body></html>'));
     await mkdir(path.join(dir, 'assets'), { recursive: true });
     await writeFile(path.join(dir, 'assets', 'linkflow-waterfall-hero.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
@@ -337,6 +341,16 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(body.limit).toBe(1024);
     expect(body.mime).toContain('text/html');
     expect(body.poweredPreview.required).toBe(false);
+    expect(body.poweredPreview.complete).toBe(true);
+  });
+
+  it('honors an explicit powered-preview meta marker for bundled WebGL apps', async () => {
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/text-preview/opt-in-powered.html?limit=1024`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      poweredPreview: { required: boolean; complete: boolean };
+    };
+    expect(body.poweredPreview.required).toBe(true);
     expect(body.poweredPreview.complete).toBe(true);
   });
 
