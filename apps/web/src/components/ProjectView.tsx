@@ -1789,6 +1789,8 @@ export function buildShowcasePublishPrompt(clientId: string): string {
     'Publish this project to the showcase wall using the publish-website skill. ' +
     `The client_id for this project is "${clientId}" — use that exact value, do not run hostname. ` +
     'Follow the skill pipeline exactly. The whole project directory is the site root. ' +
+    'For every user choice or confirmation, emit one complete <question-form> JSON block as assistant text, then stop the turn. ' +
+    'Do not call the native question or AskUserQuestion tools, and do not print placeholder text for a pending question. ' +
     'For the final submission, execute the curl multipart POST specified in Step 8 directly. ' +
     'Do not call od publish, od deploy, or any command through OD_BIN for publishing. ' +
     'When publishing succeeds, give me the site_url on its own line as a plain clickable link and ' +

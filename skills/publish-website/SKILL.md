@@ -22,7 +22,7 @@ Start a new publishing pipeline only when both conditions below are met:
 1. In the **latest message**, the user explicitly gives a semantically equivalent instruction such as "publish / launch / publish-website / publish using the publish-website skill," and explicitly refers to this Skill.
 2. The instruction was **not** induced by a suggestion or follow-up question from the Skill or model itself during the conversation (for example, the model must not ask "Would you like to publish?" and then trigger based on the answer).
 
-There is one continuation exception: when the latest user turn is the host-returned answer to a `question` previously asked by this already-started pipeline, resume that same pipeline. Such an answer is **not** a new publish trigger and must not restart the Skill from Step 1.
+There is one continuation exception: when the latest user turn is the host-returned answer to a `<question-form>` previously emitted by this already-started pipeline, resume that same pipeline. Such an answer is **not** a new publish trigger and must not restart the Skill from Step 1.
 
 ### Strictly Prohibited Trigger Methods
 
@@ -33,14 +33,21 @@ There is one continuation exception: when the latest user turn is the host-retur
 
 ### Cross-turn Resume Contract (Hard Constraint)
 
-A native `question` answer arrives as a new user turn and may start a new agent run. Therefore, before executing any pipeline step on every run:
+A `<question-form>` answer arrives as a new user turn and may start a new agent run. Therefore, before executing any pipeline step on every run:
 
 1. Inspect the latest user turn and the available conversation transcript for answers to questions already asked by this `publish-website` pipeline.
 2. Restore every completed value and decision, including `client_id`, publishing target variables, compliance result, `kind`, static/backend confirmation, metadata, ticket choice, artifact state, and any explicit continuation/cancellation answer.
-3. Treat a host-rendered answered-question summary, a native tool answer/result, or an unambiguous plain-language reply to the immediately preceding question as authoritative. Match by the question/header meaning and selected option, not by one exact serialization format.
+3. Treat a host-rendered answered-question summary or an unambiguous plain-language reply to the immediately preceding form as authoritative. Match by the form/question meaning and selected option value, not by one exact serialization format.
 4. Continue from the first incomplete step. **Never restart at Step 1 and never ask an answered question again.**
 5. If the latest answer cancels publishing, stop immediately. If it answers the current question, apply it and continue without asking for confirmation of that same answer.
 6. When another question is needed, ask only that next unanswered question. The following run must restore all earlier answers using this contract.
+
+### OpenDesign Question UI Contract (Hard Constraint)
+
+- The interactive question mechanism is assistant-authored `<question-form>...</question-form>` markup. It is **not** a native tool call.
+- Never call `question`, `AskUserQuestion`, or `ask_user_question`. Never print pseudo-status placeholders such as `[question-form pending]`, `{docs}`, `[awaiting answer]`, or `Publish successful/failed`.
+- For each question step, emit one short localized introductory sentence followed by exactly one complete form whose body is valid JSON, then close `</question-form>` and **stop the turn**. Do not execute later pipeline steps until the answer returns in the next user turn.
+- Use stable English `id` and option `value` fields. Localize `title`, `description`, `label`, option `label`, `submitLabel`, `customLabel`, and `customPlaceholder` to the user's conversation language. Set `lang` to the matching BCP-47 tag.
 
 Examples:
 
@@ -101,30 +108,52 @@ hostname
 
 ## Step 1c - Choose the Publishing Target (Domestic / International Showcase)
 
-Before anything else, determine whether this pipeline already has an answered publishing-target question in the latest user turn or conversation transcript. If it does, restore the variables from the table below and continue immediately; **do not call `question` again and do not ask the user to reconfirm the selected label or domain**.
+Before anything else, determine whether this pipeline already has an answered publishing-target form in the latest user turn or conversation transcript. If it does, restore the variables from the table below and continue immediately; **do not emit the form again and do not ask the user to reconfirm the selected label or domain**.
 
 Only when no target answer exists, ask which showcase to publish to. This choice determines the API base domain used by every upload / status / recall call in this session, the showcase URL shown in the Step 2 warnings, and the package size limit. **Ask once per session; do not re-ask after its answer returns or on subsequent publications in the same session.**
 
-When the target is still unanswered, use the `question` tool, wording the prompt, options, and any confirmation/notice in the **user's primary conversation language** (the language the user has been using to communicate in this session). If the user is speaking English, ask in English; if Chinese, ask in Chinese. Do not switch to a language the user is not using. Use exactly the two semantic choices below—one domestic and one international—and do not emit duplicate aliases for the same target.
+When the target is still unanswered, emit the following `<question-form>`, localizing it to the **user's primary conversation language** (the language the user has been using to communicate in this session). If the user is speaking English, ask in English; if Chinese, ask in Chinese. Do not switch to a language the user is not using. Use exactly the two stable values below—one domestic and one international—and do not emit duplicate aliases for the same target.
 
 English:
 
-```
-question: Which showcase would you like to publish this application to?
-header: Publishing Target
-options:
-  - Mainland China (sc.monkeycode-ai.online)
-  - Global (monkeycode-ai.gallery)
+```xml
+<question-form id="publish-target" title="Publishing Target">
+{
+  "lang": "en",
+  "questions": [{
+    "id": "target",
+    "label": "Which showcase would you like to publish this application to?",
+    "type": "radio",
+    "required": true,
+    "allowCustom": false,
+    "options": [
+      { "label": "Mainland China (sc.monkeycode-ai.online)", "value": "domestic" },
+      { "label": "Global (monkeycode-ai.gallery)", "value": "international" }
+    ]
+  }]
+}
+</question-form>
 ```
 
 中文（当用户以中文交流时）：
 
-```
-question: 需要把本应用发布到哪里的作品集？
-header: 发布目标
-options:
-  - 中国大陆 (sc.monkeycode-ai.online)
-  - 全球 (monkeycode-ai.gallery)
+```xml
+<question-form id="publish-target" title="发布目标">
+{
+  "lang": "zh-CN",
+  "questions": [{
+    "id": "target",
+    "label": "需要把本应用发布到哪里的作品集？",
+    "type": "radio",
+    "required": true,
+    "allowCustom": false,
+    "options": [
+      { "label": "中国大陆 (sc.monkeycode-ai.online)", "value": "domestic" },
+      { "label": "全球 (monkeycode-ai.gallery)", "value": "international" }
+    ]
+  }]
+}
+</question-form>
 ```
 
 Record the following variables according to the user's choice; **every later step must reference these variables instead of hard-coded domains**:
@@ -200,7 +229,7 @@ After classifying the project as `static`, explicitly state the following platfo
 > 1. **Data can only be stored in the browser**: A pure frontend application has no server-side persistence layer. Available storage is limited to the current browser's `localStorage` / `sessionStorage` / `IndexedDB`. Data does not carry over when the user changes browsers or devices or clears the cache; data is not shared among users.
 > 2. **Publicly visible**: After publication, the application is publicly visible in the User Showcase (<SHOWCASE_URL>), and anyone can access it.
 
-First restore any answer already given to this static-branch confirmation. If it was answered, do not repeat the warning or call `question` again. Otherwise use the `question` tool once, with options "Continue publishing" / "Cancel."
+First restore any answer already given to this static-branch confirmation. If it was answered, do not repeat the warning or emit the form again. Otherwise include the warning in one `publish-static-confirmation` form's localized `description`, with one required `radio` question whose stable values are `continue` and `cancel`. Emit the complete form and stop the turn.
 
 - User selects "Continue publishing" -> enter Step 3
 - User selects "Cancel" -> terminate this publication
@@ -218,7 +247,7 @@ After classifying the project as `backend`, explicitly state the following platf
 > 3. **No persistent storage**: The file system is reset when the service is updated, restarts unexpectedly, or operations rebuilds the container. All runtime writes (SQLite, user uploads, logs, caches, and so on) are lost.
 > 4. **Publicly visible**: After publication, the application is publicly visible in the User Showcase (<SHOWCASE_URL>), and anyone can access it.
 
-First restore any answer already given to this backend-branch confirmation. If it was answered, do not repeat the warning or call `question` again. Otherwise use the `question` tool once, with options "Continue publishing" / "Cancel."
+First restore any answer already given to this backend-branch confirmation. If it was answered, do not repeat the warning or emit the form again. Otherwise include the warning in one `publish-backend-confirmation` form's localized `description`, with one required `radio` question whose stable values are `continue` and `cancel`. Emit the complete form and stop the turn.
 
 - User selects "Continue publishing" -> enter Step 3b
 - User selects "Cancel" -> terminate this publication
@@ -617,7 +646,7 @@ If the expected artifact directory exists and **contains `index.html`**, use it 
 
 ## Step 5 - Generate and Confirm Application Metadata
 
-**Generate automatically first, then resolve each field in order**. Before each field, restore an answer already present in the transcript and skip that question. Only for an unanswered field, make one separate `question` tool call; **do not** combine multiple fields into one question. After the answer returns, resume with the next unanswered field rather than restarting Step 5.
+**Generate automatically first, then resolve each field in order**. Before each field, restore an answer already present in the transcript and skip that form. Only for an unanswered field, emit one separate `<question-form>`; **do not** combine multiple fields into one form. Stop the turn after each form. After the answer returns, resume with the next unanswered field rather than restarting Step 5.
 
 ### 5a. Automatically Generate `site_name` and `site_description` Based on Application Content
 
@@ -630,36 +659,69 @@ Output:
 
 > If there is no parsable content, **do not provide a default "Satisfied" option** in the subsequent question; require the user to enter a value.
 
-### 5b. Ask for the Application Name (`question` Tool, One Separate Call)
+### 5b. Ask for the Application Name (One Separate Form)
 
-```
-question: The automatically detected application name is "<generated site_name>". Use it?
-header: Application Name
-options:
-  - Satisfied, use this
+```xml
+<question-form id="publish-site-name" title="Application Name">
+{
+  "lang": "en",
+  "questions": [{
+    "id": "site_name",
+    "label": "The automatically detected application name is \"<generated site_name>\". Use it?",
+    "type": "radio",
+    "required": true,
+    "options": [{ "label": "Satisfied, use this", "value": "use_generated" }],
+    "allowCustom": true,
+    "customLabel": "Use another name",
+    "customPlaceholder": "Enter the application name"
+  }]
+}
+</question-form>
 ```
 
 - User selects **Satisfied, use this** -> use the automatically generated value
 - User enters a value through **Other** -> use that input
 
-### 5c. Ask for the Application Description (`question` Tool, One Separate Call)
+### 5c. Ask for the Application Description (One Separate Form)
 
-```
-question: The automatically detected application description is "<generated site_description>". Use it?
-header: Application Description
-options:
-  - Satisfied, use this
+```xml
+<question-form id="publish-site-description" title="Application Description">
+{
+  "lang": "en",
+  "questions": [{
+    "id": "site_description",
+    "label": "The automatically detected application description is \"<generated site_description>\". Use it?",
+    "type": "radio",
+    "required": true,
+    "options": [{ "label": "Satisfied, use this", "value": "use_generated" }],
+    "allowCustom": true,
+    "customLabel": "Use another description",
+    "customPlaceholder": "Enter the application description"
+  }]
+}
+</question-form>
 ```
 
 - Handle it using the same logic as 5b.
 
-### 5d. Ask for the Application Author (`question` Tool, One Separate Call)
+### 5d. Ask for the Application Author (One Separate Form)
 
-```
-question: Enter the application author's ID (select an option below or enter one manually)
-header: Application Author
-options:
-  - Anonymous author
+```xml
+<question-form id="publish-site-author" title="Application Author">
+{
+  "lang": "en",
+  "questions": [{
+    "id": "site_author",
+    "label": "Enter the application author's ID",
+    "type": "radio",
+    "required": true,
+    "options": [{ "label": "Anonymous author", "value": "anonymous" }],
+    "allowCustom": true,
+    "customLabel": "Enter an author ID",
+    "customPlaceholder": "Author ID"
+  }]
+}
+</question-form>
 ```
 
 - User selects **Anonymous author** -> `site_author = "anonymous"`
@@ -733,14 +795,25 @@ Determine whether the current session already has a cached key (ticket) or an an
 
 ### 7a. Ask Whether to Reuse an Existing Application (Run Once on the First Submission)
 
-Use the `question` tool and **provide only one explicit option**. The remaining Other input itself represents "Yes, enter the key to update an existing application"; its placeholder must use that wording:
+Emit one `<question-form>` and **provide only one explicit option**. The custom input represents "Yes, enter the key to update an existing application"; its placeholder must use that wording. Then stop the turn:
 
-```
-question: Was this application submitted in another task before? Do you need to update an existing application or submit a new one? To update it, select [Other] and enter the key provided by the previous task.
-header: Update an Existing Application?
-options:
-  - No, submit a new application
-  # Other: The input placeholder/meaning is "Yes, enter the key to update an existing application"; the user enters the key here directly
+```xml
+<question-form id="publish-ticket" title="Update an Existing Application?">
+{
+  "lang": "en",
+  "questions": [{
+    "id": "ticket",
+    "label": "Was this application submitted in another task before?",
+    "help": "Use the previous task's key to update that application, or submit a new application.",
+    "type": "radio",
+    "required": true,
+    "options": [{ "label": "No, submit a new application", "value": "new_application" }],
+    "allowCustom": true,
+    "customLabel": "Yes, update an existing application",
+    "customPlaceholder": "Enter the key provided by the previous task"
+  }]
+}
+</question-form>
 ```
 
 - User selects **No, submit a new application** -> leave the key empty (do not include the `ticket` field)
@@ -977,8 +1050,8 @@ The application is currently still in the <status> state and will only go offlin
 ### General
 
 - **Execute this Skill only when the user's latest message explicitly requests publication**: after publishing once in the current session, if the user continues adjusting code/content without explicitly requesting "publish using publish-website" in the latest message, **do not** automatically run the publishing process again. Always use `/deploy-website` local deployment plus the platform's online preview for intermediate versions, and do not proactively ask whether the user wants to publish again
-- **Interaction language follows the user's conversation language**: all user-facing text in this Skill — `question` prompts, option labels, the Step 2 warnings, metadata confirmation, ticket questions, and the final success/failure wording — must be written in the **primary language the user is communicating in during this session** (English when the user writes in English, Chinese when in Chinese, and so on). Never force a fixed language on the user
-- **Every new run must apply the Cross-turn Resume Contract before Step 1**: native `question` answers are returned in a new user turn/run; restore completed values and continue from the first incomplete step. Never restart the pipeline or repeat an answered question
+- **Interaction language follows the user's conversation language**: all user-facing text in this Skill — `<question-form>` titles, labels, descriptions, option labels, the Step 2 warnings, metadata confirmation, ticket questions, and the final success/failure wording — must be written in the **primary language the user is communicating in during this session** (English when the user writes in English, Chinese when in Chinese, and so on). Never force a fixed language on the user
+- **Every new run must apply the Cross-turn Resume Contract before Step 1**: `<question-form>` answers are returned in a new user turn/run; restore completed values and continue from the first incomplete step. Never restart the pipeline or repeat an answered question
 - **Step 1c, the publishing target selection, must be resolved before any upload / status / recall call**: first reuse an answer already returned in the latest turn or transcript; only if none exists ask the user to choose domestic or international. Use the recorded `<API_BASE>` / `<SHOWCASE_URL>` / `<SITE_DOMAIN>` / `<MAX_PACKAGE_SIZE>` in every later step. **Never** hard-code a fixed showcase domain in requests
 - **International 100 MB package limit**: when the Step 1c target is the international showcase, the entire publishing artifact (static `site_zip_file` or backend `site_image`) must be **<= 100 MB**; if it exceeds 100 MB, terminate the publication and do not upload
 - **Step 1b, the publishing content compliance precheck, must run first**: if either "software download/distribution (hosting apk/ipa/exe/dmg/msi/pkg or other installers)" or "direct publication of an open-source CMS / website panel (WordPress / Halo / Typecho / aaPanel / 1Panel / cPanel, and others)" matches, **terminate immediately** and do not enter kind classification or any subsequent step
@@ -987,7 +1060,7 @@ The application is currently still in the <status> state and will only go offlin
 - **Ask the user about `ticket` only on the first submission in this session**; the `ticket` received after the first successful submission must be cached in the session context and automatically reused for subsequent submissions. **Do not** ask repeatedly
 - **Do not fabricate `ticket`**: it must come either from user input or the server response
 - **Automatic generation of the application name/description must be based on actual application content**; do not invent them. User-provided input has the highest priority
-- **The three application metadata fields must be asked through three separate `question` tool calls**; do not combine them
+- **The three application metadata fields must be asked through three separate `<question-form>` turns**; do not combine them
 - **Do not pass `user_id` / `task_id` in the request**
 - **Do not pretend success**: accurately report any failure at any step
 - **Do not poll review status**: the Skill ends after upload
@@ -1018,7 +1091,7 @@ The application is currently still in the <status> state and will only go offlin
   - Application code must remove every runtime external-network call (remote models, remote configuration, third-party APIs, usage reporting, and others)
   - Local `"$RUNTIME" build` **must** include `--network host` to ensure the builder stage fetches dependencies through the host network
   - During the local healthcheck phase, `"$RUNTIME" run` **does not specify** `--network` (use the container runtime's default network). The Dockerfile authoring constraints in 3b.1 (no networked commands in the runtime stage, resources downloaded in the builder) guarantee the offline self-check at the source; it does not depend on runtime network isolation
-  - Before entering the backend branch, Step 2 **must** have used a separate `question` to explain the four limitations, "no external network," "single container," "no persistence," and "1C1G," and obtained "Continue publishing" confirmation
+  - Before entering the backend branch, Step 2 **must** have used a separate `<question-form>` to explain the four limitations, "no external network," "single container," "no persistence," and "1C1G," and obtained "Continue publishing" confirmation
 - **No persistent storage in the container**: service updates, unexpected crashes, and operations restarts all rebuild the container, and all file-system writes are lost:
   - The Dockerfile must not declare a data directory with `VOLUME`
   - A DB / object store packaged in the container is reset after a restart; the supervisord startup script must idempotently reload the initial schema and seed data
@@ -1056,7 +1129,7 @@ The application is currently still in the <status> state and will only go offlin
 | `build` fails (frontend / `"$RUNTIME" build`) | Output the end of stderr and terminate |
 | Neither `docker` nor `podman` exists, and the package manager is unavailable | Report "No available container runtime" and terminate |
 | `index.html` cannot be found after the build | Output the directory structure and terminate |
-| Application content has no usable metadata | Leave automatic generation empty and have the user enter it through Other in the `question` tool |
+| Application content has no usable metadata | Leave automatic generation empty and request it with a required text `<question-form>` |
 | zip self-check finds included development files | Adjust the exclusions and repackage; terminate if they still exist |
 | International target: `/tmp/dist.zip` > 100 MB | Tell the user to reduce the static package (remove unused assets, compress images/fonts) and terminate |
 | Image tar.gz > <MAX_PACKAGE_SIZE> (500 MB domestic / 100 MB international) | Tell the user to reduce the artifact (multi-stage compilation + alpine + copy only necessary files) and terminate |
