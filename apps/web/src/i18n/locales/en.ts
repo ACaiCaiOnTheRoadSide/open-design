@@ -2141,6 +2141,8 @@ export const en: Dict = {
   'chat.conversationsTitle': 'Conversations',
   'chat.conversationsAria': 'Conversation history',
   'chat.newConversation': 'New conversation',
+  'chat.resetConversation': 'Reset conversation',
+  'chat.resetConversationHint': 'Reset the conversation: the chat history is cleared and the AI starts fresh, no longer influenced by earlier messages',
   'chat.newConversationsTitle': 'New conversation',
   'chat.conversationsHeading': 'Conversations',
   'chat.new': 'New',

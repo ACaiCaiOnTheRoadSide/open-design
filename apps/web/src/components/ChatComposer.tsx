@@ -303,6 +303,7 @@ interface Props {
   // stale copy lets an older detail snapshot win recency comparisons and
   // shadow the change (e.g. the working-dir label never updating).
   onProjectMetadataChange?: (updated: Project) => void;
+  onPendingContentChange?: (hasPendingContent: boolean) => void;
   activeWorkspaceContext?: WorkspaceContextItem | null;
   initialWorkspaceContexts?: WorkspaceContextItem[];
   workspaceContexts?: WorkspaceContextItem[];
@@ -477,6 +478,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       onBrowsePlugins,
       onStandalonePanelChange,
       onOpenConnectors,
+      onPendingContentChange,
       researchAvailable = false,
       projectMetadata,
       onProjectMetadataChange,
@@ -634,6 +636,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     >(null);
     const [stagedMcpServers, setStagedMcpServers] = useState<McpServerConfig[]>([]);
     const [stagedConnectors, setStagedConnectors] = useState<ConnectorDetail[]>([]);
+    const hasPendingContent =
+      staged.length > 0 ||
+      stagedVisualComments.length > 0 ||
+      stagedSkills.length > 0 ||
+      stagedMcpServers.length > 0 ||
+      stagedConnectors.length > 0;
+    useEffect(() => {
+      onPendingContentChange?.(hasPendingContent);
+    }, [hasPendingContent, onPendingContentChange]);
     const linkedDirs = projectMetadata?.linkedDirs ?? [];
     const [stagedWorkspaceContexts, setStagedWorkspaceContexts] = useState<WorkspaceContextItem[]>(
       () => dedupeWorkspaceContextItems(initialWorkspaceContexts),

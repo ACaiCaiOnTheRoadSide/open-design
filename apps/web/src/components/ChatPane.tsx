@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from '@open-design/components';
 import { hasOdCard } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { getResolvedDeviceId } from '../analytics/client';
@@ -1031,6 +1032,7 @@ export function ChatPane({
   const chatLogScrollIdleTimerRef = useRef<number | null>(null);
   const historyWrapRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerHandle | null>(null);
+  const [composerHasPendingContent, setComposerHasPendingContent] = useState(false);
   const [templateRecommendations, setTemplateRecommendations] = useState<TemplateRecommendResponse | null>(null);
   const [templateRecommendLoading, setTemplateRecommendLoading] = useState(false);
   const [templateRecommendAvailable, setTemplateRecommendAvailable] = useState(
@@ -2422,6 +2424,38 @@ export function ChatPane({
     setTemplateRecommendations(null);
   }
 
+  const resetConversationDisabled =
+    newConversationDisabled ||
+    streaming ||
+    (messagesConversationId === activeConversationId && messages.length === 0) ||
+    composerHasPendingContent ||
+    queuedItems.length > 0 ||
+    attachedComments.length > 0;
+
+  const resetConversationButton = onNewConversation ? (
+    <Button
+      size="icon"
+      variant="ghost"
+      className="od-tooltip"
+      data-testid="chat-composer-new-conversation"
+      disabled={resetConversationDisabled}
+      title={t('chat.resetConversationHint')}
+      data-tooltip={t('chat.resetConversationHint')}
+      aria-label={t('chat.resetConversation')}
+      onClick={() => {
+        if (resetConversationDisabled) return;
+        trackChatPanelClick(analytics.track, {
+          page_name: 'chat_panel',
+          area: 'chat_panel',
+          element: 'new_chat',
+        });
+        onNewConversation();
+      }}
+    >
+      <Icon name="refresh" size={16} />
+    </Button>
+  ) : null;
+
   const composerNode = (
     <>
       {/* 插件 / 设计百宝箱 live inside the composer's "+" menu (below 工作目录,
@@ -2493,6 +2527,7 @@ export function ChatPane({
       onOpenMcpSettings={onOpenMcpSettings}
       onBrowsePlugins={onBrowsePlugins}
       onOpenConnectors={onOpenConnectors}
+      onPendingContentChange={setComposerHasPendingContent}
       researchAvailable={researchAvailable}
       projectMetadata={projectMetadata}
       onProjectMetadataChange={onProjectMetadataChange}
@@ -2514,6 +2549,7 @@ export function ChatPane({
       footerAccessory={composerFooterAccessory}
       leadingAccessory={(
         <>
+          {resetConversationButton}
           {composerLeadingAccessory}
           {templateRecommendEnabled && templateRecommendAvailable ? (
             <TemplateRecommendTrigger
@@ -2634,9 +2670,9 @@ export function ChatPane({
                     type="button"
                     className="chat-history-new"
                     data-testid="conversation-history-new"
-                    disabled={newConversationDisabled}
+                    disabled={resetConversationDisabled}
                     onClick={() => {
-                      if (newConversationDisabled) return;
+                      if (resetConversationDisabled) return;
                       trackChatPanelClick(analytics.track, {
                         page_name: 'chat_panel',
                         area: 'chat_panel',

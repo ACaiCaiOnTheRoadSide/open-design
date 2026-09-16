@@ -2141,6 +2141,8 @@ export const ru: Dict = {
   'chat.conversationsTitle': 'Разговоры',
   'chat.conversationsAria': 'История разговоров',
   'chat.newConversation': 'Новый разговор',
+  'chat.resetConversation': 'Сбросить диалог',
+  'chat.resetConversationHint': 'Сброс диалога: история чата очищается — ИИ начинает заново, без влияния предыдущих сообщений',
   'chat.newConversationsTitle': 'Новый разговор',
   'chat.conversationsHeading': 'Разговоры',
   'chat.new': 'Новый',
