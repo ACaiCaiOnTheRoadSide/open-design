@@ -136,7 +136,7 @@ describe('OhMyInspire catalog client', () => {
     );
   });
 
-  it('keeps downloadable video templates on the archive path', () => {
+  it('keeps downloadable templates on their native project kinds', () => {
     const template = {
       id: 'video-template',
       name: 'Video template',
@@ -148,6 +148,8 @@ describe('OhMyInspire catalog client', () => {
 
     expect(ohMyInspireTemplateHasArchive(template)).toBe(true);
     expect(ohMyInspireTemplateProjectKind(template)).toBe('video');
+    expect(ohMyInspireTemplateProjectKind({ ...template, mode: 'deck' })).toBe('deck');
+    expect(ohMyInspireTemplateProjectKind({ ...template, mode: 'prototype' })).toBe('prototype');
     expect(ohMyInspireTemplateHasArchive({ ...template, download_url: '' })).toBe(false);
   });
 

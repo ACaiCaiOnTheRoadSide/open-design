@@ -693,6 +693,18 @@ export function HomeView({
     if (!templateHandoff) return;
     window.history.replaceState(window.history.state, '', templateHandoff.sanitizedUrl);
   }, [templateHandoff]);
+  useEffect(() => {
+    const templateId = templateHandoff?.templateId;
+    if (!templateId) return;
+    const controller = new AbortController();
+    void fetchOhMyInspireTemplateDetail(templateId, controller.signal)
+      .then((detail) => {
+        setSelectedTemplateTitle(ohMyInspireTemplateTitle(detail, locale));
+        setFallbackProjectKind(ohMyInspireTemplateProjectKind(detail));
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [locale, templateHandoff?.templateId]);
   const [designSystemId, setDesignSystemId] = useState<string | null>(() =>
     restoredDraft.designSystemId ??
     homeDefaultDesignSystemId(designSystems, defaultDesignSystemId),
@@ -2871,8 +2883,17 @@ export function HomeView({
         return;
       }
       const contextLinkedDirs = contextLinkedDirCandidates;
+      let handoffProjectKind = fallbackProjectKind;
+      if (!handoffProjectKind && templateHandoff?.templateId) {
+        try {
+          const detail = await fetchOhMyInspireTemplateDetail(templateHandoff.templateId);
+          handoffProjectKind = ohMyInspireTemplateProjectKind(detail);
+        } catch {
+          // Keep template handoff usable when catalog metadata is temporarily unavailable.
+        }
+      }
       const submittedProjectKind =
-        submittedActive?.projectKind ?? fallbackProjectKind ?? projectKindForSkill(activeSkill) ?? 'other';
+        submittedActive?.projectKind ?? handoffProjectKind ?? projectKindForSkill(activeSkill) ?? 'other';
       const submittedProjectMetadata = submittedActive?.mediaSurface
         ? metadataForHomeMediaComposer(submittedActive.mediaSurface, submittedActive.inputs, promptTemplates)
         : homeCreateProjectMetadata(
@@ -3133,9 +3154,7 @@ export function HomeView({
         activeSkillTitle={activeSkill ? localizeSkillName(locale, activeSkill) : null}
         activeTemplateTitle={selectedTemplateTitle}
         activeSkillRecord={activeSkill}
-        activeChipId={active?.chipId ?? (
-          selectedCatalogTemplate ? ohMyInspireTemplateProjectKind(selectedCatalogTemplate) : null
-        )}
+        activeChipId={active?.chipId ?? fallbackProjectKind}
         activePrototypeSubtypeId={active?.prototypeSubtypeId ?? null}
         showActivePluginChip={showActivePluginChip}
         onClearActivePlugin={clearActivePlugin}

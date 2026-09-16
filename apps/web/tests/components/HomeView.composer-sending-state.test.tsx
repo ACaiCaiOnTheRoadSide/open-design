@@ -96,60 +96,75 @@ function renderHome(onSubmit: (payload: unknown) => Promise<boolean> | void) {
 }
 
 describe('home composer sending state', () => {
-  it('keeps a handoff template selected until Send without installing a skill', async () => {
-    const source = 'https://inspire.example.com/api/v1/catalog/handoff-download/signed';
-    window.history.replaceState(
-      {},
-      '',
-      `/workspace?template_url=${encodeURIComponent(source)}&template_id=landing-page`,
-    );
-    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
-      if (typeof url === 'string' && url === '/api/plugins') {
-        return new Response(JSON.stringify({ plugins: [] }), { status: 200 });
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const onSubmit = vi.fn();
-    const onOpenProject = vi.fn();
-
-    render(
-      <I18nProvider initial="en">
-        <HomeView
-          projects={[]}
-          onSubmit={onSubmit}
-          onOpenProject={onOpenProject}
-          onViewAllProjects={() => undefined}
-        />
-      </I18nProvider>,
-    );
-
-    expect((await screen.findByTestId('home-hero-active-template')).textContent)
-      .toContain('landing-page');
-    expect(fetchMock.mock.calls.some(([url]) => url === '/api/skills/install')).toBe(false);
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(onOpenProject).not.toHaveBeenCalled();
-    expect(window.location.pathname).toBe('/workspace');
-    expect(window.location.search).toBe('');
-    expect(homeHeroPromptText()).toContain('If SKILL.md is available, follow it first');
-    expect(homeHeroPromptText()).toContain('otherwise use the other available instructions and resources');
-
-    const submit = screen.getByTestId('home-hero-submit') as HTMLButtonElement;
-    await waitFor(() => expect(submit.disabled).toBe(false));
-    setHomeHeroPrompt('Build a storefront for a coffee roaster');
-    fireEvent.click(submit);
-
-    await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          prompt: 'Build a storefront for a coffee roaster',
-          skillId: null,
-          templateHandoff: { sourceUrl: source, templateId: 'landing-page' },
-        }),
+  it.each([
+    ['image', 'image-template', 'Editorial Image'],
+    ['deck', 'pitch-deck', 'Pitch Deck'],
+  ] as const)(
+    'keeps a %s handoff template selected with its native project kind until Send',
+    async (mode, templateId, templateName) => {
+      const source = 'https://inspire.example.com/api/v1/catalog/handoff-download/signed';
+      window.history.replaceState(
+        {},
+        '',
+        `/workspace?template_url=${encodeURIComponent(source)}&template_id=${templateId}`,
       );
-    });
-    expect(onOpenProject).not.toHaveBeenCalled();
-  });
+      const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+        if (typeof url === 'string' && url === '/api/plugins') {
+          return new Response(JSON.stringify({ plugins: [] }), { status: 200 });
+        }
+        if (typeof url === 'string' && url === `/api/v1/catalog/templates/${templateId}`) {
+          return new Response(JSON.stringify({
+            id: templateId,
+            name: templateName,
+            description: 'Template description',
+            mode,
+          }), { status: 200 });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const onSubmit = vi.fn();
+      const onOpenProject = vi.fn();
+
+      render(
+        <I18nProvider initial="en">
+          <HomeView
+            projects={[]}
+            onSubmit={onSubmit}
+            onOpenProject={onOpenProject}
+            onViewAllProjects={() => undefined}
+          />
+        </I18nProvider>,
+      );
+
+      expect((await screen.findByTestId('home-hero-active-template')).textContent)
+        .toContain(templateName);
+      expect(fetchMock.mock.calls.some(([url]) => url === '/api/skills/install')).toBe(false);
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(onOpenProject).not.toHaveBeenCalled();
+      expect(window.location.pathname).toBe('/workspace');
+      expect(window.location.search).toBe('');
+      expect(homeHeroPromptText()).toContain('If SKILL.md is available, follow it first');
+      expect(homeHeroPromptText()).toContain('otherwise use the other available instructions and resources');
+
+      const submit = screen.getByTestId('home-hero-submit') as HTMLButtonElement;
+      await waitFor(() => expect(submit.disabled).toBe(false));
+      setHomeHeroPrompt('Build from the selected template');
+      fireEvent.click(submit);
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            prompt: 'Build from the selected template',
+            skillId: null,
+            projectKind: mode,
+            templateHandoff: { sourceUrl: source, templateId },
+          }),
+        );
+      });
+      expect(onOpenProject).not.toHaveBeenCalled();
+    },
+  );
 
   it('does not overwrite an existing composer draft during template handoff', async () => {
     const source = 'https://inspire.example.com/api/v1/catalog/handoff-download/signed';

@@ -1,3 +1,4 @@
+import type { ProjectKind } from '@open-design/contracts';
 import { localizePromptTemplateSummary } from '../i18n/content';
 import type { Locale } from '../i18n/types';
 
@@ -131,9 +132,15 @@ export function ohMyInspireTemplateGenerationPrompt(
 
 export function ohMyInspireTemplateProjectKind(
   template: OhMyInspireCatalogTemplateDetail,
-): 'image' | 'video' | 'audio' | null {
+): ProjectKind | null {
   const mode = template.mode?.trim().toLowerCase();
-  return mode === 'image' || mode === 'video' || mode === 'audio' ? mode : null;
+  return mode === 'prototype'
+    || mode === 'deck'
+    || mode === 'image'
+    || mode === 'video'
+    || mode === 'audio'
+    ? mode
+    : null;
 }
 
 export function withOhMyInspireTemplateBrief(userPrompt: string, templatePrompt: string): string {
