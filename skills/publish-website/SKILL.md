@@ -156,7 +156,7 @@ English:
 </question-form>
 ```
 
-Record the following variables according to the user's choice; **every later step must reference these variables instead of hard-coded domains**:
+Record the following variables according to the user's choice; **every later step must use the literal for the target chosen here, and must never use a domain from any other source**:
 
 | Variable | 国内 (domestic) | 国外 (international) |
 |---|---|---|
@@ -832,6 +832,8 @@ Submit all fields and the artifact to the showcase API in one multipart form POS
 
 This submission is an external showcase API call, not an OpenDesign CLI operation. Execute the `curl` multipart POST below directly. **Never call `od publish`, `od deploy`, `"$OD_NODE_BIN" "$OD_BIN" publish`, or any other command through `OD_BIN` for this step.** Those commands do not implement this pipeline and may be unavailable in the sandbox.
 
+**Endpoint resolution (before the POST)**: write `API_BASE` into the command as one of exactly two literals — domestic `https://ugc-submit.sc.monkeycode-ai.online`, international `https://ugc-submit.monkeycode-ai.gallery`. The templates below already carry the domestic literal at the point of use; replace it with the international one only when the Step 1c target is the international showcase. **Never** send a request to an unresolved `<API_BASE>` placeholder, and **never** substitute a domain of your own invention. If the Step 1c target cannot be restored from the current turn or the transcript, stop and ask the user for the target instead of guessing.
+
 **static branch** (choose either without ticket / with ticket):
 
 ```bash
@@ -843,7 +845,7 @@ curl -f -X POST \
   -F "site_description=<application description>" \
   [ -F "ticket=<ticket>" ] \
   -F "site_zip_file=@/tmp/dist.zip" \
-  <API_BASE>/v1/create
+  https://ugc-submit.sc.monkeycode-ai.online/v1/create
 ```
 
 **backend branch**:
@@ -859,7 +861,7 @@ curl -f -X POST \
   -F "site_image=@/tmp/showcase-image.tar.gz" \
   -F "service_port=<in-container application port>" \
   -F "healthcheck_path=<healthcheck path>" \
-  <API_BASE>/v1/create
+  https://ugc-submit.sc.monkeycode-ai.online/v1/create
 ```
 
 Field descriptions:
@@ -879,7 +881,7 @@ Field descriptions:
 
 Key points:
 
-- `<API_BASE>` is the base domain recorded in Step 1c (domestic `https://ugc-submit.sc.monkeycode-ai.online` / international `https://ugc-submit.monkeycode-ai.gallery`); **never** hard-code a fixed showcase domain in the request
+- The origin in the command must be the literal for the Step 1c target: domestic `https://ugc-submit.sc.monkeycode-ai.online` / international `https://ugc-submit.monkeycode-ai.gallery`. Those two origins are the only valid values for `<API_BASE>`; a hostname recalled from memory, derived from a similar-looking product name, or copied from another environment is a fabrication and must never be sent
 - `-f` makes non-2xx HTTP statuses return a nonzero exit code
 - On failure, **retry at most once** (to handle network fluctuations)
 - All fields must be shell-escaped
@@ -944,10 +946,10 @@ When the user asks in this session about review / going online / rejection reaso
 curl -f --get \
   --data-urlencode "client_id=<client_id>" \
   --data-urlencode "ticket=<ticket>" \
-  "<API_BASE>/v1/status"
+  "https://ugc-submit.sc.monkeycode-ai.online/v1/status"
 ```
 
-- `<API_BASE>`: the base domain chosen in Step 1c (`https://ugc-submit.sc.monkeycode-ai.online` domestic / `https://ugc-submit.monkeycode-ai.gallery` international), which must match the target used for submission
+- The origin must be the literal for the Step 1c target (`https://ugc-submit.sc.monkeycode-ai.online` domestic / `https://ugc-submit.monkeycode-ai.gallery` international), which must match the target used for submission; never invent or substitute another domain
 - `client_id`: the value determined in Step 1; it **must** match the value used for submission
 - `ticket`: the `ticket` cached within the session
 
@@ -995,7 +997,7 @@ curl --fail-with-body -X POST \
   -F "client_id=<client_id>" \
   -F "ticket=<ticket>" \
   [ -F "reason=<recall reason>" ] \
-  <API_BASE>/v1/recall
+  https://ugc-submit.sc.monkeycode-ai.online/v1/recall
 ```
 
 `--fail-with-body` preserves the server's JSON body on HTTP 4xx/5xx while still returning a nonzero exit code, so the response handling below can inspect the real error code and `detail.status`.
@@ -1052,7 +1054,7 @@ The application is currently still in the <status> state and will only go offlin
 - **Execute this Skill only when the user's latest message explicitly requests publication**: after publishing once in the current session, if the user continues adjusting code/content without explicitly requesting "publish using publish-website" in the latest message, **do not** automatically run the publishing process again. Always use `/deploy-website` local deployment plus the platform's online preview for intermediate versions, and do not proactively ask whether the user wants to publish again
 - **Interaction language follows the user's conversation language**: all user-facing text in this Skill — `<question-form>` titles, labels, descriptions, option labels, the Step 2 warnings, metadata confirmation, ticket questions, and the final success/failure wording — must be written in the **primary language the user is communicating in during this session** (English when the user writes in English, Chinese when in Chinese, and so on). Never force a fixed language on the user
 - **Every new run must apply the Cross-turn Resume Contract before Step 1**: `<question-form>` answers are returned in a new user turn/run; restore completed values and continue from the first incomplete step. Never restart the pipeline or repeat an answered question
-- **Step 1c, the publishing target selection, must be resolved before any upload / status / recall call**: first reuse an answer already returned in the latest turn or transcript; only if none exists ask the user to choose domestic or international. Use the recorded `<API_BASE>` / `<SHOWCASE_URL>` / `<SITE_DOMAIN>` / `<MAX_PACKAGE_SIZE>` in every later step. **Never** hard-code a fixed showcase domain in requests
+- **Step 1c, the publishing target selection, must be resolved before any upload / status / recall call**: first reuse an answer already returned in the latest turn or transcript; only if none exists ask the user to choose domestic or international. Use the recorded `<API_BASE>` / `<SHOWCASE_URL>` / `<SITE_DOMAIN>` / `<MAX_PACKAGE_SIZE>` in every later step. If `<API_BASE>` is still unresolved when a request is due, stop and ask the user for the target: an unresolved placeholder must never be sent, and no third domain may be invented to fill it. The only two valid origins are `https://ugc-submit.sc.monkeycode-ai.online` and `https://ugc-submit.monkeycode-ai.gallery`
 - **International 100 MB package limit**: when the Step 1c target is the international showcase, the entire publishing artifact (static `site_zip_file` or backend `site_image`) must be **<= 100 MB**; if it exceeds 100 MB, terminate the publication and do not upload
 - **Step 1b, the publishing content compliance precheck, must run first**: if either "software download/distribution (hosting apk/ipa/exe/dmg/msi/pkg or other installers)" or "direct publication of an open-source CMS / website panel (WordPress / Halo / Typecho / aaPanel / 1Panel / cPanel, and others)" matches, **terminate immediately** and do not enter kind classification or any subsequent step
 - **Before installing any software with a system package manager (apt/yum/dnf/apk/pacman), switch the system source to Tsinghua TUNA by default** (`mirrors.tuna.tsinghua.edu.cn`); do not wait for a timeout before switching
@@ -1121,6 +1123,7 @@ The application is currently still in the <status> state and will only go offlin
 | Failure Point | Action |
 |---|---|
 | No caller-provided `client_id`, no `OD_PROJECT_ID`, and `hostname` fails | Report the error and terminate |
+| Step 1c target cannot be restored, so `<API_BASE>` is unresolved at Step 8 | Stop and ask the user to confirm the target; never send a placeholder and never invent a domain |
 | Step 1b matches a prohibited type (software distribution / direct publication of an open-source CMS or website panel) | Tell the user, "The showcase does not accept this type of site," terminate immediately, and do not enter kind classification |
 | Project root cannot be found | Ask the user for the path; do not guess |
 | Automatic classification is inconclusive (neither a pure frontend nor a backend project) | Ask the user for the kind according to the Step 2 fallback rule; terminate if it still cannot be determined |

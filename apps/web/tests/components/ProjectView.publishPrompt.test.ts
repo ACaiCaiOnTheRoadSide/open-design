@@ -29,4 +29,21 @@ describe('buildShowcasePublishPrompt', () => {
     expect(skill).not.toContain('`question` tool call');
     for (const form of forms) expect(() => JSON.parse(form[1]!)).not.toThrow();
   });
+
+  it('spells out the publish origins at the point of use', () => {
+    const skill = readFileSync(
+      new URL('../../../../skills/publish-website/SKILL.md', import.meta.url),
+      'utf8',
+    );
+
+    // A publish runs across several question-form turns, so the turn that
+    // finally posts may have lost the Step 1c target. When the command only
+    // carried a bare `<API_BASE>` slot, a model filling that slot invented
+    // `publish.tatakai.studio` and reported a DNS failure. Every command that
+    // leaves the machine must carry a literal origin instead.
+    expect(skill).toContain('https://ugc-submit.sc.monkeycode-ai.online/v1/create');
+    expect(skill).toContain('https://ugc-submit.sc.monkeycode-ai.online/v1/status');
+    expect(skill).toContain('https://ugc-submit.sc.monkeycode-ai.online/v1/recall');
+    expect(skill).not.toMatch(/^\s*"?<?API_BASE>?\/v1\//m);
+  });
 });
