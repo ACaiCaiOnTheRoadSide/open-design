@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   downloadOhMyInspireTemplate,
   fetchAllOhMyInspireTemplates,
+  fetchOhMyInspireImageCase,
   fetchOhMyInspireTemplateDetail,
   fetchOhMyInspireTemplates,
   isOhMyInspireHandoffUrl,
@@ -72,6 +73,38 @@ describe('OhMyInspire catalog client', () => {
       '/api/v1/catalog/templates/template%2Fa',
       { credentials: 'include' },
     );
+  });
+
+  it('loads an image case prompt and preview as a staged image without acquiring an archive', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, data: {
+        id: 'gpt-image-2-174', name: 'Interior', description: '', mode: 'image',
+        source: 'gpt-image-2', source_id: '174', examplePrompt: 'Create a room.',
+        preview_url: '/gpt-image-2/case174.webp', download_url: '',
+      } }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(new Blob(['RIFF'], { type: 'image/webp' }), {
+        status: 200, headers: { 'content-type': 'image/webp' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchOhMyInspireImageCase('gpt-image-2-174');
+    expect(result.prompt).toBe('Create a room.');
+    expect(result.image.name).toBe('case174.webp');
+    expect(result.image.type).toBe('image/webp');
+    expect(fetchMock).toHaveBeenNthCalledWith(2,
+      '/api/v1/catalog/raw-preview/gpt-image-2/case174.webp',
+      { credentials: 'include', signal: undefined },
+    );
+  });
+
+  it('rejects mismatched image previews before requesting their bytes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, data: {
+      id: 'gpt-image-2-174', mode: 'image', source: 'gpt-image-2', source_id: '174',
+      examplePrompt: 'Prompt', preview_url: '/gpt-image-2/case175.webp',
+    } }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchOhMyInspireImageCase('gpt-image-2-174')).rejects.toThrow('missing its prompt or reference image');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('keeps previews on the authenticated same-origin catalog proxy', () => {

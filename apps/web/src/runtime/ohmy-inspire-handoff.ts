@@ -22,6 +22,14 @@ export function templateHandoffFromPageUrl(
   return { sourceUrl: templateUrl, templateId, sanitizedUrl: url.toString() };
 }
 
+export function imageCaseHandoffFromPageUrl(pageUrl: string): { caseId: string; sanitizedUrl: string } | null {
+  const url = new URL(pageUrl);
+  const caseId = url.searchParams.get('image_case_id');
+  if (!caseId || !/^gpt-image-2-[1-9][0-9]*$/.test(caseId)) return null;
+  url.searchParams.delete('image_case_id');
+  return { caseId, sanitizedUrl: url.toString() };
+}
+
 export function templateHandoffTrialPrompt(locale: string): string {
   return locale.startsWith('zh')
     ? '请使用已选模板实现一个可运行的示例：如有 SKILL.md，请优先按照其中的要求实现；否则参考其他可用的说明文件与资源，并尽量还原模板中的设计与交互。'

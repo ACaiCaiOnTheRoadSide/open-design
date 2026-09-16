@@ -24,6 +24,8 @@ export interface OhMyInspireCatalogTemplate {
 
 export interface OhMyInspireCatalogTemplateDetail extends OhMyInspireCatalogTemplate {
   examplePrompt?: string;
+  source?: string;
+  source_id?: string;
   download_url?: string;
   download?: {
     root?: string;
@@ -115,6 +117,31 @@ export function fetchOhMyInspireTemplateDetail(
     `/templates/${encodeURIComponent(id)}`,
     signal,
   );
+}
+
+export async function fetchOhMyInspireImageCase(
+  caseId: string,
+  signal?: AbortSignal,
+): Promise<{ detail: OhMyInspireCatalogTemplateDetail; image: File; prompt: string }> {
+  if (!/^gpt-image-2-[1-9][0-9]*$/.test(caseId)) throw new Error('Invalid image case ID.');
+  const detail = await fetchOhMyInspireTemplateDetail(caseId, signal);
+  const prompt = detail.examplePrompt?.trim();
+  const imagePath = detail.preview_url;
+  const sourceId = caseId.slice('gpt-image-2-'.length);
+  if (detail.id !== caseId || detail.mode !== 'image' || detail.source !== 'gpt-image-2'
+    || detail.source_id !== sourceId || !prompt
+    || imagePath !== `/gpt-image-2/case${sourceId}.webp`) {
+    throw new Error('Image case is missing its prompt or reference image.');
+  }
+  const previewUrl = ohMyInspireCatalogPreviewUrl(imagePath);
+  if (!previewUrl) throw new Error('Image case preview is unavailable.');
+  const response = await fetch(previewUrl, { credentials: 'include', signal });
+  if (!response.ok) throw new Error('Unable to load the image case reference image.');
+  const image = await response.blob();
+  if (image.type !== 'image/webp' || !image.size || image.size > 20 * 1024 * 1024) {
+    throw new Error('Image case reference image is invalid or too large.');
+  }
+  return { detail, image: new File([image], `case${sourceId}.webp`, { type: 'image/webp' }), prompt };
 }
 
 export function ohMyInspireTemplateHasArchive(

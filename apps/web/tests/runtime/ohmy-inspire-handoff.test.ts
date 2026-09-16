@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  imageCaseHandoffFromPageUrl,
   projectInputForInstalledTemplate,
   templateHandoffFromPageUrl,
   templateHandoffTrialPrompt,
@@ -41,6 +42,16 @@ describe('templateHandoffFromPageUrl', () => {
         'https://design.example.com/studio/?template_url=javascript%3Aalert(1)',
       ),
     ).toBeNull();
+  });
+});
+
+describe('imageCaseHandoffFromPageUrl', () => {
+  it('accepts a case identifier without exposing a prompt in the URL', () => {
+    expect(imageCaseHandoffFromPageUrl('https://design.example.com/studio/?image_case_id=gpt-image-2-174&keep=1')).toEqual({
+      caseId: 'gpt-image-2-174',
+      sanitizedUrl: 'https://design.example.com/studio/?keep=1',
+    });
+    expect(imageCaseHandoffFromPageUrl('https://design.example.com/studio/?image_case_id=../174')).toBeNull();
   });
 });
 

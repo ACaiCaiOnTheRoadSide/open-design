@@ -113,11 +113,13 @@ import { homeHeroChipLabel } from './home-hero/chip-labels';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import { consumePendingHomeChip, HOME_CHIP_INTENT_EVENT } from '../runtime/home-intent';
 import {
+  imageCaseHandoffFromPageUrl,
   templateHandoffFromPageUrl,
   templateHandoffTrialPrompt,
 } from '../runtime/ohmy-inspire-handoff';
 import {
   downloadOhMyInspireTemplate,
+  fetchOhMyInspireImageCase,
   fetchOhMyInspireTemplateDetail,
   OhMyInspireCatalogError,
   ohMyInspireTemplateGenerationPrompt,
@@ -636,6 +638,11 @@ export function HomeView({
       ? null
       : templateHandoffFromPageUrl(window.location.href),
   );
+  const [imageCaseHandoff] = useState(() =>
+    typeof window === 'undefined'
+      ? null
+      : imageCaseHandoffFromPageUrl(window.location.href),
+  );
   const [selectedTemplateTitle, setSelectedTemplateTitle] = useState<string | null>(
     () => templateHandoff?.templateId ?? null,
   );
@@ -808,6 +815,26 @@ export function HomeView({
     examplePromptInfoRef.current = info;
   }, []);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!imageCaseHandoff) return;
+    window.history.replaceState(window.history.state, '', imageCaseHandoff.sanitizedUrl);
+    const controller = new AbortController();
+    void fetchOhMyInspireImageCase(imageCaseHandoff.caseId, controller.signal)
+      .then(({ image, prompt: casePrompt }) => {
+        if (controller.signal.aborted) return;
+        setPrompt(casePrompt);
+        setPromptEditedByUser(false);
+        setStagedFiles((current) => [...current, image]);
+        setFallbackProjectKind('image');
+        setError(null);
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : 'Unable to load image case.');
+        }
+      });
+    return () => controller.abort();
+  }, [imageCaseHandoff]);
   const [daemonRecoveryActive, setDaemonRecoveryActive] = useState(false);
   useEffect(() => {
     if (!daemonRecoveryActive) return;
