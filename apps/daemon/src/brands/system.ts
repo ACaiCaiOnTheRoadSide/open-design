@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { assertDeckLayoutSafe } from '../qa/deck-layout.js';
-import { injectFontFaces, readFontManifest, type FontFile } from './fonts.js';
 import { readBrand, resolveBrandFile, writeBrand } from './store.js';
 import { sanitizeSeedOverrides } from './schema.js';
 import {
@@ -49,16 +48,12 @@ function reassembleWithSeed(
   base: BrandSystem,
   brand: Brand,
   seed: SeedToken,
-  fontFiles: FontFile[],
 ): BrandSystem {
   const themes: Record<ThemeAlgorithm, DesignTokens> = {
     default: deriveTokens(seed, 'default'),
     dark: deriveTokens(seed, 'dark'),
     compact: deriveTokens(seed, 'compact'),
   };
-  const withFonts = (html: string, depth: 1 | 2) =>
-    injectFontFaces(html, fontFiles, depth === 1 ? '../fonts/' : '../../fonts/');
-
   const files: Record<string, string> = { ...base.files };
   files['seed.json'] = JSON.stringify(seed, null, 2);
   files['tokens.default.json'] = tokensToJson(themes.default);
@@ -70,33 +65,22 @@ function reassembleWithSeed(
   files['scripts/apply-design-tokens.mjs'] = applyDesignTokensScript();
   files['theme.json'] = tokensToThemeJson(seed, defaultThemeAlgorithm(seed));
   const fonts = brandFontAssets(brand);
-  files['kit.html'] = withFonts(
-    renderKitPage(themes.default, {
-      title: `${brand.name} - component kit`,
-      brandName: brand.name,
-      fontLinks: fonts.links,
-      displayFamily: fonts.displayFamily,
-    }),
-    1,
-  );
-  files['kit.dark.html'] = withFonts(
-    renderKitPage(themes.dark, {
-      title: `${brand.name} - component kit (dark)`,
-      brandName: brand.name,
-      fontLinks: fonts.links,
-      displayFamily: fonts.displayFamily,
-    }),
-    1,
-  );
+  files['kit.html'] = renderKitPage(themes.default, {
+    title: `${brand.name} - component kit`,
+    brandName: brand.name,
+    fontLinks: fonts.links,
+    displayFamily: fonts.displayFamily,
+  });
+  files['kit.dark.html'] = renderKitPage(themes.dark, {
+    title: `${brand.name} - component kit (dark)`,
+    brandName: brand.name,
+    fontLinks: fonts.links,
+    displayFamily: fonts.displayFamily,
+  });
   for (const kind of BRAND_ARTIFACT_KINDS) {
-    files[`artifacts/${kind}.html`] = withFonts(renderArtifact(kind, brand, themes.default), 2);
+    files[`artifacts/${kind}.html`] = renderArtifact(kind, brand, themes.default);
   }
-  files['index.html'] = withFonts(
-    renderArtifactGallery(brand, themes.default, {
-      decorate: (html) => injectFontFaces(html, fontFiles, '../fonts/'),
-    }),
-    1,
-  );
+  files['index.html'] = renderArtifactGallery(brand, themes.default);
   return { slug: base.slug, seed, themes, files };
 }
 
@@ -137,10 +121,9 @@ export async function rebuildSystem(
   }
 
   const overrides = sanitizeSeedOverrides(brand.seed);
-  const fontFiles = readFontManifest(brandRoot(brandsRoot, id));
-  let system = buildBrandSystem(brand, { fontFiles });
+  let system = buildBrandSystem(brand);
   if (overrides) {
-    system = reassembleWithSeed(system, brand, { ...system.seed, ...overrides }, fontFiles);
+    system = reassembleWithSeed(system, brand, { ...system.seed, ...overrides });
   }
 
   // Layout-validation guard: the deck lays content on fixed-size 16:9 slides,

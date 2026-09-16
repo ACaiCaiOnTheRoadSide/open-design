@@ -56,7 +56,6 @@ import { brandFromMaterial } from './provisional.js';
 import { prefetchBrand, prefetchFromHtml, type PrefetchResult } from './prefetch.js';
 import { BRAND_KIT_FILE, writeBrandKitPreview, type BrandKitStatus } from './kit-render.js';
 import { normalizeBrandKitLocale } from './kit-i18n.js';
-import { selfHostGoogleFonts } from './fonts.js';
 import { adoptExistingLogos, ensureLogoFallback, type LogoFallbackFn, type LogoSlot } from './logo-fallback.js';
 import { ensureImageryFallback, type ImageryFallbackFn, type ImagerySlot } from './imagery-fallback.js';
 import { ensureBrandSeed, type SeedFallbackFn, type SeedSlot } from './seed-fallback.js';
@@ -1357,7 +1356,6 @@ export async function finalizeBrand(
   // Pull the agent's downloaded assets into the brand workspace so the
   // deterministic builder and the design system see them.
   copyProjectDirToBrand(projectsRoot, projectId, brandsRoot, id, 'logos');
-  copyProjectDirToBrand(projectsRoot, projectId, brandsRoot, id, 'fonts');
   copyProjectDirToBrand(projectsRoot, projectId, brandsRoot, id, 'imagery');
 
   const guideMd =
@@ -1444,18 +1442,6 @@ async function finalizeBrandCore(opts: FinalizeBrandCoreOptions): Promise<BrandF
   } catch (err) {
     if (isProgrammaticExtractionAbortError(err)) throw err;
     // Offline / unreachable origin — keep whatever imagery the agent saved.
-  }
-  throwIfProgrammaticExtractionNotCurrent(opts);
-
-  // Self-host any Google Fonts the agent declared (typography.*.googleFontsUrl)
-  // into the brand's fonts/ + manifest.json so the component kit, the exported
-  // brandpack, and the brand.html specimens render in the real typefaces rather
-  // than a fallback. Best-effort: network failures leave the fallback stacks.
-  try {
-    const brandDir = resolveBrandFile(brandsRoot, id, []);
-    if (brandDir) await selfHostGoogleFonts(brand, brandDir);
-  } catch {
-    // Offline / unreachable font CSS — keep going with whatever the agent saved.
   }
   throwIfProgrammaticExtractionNotCurrent(opts);
 
@@ -2113,7 +2099,6 @@ async function syncBrandFilesToProject(input: {
   await writeOptionalFileToProject(input.projectsRoot, input.projectId, input.metadata, brandRoot, 'guide.md');
   await copyDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, brandSystemDir(input.brandsRoot, input.brandId), 'system');
   await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'logos'), 'logos');
-  await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'fonts'), 'fonts');
   await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'imagery'), 'imagery');
   await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'prefetch'), 'prefetch');
   await copyOptionalDirectoryToProject(input.projectsRoot, input.projectId, input.metadata, path.join(brandRoot, 'context'), 'context');
@@ -2168,9 +2153,9 @@ function syncBrandSystemToUserDesignSystem(
   if (!brandRoot) throw new Error(`invalid brand id: ${brandId}`);
 
   fs.writeFileSync(path.join(dir, 'DESIGN.md'), designMd, 'utf8');
+  fs.rmSync(path.join(dir, 'fonts'), { recursive: true, force: true });
   copyDirectorySync(brandSystemDir(brandsRoot, brandId), path.join(dir, 'system'));
   copyOptionalDirectorySync(path.join(brandRoot, 'logos'), path.join(dir, 'logos'));
-  copyOptionalDirectorySync(path.join(brandRoot, 'fonts'), path.join(dir, 'fonts'));
   copyOptionalDirectorySync(path.join(brandRoot, 'imagery'), path.join(dir, 'imagery'));
   copyOptionalDirectorySync(path.join(brandRoot, 'prefetch'), path.join(dir, 'prefetch'));
   const brandJson = resolveBrandFile(brandsRoot, brandId, ['brand.json']);

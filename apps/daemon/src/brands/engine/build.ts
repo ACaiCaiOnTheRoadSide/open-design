@@ -26,7 +26,6 @@ import os from "node:os";
 import path from "node:path";
 
 import type { Brand, AssetKind } from "../schema.js";
-import { injectFontFaces, type FontFile } from "../fonts.js";
 import { prefetchBrand, type PrefetchResult } from "../prefetch.js";
 import type { BrandSystem, DesignTokens, SeedToken, ThemeAlgorithm } from "./types.js";
 import { deriveTokens, defaultThemeAlgorithm } from "./derive.js";
@@ -165,18 +164,10 @@ interface AssembleInput {
   seed: SeedToken;
   /** Extra files (e.g. fetched logos) to merge into the bundle. */
   extraFiles?: Record<string, string>;
-  /** Self-hosted webfonts (brand dir's fonts/manifest.json). When present,
-   *  every rendered document gets matching @font-face rules inlined, with
-   *  urls relative to its own location. */
-  fontFiles?: FontFile[];
-  /** Path from the bundle root to the directory holding fonts/ — `"../"` for
-   *  the workspace layout (bundle written to <brandDir>/system/, fonts/ next
-   *  to it) and `"./"` when fonts/ ships inside the bundle itself. */
-  fontsBase?: string;
 }
 
 /** Derive all three themes from one seed and lay out the complete file bundle. */
-function assemble({ slug, brand, seed, extraFiles, fontFiles, fontsBase = "../" }: AssembleInput): BrandSystem {
+function assemble({ slug, brand, seed, extraFiles }: AssembleInput): BrandSystem {
   const themes: Record<ThemeAlgorithm, DesignTokens> = {
     default: deriveTokens(seed, "default"),
     dark: deriveTokens(seed, "dark"),
@@ -205,45 +196,28 @@ function assemble({ slug, brand, seed, extraFiles, fontFiles, fontsBase = "../" 
   // tokens.default.json / variables.css / kit.html.
   files["theme.json"] = tokensToThemeJson(seed, defaultThemeAlgorithm(seed));
 
-  // kit/index sit at the bundle root, artifacts one level deeper — each doc's
-  // @font-face urls are relative to its own location.
-  const fontsPrefix = (depth: 1 | 2) => (depth === 1 ? `${fontsBase}fonts/` : `../${fontsBase}fonts/`);
-  const withFonts = (html: string, depth: 1 | 2) =>
-    injectFontFaces(html, fontFiles ?? [], fontsPrefix(depth));
-
   // ── themed component kit ──
   const fonts = brandFontAssets(brand);
-  files["kit.html"] = withFonts(
-    renderKitPage(themes.default, {
-      title: `${brand.name} — component kit`,
-      brandName: brand.name,
-      fontLinks: fonts.links,
-      displayFamily: fonts.displayFamily,
-    }),
-    1,
-  );
-  files["kit.dark.html"] = withFonts(
-    renderKitPage(themes.dark, {
-      title: `${brand.name} — component kit (dark)`,
-      brandName: brand.name,
-      fontLinks: fonts.links,
-      displayFamily: fonts.displayFamily,
-    }),
-    1,
-  );
+  files["kit.html"] = renderKitPage(themes.default, {
+    title: `${brand.name} — component kit`,
+    brandName: brand.name,
+    fontLinks: fonts.links,
+    displayFamily: fonts.displayFamily,
+  });
+  files["kit.dark.html"] = renderKitPage(themes.dark, {
+    title: `${brand.name} — component kit (dark)`,
+    brandName: brand.name,
+    fontLinks: fonts.links,
+    displayFamily: fonts.displayFamily,
+  });
 
   // ── artifacts (products) ──
   for (const kind of ARTIFACT_KINDS) {
-    files[`artifacts/${kind}.html`] = withFonts(renderArtifact(kind, brand, themes.default), 2);
+    files[`artifacts/${kind}.html`] = renderArtifact(kind, brand, themes.default);
   }
 
   // ── gallery / index ──
-  // srcdoc previews are separate documents — each gets its own injection,
-  // with urls resolved from the index's location (depth 1).
-  files["index.html"] = withFonts(
-    buildIndexPage(slug, brand, themes.default, fontFiles, fontsPrefix(1)),
-    1,
-  );
+  files["index.html"] = buildIndexPage(slug, brand, themes.default);
 
   // ── docs ──
   const tokenCount = tokensToCssVars(themes.default).split("\n").filter((l) => l.includes("--brand-")).length;
@@ -287,8 +261,6 @@ function buildIndexPage(
   slug: string,
   brand: Brand,
   tokens: DesignTokens,
-  fontFiles?: FontFile[],
-  fontsPrefix = "../fonts/",
 ): string {
   const esc = (v: string) =>
     v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -317,9 +289,7 @@ function buildIndexPage(
 
   // renderArtifactGallery already returns a full standalone document themed by
   // the tokens; we prepend a header + file index section into its <body>.
-  const gallery = renderArtifactGallery(brand, tokens, {
-    decorate: (html) => injectFontFaces(html, fontFiles ?? [], fontsPrefix),
-  });
+  const gallery = renderArtifactGallery(brand, tokens);
   const fileIndex = `
     <section style="max-width:1120px;margin:0 auto;padding:0 var(--brand-size-xl) var(--brand-size-xl);">
       <h2 style="font-size:var(--brand-font-size-heading-3);margin-bottom:var(--brand-size-sm);color:var(--brand-color-text);">Files in this brand system</h2>
@@ -343,12 +313,12 @@ ${links}
  */
 export function buildBrandSystem(
   brand: Brand,
-  opts?: { slug?: string; fontFiles?: FontFile[] },
+  opts?: { slug?: string },
 ): BrandSystem {
   const normalizedBrand = normalizeBrandForAssembly(brand);
   const slug = opts?.slug ? slugify(opts.slug) : slugify(normalizedBrand.name);
   const seed = seedFromBrand(normalizedBrand);
-  return assemble({ slug, brand: normalizedBrand, seed, fontFiles: opts?.fontFiles });
+  return assemble({ slug, brand: normalizedBrand, seed });
 }
 
 // ─────────────────────────── public: from a URL ─────────────────────────────
@@ -440,26 +410,7 @@ export async function buildFromUrl(url: string, opts?: { slug?: string }): Promi
         /* logo missing on disk — skip */
       }
     }
-    // Same for downloaded webfonts (binary → base64, manifest/css as text).
-    for (const f of material.fontFiles ?? []) {
-      try {
-        extraFiles[`fonts/${f.file}.b64`] = fs
-          .readFileSync(path.join(tmpDir, "fonts", f.file))
-          .toString("base64");
-      } catch {
-        /* font missing on disk — skip */
-      }
-    }
-    for (const aux of ["manifest.json", "fonts.css"]) {
-      try {
-        extraFiles[`fonts/${aux}`] = fs.readFileSync(path.join(tmpDir, "fonts", aux), "utf8");
-      } catch {
-        /* no fonts harvested */
-      }
-    }
-
-    // fonts/ ships inside this standalone bundle, so urls resolve from its root.
-    return assemble({ slug, brand, seed, extraFiles, fontFiles: material.fontFiles, fontsBase: "./" });
+    return assemble({ slug, brand, seed, extraFiles });
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

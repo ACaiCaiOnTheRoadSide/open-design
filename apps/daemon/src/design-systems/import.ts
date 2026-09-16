@@ -186,9 +186,7 @@ export async function importLocalDesignSystemProject(
   );
 
   const copiedAssets = await copyAssets(scan.assets, outDir);
-  const copiedFonts = await copyFonts(scan.fonts, outDir);
   files.push(...copiedAssets);
-  files.push(...copiedFonts);
   return { id, dir: outDir, files };
 }
 
@@ -385,19 +383,6 @@ async function copyAssets(assets: AssetCandidate[], outDir: string): Promise<str
   return copied;
 }
 
-async function copyFonts(fonts: FileCandidate[], outDir: string): Promise<string[]> {
-  if (fonts.length === 0) return [];
-  const fontsDir = path.join(outDir, 'fonts');
-  await mkdir(fontsDir, { recursive: true });
-  const copied: string[] = [];
-  for (const font of fonts) {
-    const targetName = slugify(path.basename(font.relPath, path.extname(font.relPath))) + path.extname(font.relPath).toLowerCase();
-    await copyFile(font.absPath, path.join(fontsDir, targetName));
-    copied.push(`fonts/${targetName}`);
-  }
-  return copied;
-}
-
 async function reserveNextAvailableSlug(
   root: string,
   preferred: string,
@@ -460,14 +445,6 @@ function renderManifest(
       exemptions: [],
     },
     ...(scan.assets.length > 0 ? { assetsDir: 'assets' } : {}),
-    ...(scan.fonts.length > 0
-      ? {
-          fonts: scan.fonts.map((font) => ({
-            family: cleanDisplayName(path.basename(font.relPath, path.extname(font.relPath))),
-            file: `fonts/${slugify(path.basename(font.relPath, path.extname(font.relPath)))}${path.extname(font.relPath).toLowerCase()}`,
-          })),
-        }
-      : {}),
     preview: {
       dir: 'preview',
       pages: [
@@ -861,7 +838,7 @@ function renderEvidenceMd(scan: ProjectScan): string {
     `- CSS variables: ${scan.cssVariables.length}`,
     `- Tailwind signals: ${scan.tailwindSignals.length > 0 ? scan.tailwindSignals.join(', ') : 'none detected'}`,
     `- Assets copied: ${scan.assets.length}`,
-    `- Fonts copied: ${scan.fonts.length}`,
+    `- Fonts detected (not copied): ${scan.fonts.length}`,
     `- Representative snippets: ${scan.components.length}`,
     '',
     '## Representative Components',

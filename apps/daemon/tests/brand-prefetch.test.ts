@@ -95,7 +95,8 @@ describe('prefetchFromHtml (extract from already-rendered DOM)', () => {
       'a{color:#e8590c}.accent{color:#0ca678}.cta{background:#3b5bdb}',
     ].join('');
 
-    const result = await prefetchFromHtml(html, css, 'https://acme.test/', tmpBrandDir());
+    const brandDir = tmpBrandDir();
+    const result = await prefetchFromHtml(html, css, 'https://acme.test/', brandDir);
 
     expect(result).not.toBeNull();
     expect(result?.blocked).toBe(false);
@@ -104,6 +105,8 @@ describe('prefetchFromHtml (extract from already-rendered DOM)', () => {
     expect(result?.description).toContain('developer tools');
     expect(result?.colors.length ?? 0).toBeGreaterThan(0);
     expect(result?.fonts.some((f) => /inter/i.test(f.family))).toBe(true);
+    expect(result?.fontFiles).toEqual([]);
+    expect(fs.existsSync(path.join(brandDir, 'fonts'))).toBe(false);
     expect((result?.headings ?? []).join(' ')).toContain('Welcome to Acme');
   });
 

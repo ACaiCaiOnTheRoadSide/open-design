@@ -1,7 +1,7 @@
 // @ts-nocheck
 import fs from "node:fs";
 import path from "node:path";
-import { harvestFonts, type FontFile } from "./fonts.js";
+import type { FontFile } from "./fonts.js";
 import { fetchExternalBrandAsset } from "./safe-fetch.js";
 
 /**
@@ -59,7 +59,7 @@ export type PrefetchResult = {
   fonts: FontCandidate[];
   fontFaceFamilies: string[];
   googleFontsUrls: string[];
-  /** Webfont files downloaded into the brand dir's fonts/ folder. */
+  /** Kept for contract compatibility; design artifacts never bundle font binaries. */
   fontFiles: FontFile[];
   logos: LogoCandidate[];
   headings: string[];
@@ -871,22 +871,7 @@ async function harvestFromHtml(
   }
   onProgress("styles", `${colors.length} colors, ${fonts.length} fonts`);
 
-  // ── webfont files ──
-  // Self-host the faces the site's CSS declares (origin-hosted and Google
-  // Fonts alike) so previews and the exported .brandpack render in the real
-  // typefaces. The used-stack families download first; caps cut the tail.
-  let fontFiles: FontFile[] = [];
-  if (!blocked && allCss) {
-    onProgress("fonts");
-    try {
-      fontFiles = await harvestFonts(allCss, baseUrl, brandDir, {
-        preferFamilies: [...fonts.map((f) => f.family), ...fontFaceFamilies],
-      });
-    } catch {
-      /* font harvest is best-effort */
-    }
-    onProgress("fonts-done", `${fontFiles.length} font files`);
-  }
+  const fontFiles: FontFile[] = [];
 
   // ── logos ──
   onProgress("logos");

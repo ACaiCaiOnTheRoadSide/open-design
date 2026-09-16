@@ -65,7 +65,6 @@ describe('importLocalDesignSystemProject', () => {
         'components.manifest.json',
         'manifest.json',
         'assets/logo.svg',
-        'fonts/acmesans-regular.woff2',
         'preview/colors.html',
         'preview/typography.html',
         'preview/spacing.html',
@@ -120,7 +119,9 @@ describe('importLocalDesignSystemProject', () => {
       },
     });
     expect((manifest.preview as { pages: unknown[] }).pages).toHaveLength(6);
-    expect(manifest.fonts).toMatchObject([{ family: 'AcmeSans Regular', file: 'fonts/acmesans-regular.woff2' }]);
+    expect(manifest.fonts).toBeUndefined();
+    expect(fs.existsSync(path.join(result.dir, 'fonts'))).toBe(false);
+    expect(result.files.some((file) => /\.(?:woff2?|ttf|otf|eot)$/i.test(file))).toBe(false);
 
     const design = fs.readFileSync(path.join(result.dir, 'DESIGN.md'), 'utf8');
     expect(design).toContain('A focused workspace for AI design reviews.');

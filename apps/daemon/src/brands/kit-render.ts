@@ -14,7 +14,6 @@ import path from 'node:path';
 import type { ProjectMetadata } from '@open-design/contracts';
 
 import { resolveProjectDir, writeProjectFile } from '../projects.js';
-import { fontFaceCss, readFontManifest } from './fonts.js';
 import { brandKitCopy, localizedBrandKitAssetDefs } from './kit-i18n.js';
 
 /** Location of the bundled template relative to the daemon's skills root. */
@@ -196,16 +195,7 @@ export async function writeBrandKitPreview(opts: WriteBrandKitOptions): Promise<
     locale: copy.lang,
     copy,
   };
-  // Self-host the harvested webfonts (if any) so specimens + the kit render in
-  // the brand's real typefaces; urls are relative to the project's fonts/.
-  let fontFace = '';
-  try {
-    const fonts = readFontManifest(projectDir);
-    if (fonts.length) fontFace = fontFaceCss(fonts, 'fonts/');
-  } catch {
-    fontFace = '';
-  }
-  const html = renderBrandKitHtml(template, payload, fontFace);
+  const html = renderBrandKitHtml(template, payload, '');
   try {
     await writeProjectFile(
       opts.projectsRoot,
