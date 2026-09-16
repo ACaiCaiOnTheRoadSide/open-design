@@ -6332,7 +6332,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 
   function rewriteViteDistAssetUrlsForPreview(html: string): string {
     return html.replace(
-      /\b(href|src)\s*=\s*(["'])\/assets\//gi,
+      /\b(href|src)\s*=\s*(["'])(?:\.\/|\/)?assets\//gi,
       (_match, attr: string, quote: string) => `${attr}=${quote}dist/assets/`,
     );
   }

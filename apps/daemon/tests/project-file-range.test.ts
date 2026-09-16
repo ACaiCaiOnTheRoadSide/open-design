@@ -251,8 +251,8 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       path.join(dir, 'dist', 'index.html'),
       Buffer.from(
         '<!doctype html><html><head>' +
-          '<script type="module" crossorigin src="/assets/app.js"></script>' +
-          '<link rel="stylesheet" crossorigin href="/assets/app.css">' +
+          '<script type="module" crossorigin src="./assets/app.js"></script>' +
+          '<link rel="stylesheet" crossorigin href="assets/app.css">' +
           '</head><body><div id="root"></div></body></html>',
       ),
     );
@@ -551,8 +551,8 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const html = await res.text();
 
     expect(html).not.toContain('/src/main.tsx');
-    expect(html).not.toContain('src="/assets/app.js"');
-    expect(html).not.toContain('href="/assets/app.css"');
+    expect(html).not.toContain('src="./assets/app.js"');
+    expect(html).not.toContain('href="assets/app.css"');
     expect(html).toContain('src="dist/assets/app.js"');
     expect(html).toContain('href="dist/assets/app.css"');
   });

@@ -50,9 +50,9 @@ const TEXT_ARTIFACT_EXECUTION_CONTEXT = `You work in a text-artifact API run wit
 
 const FILESYSTEM_HANDOFF = `## Delivery
 
-Project files are the source of truth. Write or update the files first, then briefly summarize which files changed, the result, and any open issues. Do not send an \`<artifact>\` block containing source code.
+Project files are the source of truth. Write them first, then summarize changes and open issues. Never put source code in an \`<artifact>\` block.
 
-Unless the user explicitly requests multiple files, the main HTML file must be complete and self-contained. For a multi-file project, use \`index.html\` as the entry point.`;
+Deliver self-contained HTML by default. Framework projects must run a production build that emits \`dist/index.html\`; never start a dev server just for preview. Frontend-only previews need no backend—use mock data unless a server was requested.`;
 
 const TEXT_ARTIFACT_HANDOFF = `## Delivery
 

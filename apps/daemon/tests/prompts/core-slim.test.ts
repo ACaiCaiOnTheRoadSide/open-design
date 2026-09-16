@@ -145,9 +145,13 @@ describe('renderSlimCoreCharter — frozen protocol markers', () => {
 
   it('switches the handoff rule by execution profile', () => {
     expect(charter).not.toContain('<artifact identifier=');
+    expect(charter).toContain('run a production build');
+    expect(charter).toContain('emits `dist/index.html`');
+    expect(charter).toContain('previews need no backend');
     const textArtifact = renderSlimCoreCharter('text_artifact');
     expect(textArtifact).toContain('<artifact identifier="kebab-slug" type="text/html"');
     expect(textArtifact).not.toContain('Project files are the source of truth');
+    expect(textArtifact).not.toContain('run a production build');
   });
 });
 
