@@ -53,7 +53,7 @@ function closeServer(server: http.Server): Promise<void> {
 
 function createOriginMiddleware(resolvedPort: number, host = '127.0.0.1') {
   const _NULL_ORIGIN_SAFE_GET_RE =
-    /^\/projects\/[^/]+\/(?:raw|preview)\/|^\/codex-pets\/[^/]+\/spritesheet$|^\/asset-cache$/;
+    /^\/projects\/[^/]+\/(?:(?:raw|preview)\/|archive$)|^\/codex-pets\/[^/]+\/spritesheet$|^\/asset-cache$/;
   return (req: Request, res: Response, next: NextFunction) => {
     // Mirror the real /api middleware: the zero-config clipper bypass runs
     // first, using the same predicate server.ts uses. `req.path` is
@@ -94,6 +94,9 @@ function makeTestApp(port: number, host = '127.0.0.1') {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     res.json({ active: true });
+  });
+  app.get('/api/projects/:id/archive', (_req, res) => {
+    res.type('application/zip').send(Buffer.from('PK'));
   });
   app.get('/api/projects/:id/raw/:name', (req, res) => {
     // Mimics the real raw-file route that sets CORS for Origin: null
@@ -332,6 +335,13 @@ describe('daemon origin validation middleware', () => {
   });
 
   // --- Origin: null (sandboxed iframe previews) ---
+
+  it('allows Origin: null for GET project archive routes', async () => {
+    const res = await request(port, 'GET', '/api/projects/abc/archive', {
+      origin: 'null',
+    });
+    expect(res.status).toBe(200);
+  });
 
   it('allows Origin: null for GET raw-file preview routes', async () => {
     const res = await request(port, 'GET', '/api/projects/abc/raw/design.html', {

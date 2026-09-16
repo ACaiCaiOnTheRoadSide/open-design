@@ -1252,11 +1252,11 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
   // share menu can hand the user the actual files they uploaded — e.g. the
   // imported `ui-design/` folder — instead of a one-file snapshot of the
   // rendered HTML. `root` scopes the archive to a subdirectory; without
-  // it, the whole project is packed.
+  // it, the whole project is packed. This GET is public (no login / token /
+  // workspace headers); POST /archive/batch stays authenticated.
   app.get('/api/projects/:id/archive', async (req, res) => {
     try {
       const root = typeof req.query?.root === 'string' ? req.query.root : '';
-      if (!await authorizeExportRead(req, res, { allowNavigationQuery: true })) return;
       const project = getProject(db, req.params.id);
       const { stream, baseName } = await createProjectArchiveStream(
         PROJECTS_DIR,

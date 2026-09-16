@@ -1064,6 +1064,7 @@ import {
   apiTokenFromEnv,
   isApiAuthDisabled,
   isApiTokenMiddlewareEnabled,
+  isPublicProjectArchiveRequest,
 } from './api-token-auth.js';
 import {
   createPrincipalAuthMiddleware,
@@ -2881,6 +2882,7 @@ export async function startServer({
     ]);
     app.use('/api', (req, res, next) => {
       if (openProbePaths.has(req.path)) return next();
+      if (isPublicProjectArchiveRequest(req.method, req.path)) return next();
       if (req.method === 'GET') {
         const previewAsset = parseProjectPreviewAssetPath(req.path);
         if (
@@ -3068,7 +3070,7 @@ export async function startServer({
   // Routes that serve content to sandboxed iframes (Origin: null) for
   // read-only purposes.  All other /api routes reject Origin: null.
   const _NULL_ORIGIN_SAFE_GET_RE =
-    /^\/projects\/[^/]+\/(?:raw|preview)\/|^\/codex-pets\/[^/]+\/spritesheet$|^\/asset-cache$/;
+    /^\/projects\/[^/]+\/(?:(?:raw|preview)\/|archive$)|^\/codex-pets\/[^/]+\/spritesheet$|^\/asset-cache$/;
   const _POWERED_PREVIEW_SAFE_RE = /^\/projects\/[^/]+\/powered\/.+$/u;
 
   // Reject cross-origin requests to API endpoints.

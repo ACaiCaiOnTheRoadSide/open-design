@@ -122,6 +122,8 @@ describe('principal route policy', () => {
       ['DELETE', '/api/design-systems/id'],
     ] as const) expect(principalContextModeForApiRequest(method, path, { backend: 'postgres' })).toBe('required');
     expect(principalContextModeForApiRequest('GET', '/api/projects/id', { backend: 'postgres' })).toBe('required');
+    expect(principalContextModeForApiRequest('GET', '/api/projects/id/archive', { backend: 'postgres' })).toBe('optional');
+    expect(principalContextModeForApiRequest('POST', '/api/projects/id/archive/batch', { backend: 'postgres' })).toBe('required');
     expect(principalContextModeForApiRequest('DELETE', '/api/projects/id/files/name', { backend: 'postgres' })).toBe('required');
   });
 });

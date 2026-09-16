@@ -4,8 +4,8 @@
 //   1. The daemon refuses to start with OD_BIND_HOST=0.0.0.0 when no
 //      OD_API_TOKEN is set.
 //   2. When OD_API_TOKEN is set, every /api/* request from a non-loopback
-//      peer must carry `Authorization: Bearer <OD_API_TOKEN>`. The
-//      health/readiness/version probes stay open for monitoring.
+//      peer must carry `Authorization: Bearer <OD_API_TOKEN>`, except
+//      health/readiness/version probes and GET /api/projects/:id/archive.
 //
 // Tests force the bearer-required code path by stamping the env vars
 // before startServer. The daemon listens on 127.0.0.1 throughout (so
@@ -17,7 +17,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isApiAuthDisabled, isApiTokenMiddlewareEnabled } from '../src/api-token-auth.js';
+import {
+  isApiAuthDisabled,
+  isApiTokenMiddlewareEnabled,
+  isPublicProjectArchiveRequest,
+} from '../src/api-token-auth.js';
 import { startServer } from '../src/server.js';
 
 const PREVIOUS_TOKEN = process.env.OD_API_TOKEN;
@@ -81,6 +85,17 @@ afterEach(async () => {
   else process.env.OD_BIND_HOST = PREVIOUS_HOST;
   if (PREVIOUS_DISABLE_API_AUTH === undefined) delete process.env.OD_DISABLE_API_AUTH;
   else process.env.OD_DISABLE_API_AUTH = PREVIOUS_DISABLE_API_AUTH;
+});
+
+describe('public project archive path', () => {
+  it('matches GET /api/projects/:id/archive only', () => {
+    expect(isPublicProjectArchiveRequest('GET', '/api/projects/abc/archive')).toBe(true);
+    expect(isPublicProjectArchiveRequest('GET', '/projects/abc/archive')).toBe(true);
+    expect(isPublicProjectArchiveRequest('GET', '/api/projects/abc/archive/')).toBe(true);
+    expect(isPublicProjectArchiveRequest('POST', '/api/projects/abc/archive')).toBe(false);
+    expect(isPublicProjectArchiveRequest('GET', '/api/projects/abc/archive/batch')).toBe(false);
+    expect(isPublicProjectArchiveRequest('GET', '/api/projects/abc/files')).toBe(false);
+  });
 });
 
 describe('bound-API-token guard', () => {

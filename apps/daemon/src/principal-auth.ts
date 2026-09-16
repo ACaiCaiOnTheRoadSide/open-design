@@ -1,5 +1,10 @@
 import type { Request, RequestHandler } from 'express';
-import { apiTokenAuthorizationMatches, apiTokenFromEnv, isApiAuthDisabled } from './api-token-auth.js';
+import {
+  apiTokenAuthorizationMatches,
+  apiTokenFromEnv,
+  isApiAuthDisabled,
+  isPublicProjectArchiveRequest,
+} from './api-token-auth.js';
 import { runWithRequestContext, type VerifiedPrincipal } from './request-context.js';
 import { PROVIDER_CONFIG_HEADER, sanitizeProviderConfig } from './runtime-provider-config.js';
 
@@ -144,7 +149,11 @@ export function principalContextModeForApiRequest(
     if (normalizedPath === '/applied-plugins' || normalizedPath.startsWith('/applied-plugins/')) return 'required';
     // Every hosted project data-plane route needs principal ALS; the central
     // project authorizer then applies either owner or Workspace authority.
-    if (normalizedPath === '/projects' || normalizedPath.startsWith('/projects/')) return 'required';
+    // ZIP download is public: capability is the unguessable project id.
+    if (normalizedPath === '/projects' || normalizedPath.startsWith('/projects/')) {
+      if (isPublicProjectArchiveRequest(normalizedMethod, normalizedPath)) return 'optional';
+      return 'required';
+    }
     if (normalizedMethod === 'DELETE' && /^\/projects\/[^/]+$/u.test(normalizedPath)) return 'required';
     if (normalizedMethod === 'POST' && /^\/projects\/[^/]+\/stats-events$/u.test(normalizedPath)) return 'required';
     if (normalizedMethod === 'POST' && /^\/workspaces\/[^/]+\/projects\/batch-delete$/u.test(normalizedPath)) {

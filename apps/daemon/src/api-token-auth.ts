@@ -23,6 +23,17 @@ export function isApiTokenMiddlewareEnabled(env: NodeJS.ProcessEnv = process.env
   return apiTokenFromEnv(env).length > 0 && !isApiAuthDisabled(env);
 }
 
+const PROJECT_ARCHIVE_PATH_RE = /^\/projects\/[^/]+\/archive$/i;
+
+/** GET /api/projects/:id/archive is a public ZIP download; batch stays authenticated. */
+export function isPublicProjectArchiveRequest(method: unknown, path: unknown): boolean {
+  if (String(method || '').toUpperCase() !== 'GET') return false;
+  const pathname = String(path || '').split('?')[0] ?? '';
+  const withoutApi = pathname.toLowerCase().startsWith('/api/') ? pathname.slice(4) : pathname;
+  const normalized = withoutApi.replace(/\/+$/u, '') || '/';
+  return PROJECT_ARCHIVE_PATH_RE.test(normalized);
+}
+
 function secretsMatch(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual, 'utf8');
   const expectedBytes = Buffer.from(expected, 'utf8');
