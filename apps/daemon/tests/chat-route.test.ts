@@ -18,6 +18,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   bufferedAntigravityGeminiFirstTokenAt,
   composeLiveInstructionPrompt,
+  renderHuskboxOhMyAgentMediaPolicy,
   describeStablePromptCache,
   designSystemIdFromPluginSnapshot,
   resolveChatExtraAllowedDirs,
@@ -4040,6 +4041,27 @@ async function waitForRunStatus(
 }
 
 describe('chat prompt helpers', () => {
+  it('keeps media generation synchronous and splits long videos into resumable shots', () => {
+    const policy = renderHuskboxOhMyAgentMediaPolicy({
+      modelConfigPath: '/workspace/.od/tmp/model.json',
+      mcpConfigPath: '/workspace/.od/tmp/mcp.json',
+    });
+
+    expect(policy).toContain('Never start background work');
+    expect(policy).toContain('ask concise questions instead of silently inventing');
+    expect(policy).toContain('expand them into a concise generation brief');
+    expect(policy).toContain('wait for explicit confirmation or corrections');
+    expect(policy).toContain('Do not call any generation tool until the user has explicitly confirmed');
+    expect(policy).toContain('call the media MCP tools directly from the main agent');
+    expect(policy).toContain('Do not launch a nested `ohmyagent -p` process');
+    expect(policy).toContain('first create a shot list');
+    expect(policy).toContain('obtain user confirmation before generation');
+    expect(policy).toContain('Generate confirmed shots sequentially');
+    expect(policy).toContain('a small manifest in the project workspace');
+    expect(policy).toContain('concatenate them with a foreground media command');
+    expect(policy).toContain('video_id, model, and provider_id');
+  });
+
   it('appends a final prompt override after the client system prompt and removes earlier duplicates', () => {
     const override = '## Final runtime policy\nUse the shared media dispatcher.';
     const clientMediaContract =

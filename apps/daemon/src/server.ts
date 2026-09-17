@@ -88,6 +88,7 @@ import {
 import {
   UPLOAD_DIR,
   composeLiveInstructionPrompt,
+  renderHuskboxOhMyAgentMediaPolicy,
   formatDesignFilesWorkspaceHint,
   formatLazyHydrationHint,
   formatProjectAttachmentHint,
@@ -145,6 +146,7 @@ import {
 } from './runtimes/run-lifecycle-analytics.js';
 export {
   composeLiveInstructionPrompt,
+  renderHuskboxOhMyAgentMediaPolicy,
   formatDesignFilesWorkspaceHint,
   formatLazyHydrationHint,
   formatProjectAttachmentHint,
@@ -11486,7 +11488,13 @@ export async function startServer({
       daemonSystemPrompt: includeStableInstructions ? daemonSystemPrompt : '',
       runtimeToolPrompt: includeStableInstructions ? runtimeToolPrompt : '',
       clientSystemPrompt: clientInstructionPrompt,
-      finalPromptOverride: null,
+      finalPromptOverride:
+        def.id === 'ohmyagent' && selectedExecutionTransportKind === 'huskbox'
+          ? renderHuskboxOhMyAgentMediaPolicy({
+              modelConfigPath: `${huskboxExecutionConfigFromEnv().sandboxMount.replace(/\/$/u, '')}/.od/tmp/od-ohmyagent-model-${run.id}.json`,
+              mcpConfigPath: `${huskboxExecutionConfigFromEnv().sandboxMount.replace(/\/$/u, '')}/.od/tmp/od-ohmyagent-mcp-${run.id}.json`,
+            })
+          : null,
     });
     // Some models (notably claude-opus-4-7 with --include-partial-messages)
     // start their reply by echoing the top of the user message verbatim,
