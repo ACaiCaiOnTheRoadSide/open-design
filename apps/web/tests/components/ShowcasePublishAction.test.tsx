@@ -19,11 +19,30 @@ describe('ShowcasePublishAction', () => {
     );
 
     fireEvent.click(screen.getByTestId('chrome-publish-button'));
+    fireEvent.click(await screen.findByText('发布到 Showcase'));
     expect(await screen.findByText('发布到案例墙')).toBeTruthy();
     expect(onPublish).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByText('继续发布'));
     await waitFor(() => expect(onPublish).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('已交给 AI 发布,请在对话里填写发布信息。')).toBeTruthy();
+  });
+
+  it('offers a private OhMyInspire template publish target', async () => {
+    const onPublish = vi.fn().mockResolvedValue(true);
+    const onPublishOhMyInspire = vi.fn().mockResolvedValue(true);
+    render(
+      <I18nProvider initial="zh-CN">
+        <ConfirmDialogHost />
+        <ShowcasePublishAction onPublish={onPublish} onPublishOhMyInspire={onPublishOhMyInspire} />
+      </I18nProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('chrome-publish-button'));
+    fireEvent.click(await screen.findByText('发布到 OhMyInspire'));
+    expect(await screen.findByText('模板将保存到 OhMyInspire「我的模板」中，默认为草稿，之后可由你选择公开。')).toBeTruthy();
+    fireEvent.click(screen.getByText('发布模板'));
+    await waitFor(() => expect(onPublishOhMyInspire).toHaveBeenCalledTimes(1));
+    expect(onPublish).not.toHaveBeenCalled();
   });
 });

@@ -1797,6 +1797,7 @@ interface Props {
   onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
   onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
   onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
+  onPublishOhMyInspireViaAgent?: (filePath: string) => Promise<boolean | void> | boolean | void;
   onFileSaved?: () => Promise<void> | void;
   onBrandExtractionStopRequest?: () => void;
   // Open `openName` as a tab (focusing it) and close `closeName` in one
@@ -1896,6 +1897,7 @@ export const FileViewer = memo(function FileViewer({
   onExportImageViaAgent,
   onExportPdfViaAgent,
   onPublishViaAgent,
+  onPublishOhMyInspireViaAgent,
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
@@ -1989,6 +1991,7 @@ export const FileViewer = memo(function FileViewer({
         onExportImageViaAgent={onExportImageViaAgent}
         onExportPdfViaAgent={onExportPdfViaAgent}
         onPublishViaAgent={onPublishViaAgent}
+        onPublishOhMyInspireViaAgent={onPublishOhMyInspireViaAgent}
         onFileSaved={onFileSaved}
         onBrandExtractionStopRequest={onBrandExtractionStopRequest}
         onOpenFileReplacing={onOpenFileReplacing}
@@ -7399,6 +7402,7 @@ function HtmlViewer({
   onExportImageViaAgent,
   onExportPdfViaAgent,
   onPublishViaAgent,
+  onPublishOhMyInspireViaAgent,
   onFileSaved,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
@@ -7438,6 +7442,7 @@ function HtmlViewer({
   onExportImageViaAgent?: (request: ImageAgentExportRequest) => Promise<boolean> | boolean;
   onExportPdfViaAgent?: (request: PdfAgentExportRequest) => Promise<boolean> | boolean;
   onPublishViaAgent?: () => Promise<boolean | void> | boolean | void;
+  onPublishOhMyInspireViaAgent?: (filePath: string) => Promise<boolean | void> | boolean | void;
   onFileSaved?: () => Promise<void> | void;
   onBrandExtractionStopRequest?: () => void;
   onOpenFileReplacing?: (openName: string, closeName: string) => void;
@@ -16493,8 +16498,12 @@ function HtmlViewer({
                   </div>
                 ) : null}
               </div>
-              {canShare && onPublishViaAgent ? (
-                <ShowcasePublishAction disabled={streaming} onPublish={onPublishViaAgent} />
+              {canShare && onPublishViaAgent && onPublishOhMyInspireViaAgent ? (
+                <ShowcasePublishAction
+                  disabled={streaming}
+                  onPublish={onPublishViaAgent}
+                  onPublishOhMyInspire={() => onPublishOhMyInspireViaAgent(file.name)}
+                />
               ) : null}
               {viewerOnly ? null : (
                 <>

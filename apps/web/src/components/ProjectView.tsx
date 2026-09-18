@@ -10030,6 +10030,45 @@ export function ProjectView({
     return started !== false;
   }, [currentConversationActionDisabled, handleSend]);
 
+  const handlePublishOhMyInspireViaAgent = useCallback(async (filePath: string) => {
+    if (currentConversationActionDisabled) return false;
+    const archiveResponse = await fetch(`/api/projects/${encodeURIComponent(project.id)}/archive`);
+    if (!archiveResponse.ok) throw new Error(`archive download failed: ${archiveResponse.status}`);
+    const archive = await archiveResponse.blob();
+    const metadata = {
+      id: `od-${project.id}`,
+      name: project.name || `OpenDesign ${project.id}`,
+      description: `Published from OpenDesign project ${project.id}`,
+      tags: ['open-design'],
+      triggers: [],
+      mode: 'prototype',
+      category: 'user-template',
+      platform: 'web',
+      scenario: 'custom',
+      skillPath: 'DESIGN.md',
+      preview: { type: 'html', path: filePath },
+      profile: {
+        use_cases: [], style_traits: [],
+        color_theme: { appearance: '', dominant: [], accent: [], text: [], semantic_tags: [] },
+        typography: [], layout: [], visual_elements: [], content_structure: [], mood: [],
+      },
+      source: { project_id: project.id, revision_id: 'initial' },
+    };
+    const form = new FormData();
+    form.append('metadata', JSON.stringify(metadata));
+    form.append('template', archive, `open-design-${project.id}.zip`);
+    const response = await fetch('/api/v1/ohmyinspire/templates', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': `open-design-${project.id}-initial` },
+      body: form,
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `template upload failed: ${response.status}`);
+    }
+    return true;
+  }, [currentConversationActionDisabled, project.id, project.name]);
+
   const handlePublishViaAgent = useCallback(async () => {
     if (currentConversationActionDisabled) return false;
     pendingFormSkillIdsRef.current = ['publish-website'];
@@ -11516,6 +11555,7 @@ export function ProjectView({
           onExportImageViaAgent={handleExportImageViaAgent}
           onExportPdfViaAgent={handleExportPdfViaAgent}
           onPublishViaAgent={handlePublishViaAgent}
+          onPublishOhMyInspireViaAgent={handlePublishOhMyInspireViaAgent}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
           focusMode={workspaceFocused}
