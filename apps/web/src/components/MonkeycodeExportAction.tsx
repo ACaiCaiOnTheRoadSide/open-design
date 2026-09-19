@@ -39,7 +39,7 @@ export function MonkeycodeExportAction({
     onStarted?.();
 
     const root = archiveRootFromFilePath(filePath);
-    const archivePath = `/api/projects/${encodeURIComponent(projectId)}/archive${
+    const archivePath = `/public-project-archives/${encodeURIComponent(projectId)}${
       root ? `?root=${encodeURIComponent(root)}` : ''
     }`;
     const archiveUrl = new URL(archivePath, window.location.origin).toString();
