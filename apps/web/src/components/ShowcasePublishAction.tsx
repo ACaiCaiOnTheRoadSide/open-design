@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { confirm } from './confirm-dialog-host';
+import { RemixIcon } from './RemixIcon';
 import { Toast } from './Toast';
 
 interface Props {
@@ -17,6 +18,26 @@ export function ShowcasePublishAction({ disabled = false, onPublish, onPublishOh
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
 
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
 
   async function publish(target: PublishTarget) {
     if (disabled || busy) return;
@@ -50,11 +71,11 @@ export function ShowcasePublishAction({ disabled = false, onPublish, onPublishOh
 
   return (
     <>
-      <div className="relative">
+      <div ref={rootRef} className="showcase-publish">
         <button
           type="button"
           data-testid="chrome-publish-button"
-          className="chrome-action chrome-action-secondary chrome-action-with-label chrome-action-text-only od-tooltip"
+          className="chrome-action chrome-action-secondary chrome-action-with-label chrome-action-text-only showcase-publish__trigger od-tooltip"
           data-tooltip={t('fileViewer.publishTooltip')}
           data-tooltip-placement="bottom"
           disabled={disabled || busy}
@@ -63,16 +84,25 @@ export function ShowcasePublishAction({ disabled = false, onPublish, onPublishOh
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
-          <span>{t('fileViewer.publish')} ▾</span>
+          <span>{t('fileViewer.publish')}</span>
+          <RemixIcon name="arrow-down-s-line" size={14} className="showcase-publish__chevron" />
         </button>
         {open ? (
-          <div role="menu" className="absolute right-0 top-full z-50 mt-1 min-w-44 rounded-md border border-border bg-background p-1 shadow-lg">
-            <button type="button" role="menuitem" className="w-full rounded px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { void publish('showcase'); }}>
-              发布到 Showcase
+          <div role="menu" aria-label={t('fileViewer.publish')} className="showcase-publish__menu">
+            <button type="button" role="menuitem" className="showcase-publish__item" onClick={() => { void publish('showcase'); }}>
+              <span className="showcase-publish__icon"><RemixIcon name="upload-cloud-2-line" size={16} /></span>
+              <span className="showcase-publish__copy">
+                <span className="showcase-publish__title">发布到 Showcase</span>
+                <span className="showcase-publish__description">公开展示到案例墙</span>
+              </span>
             </button>
             {onPublishOhMyInspire ? (
-              <button type="button" role="menuitem" className="w-full rounded px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { void publish('ohmyinspire'); }}>
-                发布到 OhMyInspire
+              <button type="button" role="menuitem" className="showcase-publish__item" onClick={() => { void publish('ohmyinspire'); }}>
+                <span className="showcase-publish__icon"><RemixIcon name="sparkling-line" size={16} /></span>
+                <span className="showcase-publish__copy">
+                  <span className="showcase-publish__title">发布到 OhMyInspire</span>
+                  <span className="showcase-publish__description">保存到我的模板</span>
+                </span>
               </button>
             ) : null}
           </div>
