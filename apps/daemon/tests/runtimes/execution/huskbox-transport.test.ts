@@ -44,7 +44,7 @@ describe('HuskboxExecutionTransport', () => {
     });
     expect(parsed).toMatchObject({ baseUrl: 'https://huskbox.test', apiKey: 'secret' });
     expect(parsed).not.toHaveProperty('tenantId');
-    expect(parsed.image).toBe('acaicai123/ai-design-ohmyagent:3f98e6d-ubuntu26.04-r1');
+    expect(parsed.image).toBe('acaicai123/ai-design-ohmyagent:3f98e6d-ubuntu26.04-chromium-r1');
   });
 
   it('sends the OpenAPI snake_case request without a tenant header and streams output', async () => {

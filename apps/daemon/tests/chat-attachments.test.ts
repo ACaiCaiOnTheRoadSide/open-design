@@ -69,7 +69,12 @@ describe('formatDesignFilesWorkspaceHint', () => {
     );
 
     expect(hint).toContain('## Design Files workspace');
-    expect(hint).toContain('investor-pitch-deck.html');
+    expect(hint).toContain('/tmp/open-design/project-1/investor-pitch-deck.html');
+    expect(hint).toContain('/tmp/open-design/project-1/assets/x.png');
+    expect(hint).toContain('Every deliverable and generated or downloaded resource must be saved inside this directory');
+    expect(hint).toContain('hidden `.assets/` directory');
+    expect(hint).toContain('project-relative URLs such as `assets/x.png`');
+    expect(hint).toContain('verify that it exists under the current working directory');
     expect(hint).toContain('choose semantic filenames from the brief instead of defaulting to `index.html`');
     expect(hint).toContain('If the user did not attach any file, do not assume there are no relevant Design Files.');
     expect(hint).toContain('inspect/search/read this workspace before answering or editing');
