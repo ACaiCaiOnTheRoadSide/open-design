@@ -301,12 +301,12 @@
 .viewer-action.primary {
   background: var(--accent);
   border: 1px solid var(--accent);
-  color: white;
+  color: var(--accent-contrast);
 }
 .viewer-action.primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  color: white;
+  color: var(--accent-contrast);
 }
 /* Primary actions support a subtle in-flight affordance via data-running. Keeps
    layout stable (unlike :disabled-only) so locale text width doesn't jump. */
