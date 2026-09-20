@@ -648,13 +648,14 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                   />
                 </CollapsibleCustomChoice>
               ) : null}
-              {q.type === 'text' ? (
+              {questionUsesTextInput(q) ? (
                 <input
                   type="text"
                   className="qf-input"
                   value={typeof value === 'string' ? value : ''}
                   placeholder={q.placeholder}
                   disabled={locked}
+                  aria-label={q.label}
                   onChange={(e) => update(q.id, e.target.value)}
                 />
               ) : null}
@@ -1532,6 +1533,29 @@ function emptyQuestionValue(q: QuestionForm['questions'][number]): string | stri
   if (q.type === 'range') return String(q.min ?? 0);
   if (q.type === 'color') return normalizeColorInputValue('');
   return '';
+}
+
+function questionUsesTextInput(q: QuestionForm['questions'][number]): boolean {
+  if (q.type === 'text') return true;
+  if (q.type === 'radio' || q.type === 'checkbox' || q.type === 'select') {
+    return !q.options?.length;
+  }
+  if (q.type === 'direction-cards') return !q.cards?.length;
+
+  return ![
+    'textarea',
+    'number',
+    'range',
+    'date',
+    'time',
+    'datetime-local',
+    'color',
+    'url',
+    'email',
+    'tel',
+    'file',
+    'switch',
+  ].includes(q.type);
 }
 
 function formWithVisualStyleOptions(

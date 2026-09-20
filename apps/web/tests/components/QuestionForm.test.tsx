@@ -614,6 +614,39 @@ describe('QuestionFormView', () => {
     );
   });
 
+  it('falls back to a text input when a required choice has no options', () => {
+    const malformedChoiceForm = {
+      id: 'missing-options',
+      title: 'Missing options',
+      questions: [
+        {
+          id: 'intensity',
+          label: 'Overall atmosphere intensity',
+          type: 'radio',
+          required: true,
+        },
+      ],
+    } as QuestionForm;
+    const onSubmit = vi.fn();
+    render(<QuestionFormView form={malformedChoiceForm} interactive onSubmit={onSubmit} />);
+
+    const input = screen.getByRole('textbox', {
+      name: 'Overall atmosphere intensity',
+    }) as HTMLInputElement;
+    const submit = screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement;
+
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: 'Medium' } });
+    expect(submit.disabled).toBe(false);
+
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.stringContaining('- Overall atmosphere intensity: Medium'),
+      { intensity: 'Medium' },
+      'submit',
+    );
+  });
+
   it('offers Skip all when a single-question form contains required questions', () => {
     const onSubmit = vi.fn();
     render(<QuestionFormView form={richForm} interactive onSubmit={onSubmit} />);
