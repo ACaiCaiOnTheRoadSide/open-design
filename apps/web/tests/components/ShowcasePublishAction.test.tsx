@@ -43,6 +43,25 @@ describe('ShowcasePublishAction', () => {
     expect(await screen.findByText('模板将保存到 OhMyInspire「我的模板」中，默认为草稿，之后可由你选择公开。')).toBeTruthy();
     fireEvent.click(screen.getByText('发布模板'));
     await waitFor(() => expect(onPublishOhMyInspire).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('已发布到 OhMyInspire「我的模板」')).toBeTruthy();
     expect(onPublish).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an OhMyInspire publish failure reason', async () => {
+    const onPublish = vi.fn().mockResolvedValue(true);
+    const onPublishOhMyInspire = vi.fn().mockRejectedValue(new Error('integration is disabled'));
+    render(
+      <I18nProvider initial="zh-CN">
+        <ConfirmDialogHost />
+        <ShowcasePublishAction onPublish={onPublish} onPublishOhMyInspire={onPublishOhMyInspire} />
+      </I18nProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('chrome-publish-button'));
+    fireEvent.click(await screen.findByText('发布到 OhMyInspire'));
+    fireEvent.click(await screen.findByText('发布模板'));
+
+    expect(await screen.findByText('发布到 OhMyInspire 失败')).toBeTruthy();
+    expect(screen.getByText('integration is disabled')).toBeTruthy();
   });
 });

@@ -15,7 +15,11 @@ type PublishTarget = 'showcase' | 'ohmyinspire';
 export function ShowcasePublishAction({ disabled = false, onPublish, onPublishOhMyInspire }: Props) {
   const t = useT();
   const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    details?: string;
+    tone: 'success' | 'error' | 'loading';
+  } | null>(null);
 
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -54,16 +58,26 @@ export function ShowcasePublishAction({ disabled = false, onPublish, onPublishOh
     if (!accepted) return;
 
     setBusy(true);
+    setToast({
+      message: ohMyInspire ? '正在发布到 OhMyInspire…' : t('fileViewer.publishAgentQueued'),
+      tone: 'loading',
+    });
     try {
       const queued = await (ohMyInspire ? onPublishOhMyInspire?.() : onPublish());
       setToast({
         message: queued === false
           ? t('fileViewer.publishBusy')
-          : t('fileViewer.publishAgentQueued'),
+          : ohMyInspire
+            ? '已发布到 OhMyInspire「我的模板」'
+            : t('fileViewer.publishAgentQueued'),
         tone: queued === false ? 'error' : 'success',
       });
-    } catch {
-      setToast({ message: t('fileViewer.publishFailed'), tone: 'error' });
+    } catch (error) {
+      setToast({
+        message: ohMyInspire ? '发布到 OhMyInspire 失败' : t('fileViewer.publishFailed'),
+        ...(error instanceof Error ? { details: error.message } : {}),
+        tone: 'error',
+      });
     } finally {
       setBusy(false);
     }
@@ -108,7 +122,16 @@ export function ShowcasePublishAction({ disabled = false, onPublish, onPublishOh
           </div>
         ) : null}
       </div>
-      {toast ? <Toast message={toast.message} tone={toast.tone} onDismiss={() => setToast(null)} /> : null}
+      {toast ? (
+        <Toast
+          message={toast.message}
+          details={toast.details}
+          tone={toast.tone}
+          role={toast.tone === 'error' ? 'alert' : 'status'}
+          {...(toast.tone === 'loading' ? { ttlMs: 0 } : {})}
+          onDismiss={() => setToast(null)}
+        />
+      ) : null}
     </>
   );
 }
