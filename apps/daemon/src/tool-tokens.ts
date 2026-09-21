@@ -22,6 +22,7 @@ export const HYPERFRAMES_SCAFFOLD_TOOL_ENDPOINT = '/api/tools/media/hyperframes/
 export const PROJECT_EXPORT_TOOL_ENDPOINT = '/api/projects/:id/export/:format';
 export const OD_CLI_DOWNLOAD_TOOL_ENDPOINT = '/api/od-cli.mjs';
 export const RESEARCH_SEARCH_TOOL_ENDPOINT = '/api/tools/research/search';
+export const OHMYINSPIRE_PUBLISH_TOOL_ENDPOINT = '/api/tools/ohmyinspire/templates';
 
 export const CHAT_TOOL_ENDPOINTS = [
   '/api/tools/live-artifacts/create',
@@ -37,6 +38,7 @@ export const CHAT_TOOL_ENDPOINTS = [
   PROJECT_EXPORT_TOOL_ENDPOINT,
   OD_CLI_DOWNLOAD_TOOL_ENDPOINT,
   RESEARCH_SEARCH_TOOL_ENDPOINT,
+  OHMYINSPIRE_PUBLISH_TOOL_ENDPOINT,
   '/api/tools/library/search',
   '/api/tools/library/apply',
 ] as const;
@@ -54,6 +56,7 @@ export const CHAT_TOOL_OPERATIONS = [
   'project:export',
   'od-cli:download',
   'research:search',
+  'ohmyinspire:publish',
   'library:search',
   'library:apply',
 ] as const;

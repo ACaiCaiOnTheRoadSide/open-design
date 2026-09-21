@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildShowcasePublishPrompt } from '../../src/components/ProjectView';
+import {
+  buildOhMyInspirePublishPrompt,
+  buildShowcasePublishPrompt,
+} from '../../src/components/ProjectView';
 
 describe('buildShowcasePublishPrompt', () => {
   it('forces the skill curl flow instead of an OpenDesign CLI publish command', () => {
@@ -44,6 +47,30 @@ describe('buildShowcasePublishPrompt', () => {
     expect(skill).toContain('https://ugc-submit.sc.monkeycode-ai.online/v1/create');
     expect(skill).toContain('https://ugc-submit.sc.monkeycode-ai.online/v1/status');
     expect(skill).toContain('https://ugc-submit.sc.monkeycode-ai.online/v1/recall');
-    expect(skill).not.toMatch(/^\s*"?<?API_BASE>?\/v1\//m);
+    expect(skill).not.toMatch(/^\s*"?<API_BASE>?\/v1\//m);
+  });
+});
+
+describe('buildOhMyInspirePublishPrompt', () => {
+  it('delegates packaging and upload to the dedicated skill', () => {
+    const prompt = buildOhMyInspirePublishPrompt('project-123');
+
+    expect(prompt).toContain('publish-ohmyinspire skill');
+    expect(prompt).toContain('project id is "project-123"');
+    expect(prompt).toContain('Never upload the raw OpenDesign project archive');
+    expect(prompt).toContain('report the actual API result');
+  });
+
+  it('defines a validated OhMyInspire package instead of a raw project zip', () => {
+    const skill = readFileSync(
+      new URL('../../../../skills/publish-ohmyinspire/SKILL.md', import.meta.url),
+      'utf8',
+    );
+
+    expect(skill).toContain('`template.json` at the archive root');
+    expect(skill).toContain('`SKILL.md` at the archive root');
+    expect(skill).toContain('`skillPath`: `SKILL.md`');
+    expect(skill).toContain('POST "$OD_DAEMON_URL/api/tools/ohmyinspire/templates"');
+    expect(skill).toContain('Never upload the raw project ZIP');
   });
 });

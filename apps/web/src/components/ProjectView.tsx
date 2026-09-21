@@ -1799,6 +1799,16 @@ export function buildShowcasePublishPrompt(clientId: string): string {
   );
 }
 
+export function buildOhMyInspirePublishPrompt(projectId: string): string {
+  return (
+    'Publish this OpenDesign project to OhMyInspire using the publish-ohmyinspire skill. ' +
+    `The project id is "${projectId}". ` +
+    'Inspect the current project, create and validate a real OhMyInspire template package, ' +
+    'and upload only the validated package. Never upload the raw OpenDesign project archive. ' +
+    'Use the exact OhMyInspire template format, keep credentials out of the package, and report the actual API result. '
+  );
+}
+
 export function ProjectView({
   project,
   workspaceContextOverride,
@@ -10030,44 +10040,18 @@ export function ProjectView({
     return started !== false;
   }, [currentConversationActionDisabled, handleSend]);
 
-  const handlePublishOhMyInspireViaAgent = useCallback(async (filePath: string) => {
+  const handlePublishOhMyInspireViaAgent = useCallback(async (_filePath: string) => {
     if (currentConversationActionDisabled) return false;
-    const archiveResponse = await fetch(`/api/projects/${encodeURIComponent(project.id)}/archive`);
-    if (!archiveResponse.ok) throw new Error(`archive download failed: ${archiveResponse.status}`);
-    const archive = await archiveResponse.blob();
-    const metadata = {
-      id: `od-${project.id}`,
-      name: project.name || `OpenDesign ${project.id}`,
-      description: `Published from OpenDesign project ${project.id}`,
-      tags: ['open-design'],
-      triggers: [],
-      mode: 'prototype',
-      category: 'user-template',
-      platform: 'web',
-      scenario: 'custom',
-      skillPath: 'DESIGN.md',
-      preview: { type: 'html', path: filePath },
-      profile: {
-        use_cases: [], style_traits: [],
-        color_theme: { appearance: '', dominant: [], accent: [], text: [], semantic_tags: [] },
-        typography: [], layout: [], visual_elements: [], content_structure: [], mood: [],
-      },
-      source: { project_id: project.id, revision_id: 'initial' },
-    };
-    const form = new FormData();
-    form.append('metadata', JSON.stringify(metadata));
-    form.append('template', archive, `open-design-${project.id}.zip`);
-    const response = await fetch('/api/v1/ohmyinspire/templates', {
-      method: 'POST',
-      headers: { 'Idempotency-Key': `open-design-${project.id}-initial` },
-      body: form,
+    pendingFormSkillIdsRef.current = ['publish-ohmyinspire'];
+    const prompt = buildOhMyInspirePublishPrompt(project.id);
+    const started = await handleSend(prompt, [], [], {
+      skillIds: ['publish-ohmyinspire'],
+      context: { skillIds: ['publish-ohmyinspire'] },
+      sessionMode: 'chat',
     });
-    if (!response.ok) {
-      const message = await response.text();
-      throw new Error(message || `template upload failed: ${response.status}`);
-    }
-    return true;
-  }, [currentConversationActionDisabled, project.id, project.name]);
+    if (started === false) pendingFormSkillIdsRef.current = [];
+    return started !== false;
+  }, [currentConversationActionDisabled, handleSend, project.id]);
 
   const handlePublishViaAgent = useCallback(async () => {
     if (currentConversationActionDisabled) return false;

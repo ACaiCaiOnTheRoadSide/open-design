@@ -1020,6 +1020,7 @@ import {
   PROJECT_EXPORT_TOOL_ENDPOINT,
   OD_CLI_DOWNLOAD_TOOL_ENDPOINT,
   RESEARCH_SEARCH_TOOL_ENDPOINT,
+  OHMYINSPIRE_PUBLISH_TOOL_ENDPOINT,
   resolveChatToolTokenTtlMs,
   toolTokenRegistry,
 } from './tool-tokens.js';
@@ -2481,6 +2482,11 @@ const importUpload = multer({
 });
 
 const PLUGIN_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+const OHMYINSPIRE_UPLOAD_MAX_BYTES = 102 * 1024 * 1024;
+const ohmyInspireUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: OHMYINSPIRE_UPLOAD_MAX_BYTES, files: 1 },
+});
 const pluginUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -3415,6 +3421,52 @@ export async function startServer({
     requestProjectOverride,
     requestRunOverride,
   } = createToolRequestAuth(toolTokenRegistry);
+
+  app.post(
+    OHMYINSPIRE_PUBLISH_TOOL_ENDPOINT,
+    (req, res, next) => {
+      const grant = authorizeToolRequest(req, res, 'ohmyinspire:publish', {
+        endpoint: OHMYINSPIRE_PUBLISH_TOOL_ENDPOINT,
+      });
+      if (!grant) return;
+      res.locals.ohmyInspireGrant = grant;
+      next();
+    },
+    ohmyInspireUpload.single('template'),
+    async (req, res) => {
+      const grant = res.locals.ohmyInspireGrant;
+      if (!grant) return res.status(401).json({ error: { code: 'TOOL_TOKEN_MISSING', message: 'tool authorization required' } });
+      if (grant.projectId !== req.header('x-project-id')) {
+        return res.status(403).json({ error: { code: 'PROJECT_SCOPE_MISMATCH', message: 'project is outside this run scope' } });
+      }
+      if (!req.file || typeof req.body?.metadata !== 'string') {
+        return res.status(400).json({ error: { code: 'INVALID_UPLOAD', message: 'metadata and template are required' } });
+      }
+      const backendUrl = process.env.OD_BACKEND_URL?.replace(/\\/$/u, '');
+      const principal = grant.principal;
+      if (!backendUrl || !principal?.userId) {
+        return res.status(503).json({ error: { code: 'BACKEND_NOT_CONFIGURED', message: 'backend publishing is not configured for this run' } });
+      }
+      const body = new FormData();
+      body.append('metadata', req.body.metadata);
+      body.append('template', new Blob([req.file.buffer], { type: req.file.mimetype || 'application/zip' }), req.file.originalname || 'ohmyinspire-template.zip');
+      const upstream = await fetch(`${backendUrl}/api/v1/ohmyinspire/templates`, {
+        method: 'POST',
+        headers: {
+          'X-Baizhiyun-User-Id': principal.userId,
+          ...(principal.workspaceId ? { 'X-Baizhiyun-Team-Id': principal.workspaceId } : {}),
+          ...(req.header('idempotency-key') ? { 'Idempotency-Key': req.header('idempotency-key')! } : {}),
+        },
+        body,
+      });
+      const responseBody = await upstream.arrayBuffer();
+      res.status(upstream.status);
+      const contentType = upstream.headers.get('content-type');
+      if (contentType) res.setHeader('content-type', contentType);
+      return res.send(Buffer.from(responseBody));
+    },
+  );
+
   // Wire the upload-destination bridge to this db so multer can route
   // file uploads into baseDir-rooted projects' actual folders.
   projectMetadataLookup = (id) => {
