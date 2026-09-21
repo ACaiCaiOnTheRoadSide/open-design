@@ -3442,7 +3442,7 @@ export async function startServer({
       if (!req.file || typeof req.body?.metadata !== 'string') {
         return res.status(400).json({ error: { code: 'INVALID_UPLOAD', message: 'metadata and template are required' } });
       }
-      const backendUrl = process.env.OD_BACKEND_URL?.replace(/\\/$/u, '');
+      const backendUrl = process.env.OD_BACKEND_URL?.replace(/\/$/u, '');
       const principal = grant.principal;
       if (!backendUrl || !principal?.userId) {
         return res.status(503).json({ error: { code: 'BACKEND_NOT_CONFIGURED', message: 'backend publishing is not configured for this run' } });
