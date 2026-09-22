@@ -344,6 +344,10 @@ describe('composeSystemPrompt', () => {
     expect(prompt).toContain('`./assets/<descriptive-name>.<ext>`');
     expect(prompt).toContain('keep it only when it is already inside `./assets/`');
     expect(prompt).toContain('regular non-empty file');
+    expect(prompt).toContain('request that mode and download a returned URL');
+    expect(prompt).toContain('an MCP image content block alone is not a saved file');
+    expect(prompt).toContain('listing `./assets/` or finding a pre-existing same-name file is not proof');
+    expect(prompt).toContain('report failure rather than claiming generation succeeded');
     expect(prompt).not.toContain('is the **only**\napproved execution path');
     expect(prompt).not.toContain('Always call out to the dispatcher');
   });
