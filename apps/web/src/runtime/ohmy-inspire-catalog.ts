@@ -23,7 +23,11 @@ export interface OhMyInspireCatalogTemplate {
 }
 
 export interface OhMyInspireCatalogTemplateDetail extends OhMyInspireCatalogTemplate {
+  /** Legacy prompt field retained for older catalog deployments. */
   examplePrompt?: string;
+  /** Current public catalog prompt contract. */
+  localizedPrompt?: { en?: string; zh?: string };
+  prompt?: string;
   source?: string;
   source_id?: string;
   download_url?: string;
@@ -125,7 +129,7 @@ export async function fetchOhMyInspireImageCase(
 ): Promise<{ detail: OhMyInspireCatalogTemplateDetail; image: File; prompt: string }> {
   if (!/^gpt-image-2-[1-9][0-9]*$/.test(caseId)) throw new Error('Invalid image case ID.');
   const detail = await fetchOhMyInspireTemplateDetail(caseId, signal);
-  const prompt = detail.examplePrompt?.trim();
+  const prompt = imageCasePrompt(detail);
   const imagePath = detail.preview_url;
   const sourceId = caseId.slice('gpt-image-2-'.length);
   if (detail.id !== caseId || detail.mode !== 'image' || detail.source !== 'gpt-image-2'
@@ -153,8 +157,15 @@ export function ohMyInspireTemplateHasArchive(
 export function ohMyInspireTemplateGenerationPrompt(
   template: OhMyInspireCatalogTemplateDetail,
 ): string | null {
-  const prompt = template.examplePrompt?.trim() || template.description?.trim();
+  const prompt = imageCasePrompt(template) || template.description?.trim();
   return prompt || null;
+}
+
+function imageCasePrompt(template: OhMyInspireCatalogTemplateDetail): string | undefined {
+  return template.localizedPrompt?.en?.trim()
+    || template.localizedPrompt?.zh?.trim()
+    || template.prompt?.trim()
+    || template.examplePrompt?.trim();
 }
 
 export function ohMyInspireTemplateProjectKind(

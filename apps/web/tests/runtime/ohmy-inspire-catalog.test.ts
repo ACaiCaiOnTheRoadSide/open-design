@@ -79,7 +79,7 @@ describe('OhMyInspire catalog client', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, data: {
         id: 'gpt-image-2-174', name: 'Interior', description: '', mode: 'image',
-        source: 'gpt-image-2', source_id: '174', examplePrompt: 'Create a room.',
+        source: 'gpt-image-2', source_id: '174', localizedPrompt: { zh: '创建房间。', en: 'Create a room.' },
         preview_url: '/gpt-image-2/case174.webp', download_url: '',
       } }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(new Blob(['RIFF'], { type: 'image/webp' }), {
@@ -100,7 +100,7 @@ describe('OhMyInspire catalog client', () => {
   it('rejects mismatched image previews before requesting their bytes', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, data: {
       id: 'gpt-image-2-174', mode: 'image', source: 'gpt-image-2', source_id: '174',
-      examplePrompt: 'Prompt', preview_url: '/gpt-image-2/case175.webp',
+      localizedPrompt: { en: 'Prompt' }, preview_url: '/gpt-image-2/case175.webp',
     } }), { status: 200, headers: { 'content-type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     await expect(fetchOhMyInspireImageCase('gpt-image-2-174')).rejects.toThrow('missing its prompt or reference image');
